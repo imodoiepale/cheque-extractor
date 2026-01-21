@@ -1,0 +1,113 @@
+erDiagram
+    tenants ||--o{ checks : has
+    tenants ||--o{ user_profiles : has
+    tenants ||--o{ qbo_connections : has
+    tenants ||--o{ export_history : has
+    tenants ||--o{ audit_logs : has
+    
+    checks ||--o{ processing_stages : tracks
+    checks ||--o{ audit_logs : logs
+    checks }o--o{ export_history : exports
+    
+    user_profiles ||--o{ audit_logs : creates
+    user_profiles ||--o{ export_history : exports
+    
+    tenants {
+        uuid id PK
+        text name
+        text slug UK
+        jsonb settings
+        text plan
+        int max_checks_per_month
+        int checks_used_this_month
+        text status
+        timestamp created_at
+        timestamp updated_at
+    }
+    
+    checks {
+        uuid id PK
+        uuid tenant_id FK
+        text status
+        text source_file
+        text file_url
+        text payee
+        numeric payee_confidence
+        text payee_source
+        numeric amount
+        numeric amount_confidence
+        text amount_source
+        date check_date
+        text check_number
+        text bank_name
+        text micr_routing
+        text micr_account
+        numeric confidence_summary
+        jsonb ocr_results
+        jsonb ai_results
+        jsonb validation_errors
+        boolean exported
+        text qbo_transaction_id
+        timestamp created_at
+        timestamp updated_at
+    }
+    
+    processing_stages {
+        uuid id PK
+        uuid check_id FK
+        text stage_name
+        int stage_order
+        text status
+        int progress
+        jsonb stage_data
+        timestamp started_at
+        timestamp completed_at
+    }
+    
+    audit_logs {
+        uuid id PK
+        text table_name
+        uuid record_id
+        uuid check_id FK
+        uuid tenant_id FK
+        text action
+        jsonb changes
+        uuid user_id FK
+        timestamp created_at
+    }
+    
+    export_history {
+        uuid id PK
+        uuid tenant_id FK
+        uuid batch_id
+        text export_type
+        uuid[] check_ids
+        text status
+        jsonb check_results
+        uuid exported_by FK
+        timestamp created_at
+    }
+    
+    qbo_connections {
+        uuid id PK
+        uuid tenant_id FK
+        text realm_id
+        text company_name
+        text access_token
+        text refresh_token
+        timestamp access_token_expires_at
+        text status
+        timestamp created_at
+    }
+    
+    user_profiles {
+        uuid id PK
+        uuid tenant_id FK
+        text full_name
+        text email
+        text role
+        jsonb permissions
+        jsonb preferences
+        text status
+        timestamp created_at
+    }
