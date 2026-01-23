@@ -1,0 +1,44 @@
+FROM node:18-alpine AS base
+
+# Install Tesseract OCR
+RUN apk add --no-cache \
+    tesseract-ocr \
+    tesseract-ocr-data-eng \
+    imagemagick \
+    python3 \
+    make \
+    g++
+
+# Install dependencies
+FROM base AS deps
+WORKDIR /app
+
+COPY backend/package.json backend/package-lock.json* ./
+RUN npm ci
+
+# Build application
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY backend ./
+
+RUN npm run build
+
+# Production image
+FROM base AS runner
+WORKDIR /app
+
+ENV NODE_ENV production
+
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nodeapp
+
+COPY --from=builder --chown=nodeapp:nodejs /app/dist ./dist
+COPY --from=builder --chown=nodeapp:nodejs /app/node_modules ./node_modules
+COPY --from=builder --chown=nodeapp:nodejs /app/package.json ./package.json
+
+USER nodeapp
+
+EXPOSE 4000
+
+CMD ["node", "dist/index.js"]

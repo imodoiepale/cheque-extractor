@@ -3,6 +3,8 @@ import { Inter } from 'next/font/google'
 import './globals.css'
 import Link from 'next/link'
 import { CheckSquare, Upload, Settings, List } from 'lucide-react'
+import ToastProvider from '@/components/providers/ToastProvider'
+import AIKeyWarning from '@/components/common/AIKeyWarning'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -19,6 +21,8 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className={inter.className}>
+        <ToastProvider />
+        <AIKeyWarning />
         <div className="min-h-screen bg-gray-50 flex">
           {/* Sidebar */}
           <aside className="w-64 bg-white border-r border-gray-200 hidden md:flex flex-col">

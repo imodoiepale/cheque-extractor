@@ -1,48 +1,52 @@
--- Seed data for development/testing
+-- Seed data for development and testing
 
--- Create a demo tenant
+-- Insert demo tenant
 INSERT INTO tenants (id, name, slug, plan, max_checks_per_month, status)
 VALUES 
   ('11111111-1111-1111-1111-111111111111', 'Demo Company Inc', 'demo-company', 'professional', 1000, 'active')
 ON CONFLICT (id) DO NOTHING;
 
--- Create demo user profile (assumes auth.users exists)
+-- Insert demo user profile (requires auth.users to exist first)
+-- This would be created via Supabase Auth signup
 -- INSERT INTO user_profiles (id, tenant_id, full_name, email, role, status)
 -- VALUES 
---   ('<user-uuid>', '11111111-1111-1111-1111-111111111111', 'Demo User', 'demo@example.com', 'admin', 'active')
+--   ('user-uuid-here', '11111111-1111-1111-1111-111111111111', 'Demo User', 'demo@example.com', 'admin', 'active')
 -- ON CONFLICT (id) DO NOTHING;
 
--- Create sample checks for testing
+-- Insert sample checks
 INSERT INTO checks (
-  tenant_id, 
-  status, 
-  source_file, 
+  id,
+  tenant_id,
+  status,
+  source_file,
   file_url,
-  payee, 
-  payee_confidence, 
+  payee,
+  payee_confidence,
   payee_source,
-  amount, 
-  amount_confidence, 
+  amount,
+  amount_confidence,
   amount_source,
-  check_date, 
-  check_date_confidence, 
+  check_date,
+  check_date_confidence,
   check_date_source,
-  check_number, 
-  check_number_confidence, 
+  check_number,
+  check_number_confidence,
   check_number_source,
   bank_name,
+  bank_name_confidence,
   micr_routing,
   micr_account,
   confidence_summary,
   created_at
 )
 VALUES 
-  -- High confidence check (auto-approved)
+  -- High confidence check
   (
+    '22222222-2222-2222-2222-222222222222',
     '11111111-1111-1111-1111-111111111111',
     'approved',
     'check_001.pdf',
-    'https://storage.example.com/check_001.pdf',
+    'https://example.com/checks/check_001.pdf',
     'ACME Supplies Inc',
     0.95,
     'ai',
@@ -56,18 +60,20 @@ VALUES
     0.99,
     'ocr',
     'Chase Bank',
+    0.88,
     '021000021',
     '123456789',
     0.95,
     NOW() - INTERVAL '2 days'
   ),
   
-  -- Medium confidence check (review suggested)
+  -- Medium confidence check
   (
+    '33333333-3333-3333-3333-333333333333',
     '11111111-1111-1111-1111-111111111111',
     'review_suggested',
     'check_002.pdf',
-    'https://storage.example.com/check_002.pdf',
+    'https://example.com/checks/check_002.pdf',
     'John Doe Construction',
     0.82,
     'hybrid',
@@ -81,18 +87,20 @@ VALUES
     0.94,
     'ocr',
     'Bank of America',
+    0.76,
     '026009593',
     '987654321',
     0.85,
     NOW() - INTERVAL '1 day'
   ),
   
-  -- Low confidence check (review required)
+  -- Low confidence check
   (
+    '44444444-4444-4444-4444-444444444444',
     '11111111-1111-1111-1111-111111111111',
     'review_required',
     'check_003.pdf',
-    'https://storage.example.com/check_003.pdf',
+    'https://example.com/checks/check_003.pdf',
     'Jane Smith Services',
     0.65,
     'ocr',
@@ -106,8 +114,23 @@ VALUES
     0.88,
     'ocr',
     'Wells Fargo',
+    0.71,
     '121000248',
     '456789123',
     0.68,
     NOW() - INTERVAL '3 hours'
-  );
+  )
+ON CONFLICT (id) DO NOTHING;
+
+-- Insert processing stages for the first check
+INSERT INTO processing_stages (check_id, stage_name, stage_order, status, progress, completed_at)
+VALUES
+  ('22222222-2222-2222-2222-222222222222', 'ingestion', 1, 'complete', 100, NOW() - INTERVAL '2 days'),
+  ('22222222-2222-2222-2222-222222222222', 'preprocessing', 2, 'complete', 100, NOW() - INTERVAL '2 days'),
+  ('22222222-2222-2222-2222-222222222222', 'segmentation', 3, 'complete', 100, NOW() - INTERVAL '2 days'),
+  ('22222222-2222-2222-2222-222222222222', 'ocr_extraction', 4, 'complete', 100, NOW() - INTERVAL '2 days'),
+  ('22222222-2222-2222-2222-222222222222', 'ai_extraction', 5, 'complete', 100, NOW() - INTERVAL '2 days'),
+  ('22222222-2222-2222-2222-222222222222', 'hybrid_selection', 6, 'complete', 100, NOW() - INTERVAL '2 days'),
+  ('22222222-2222-2222-2222-222222222222', 'validation', 7, 'complete', 100, NOW() - INTERVAL '2 days'),
+  ('22222222-2222-2222-2222-222222222222', 'complete', 8, 'complete', 100, NOW() - INTERVAL '2 days')
+ON CONFLICT (check_id, stage_name) DO NOTHING;

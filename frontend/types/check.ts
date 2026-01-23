@@ -81,3 +81,57 @@ export interface Tenant {
     name: string
     created_at: string
 }
+
+
+export interface Check {
+  id: string;
+  tenant_id: string;
+  status: string;
+  source_file: string;
+  file_url: string;
+  file_type?: string;
+  
+  // Extracted fields
+  payee?: string;
+  payee_confidence?: number;
+  payee_source?: 'ocr' | 'ai' | 'hybrid' | 'manual';
+  
+  amount?: number;
+  amount_confidence?: number;
+  amount_source?: 'ocr' | 'ai' | 'hybrid' | 'manual';
+  
+  check_date?: string;
+  check_date_confidence?: number;
+  check_date_source?: 'ocr' | 'ai' | 'hybrid' | 'manual';
+  
+  check_number?: string;
+  check_number_confidence?: number;
+  check_number_source?: 'ocr' | 'ai' | 'hybrid' | 'manual';
+  
+  bank_name?: string;
+  bank_name_confidence?: number;
+  bank_name_source?: 'ocr' | 'ai' | 'hybrid' | 'manual';
+  
+  micr_routing?: string;
+  micr_account?: string;
+  
+  confidence_summary?: number;
+  
+  exported?: boolean;
+  qbo_synced?: boolean;
+  
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProcessingStage {
+  id: string;
+  check_id: string;
+  stage_name: string;
+  stage_order: number;
+  status: 'pending' | 'processing' | 'complete' | 'error';
+  progress: number;
+  stage_data?: any;
+  started_at?: string;
+  completed_at?: string;
+}

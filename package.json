@@ -1,0 +1,47 @@
+{
+  "name": "ocr-check-processor",
+  "version": "1.0.0",
+  "description": "Automated check processing with OCR and AI",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && npm run dev",
+    "build": "npm run build:frontend && npm run build:backend",
+    "build:frontend": "cd frontend && npm run build",
+    "build:backend": "cd backend && npm run build",
+    "test": "npm run test:frontend && npm run test:backend",
+    "test:frontend": "cd frontend && npm test",
+    "test:backend": "cd backend && npm test",
+    "lint": "npm run lint:frontend && npm run lint:backend",
+    "lint:frontend": "cd frontend && npm run lint",
+    "lint:backend": "cd backend && npm run lint",
+    "clean": "rm -rf frontend/.next frontend/out backend/dist node_modules frontend/node_modules backend/node_modules",
+    "setup": "./scripts/setup.sh"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/ocr-check-processor.git"
+  },
+  "keywords": [
+    "ocr",
+    "check-processing",
+    "accounting",
+    "quickbooks",
+    "ai",
+    "computer-vision"
+  ],
+  "author": "Your Name",
+  "license": "MIT"
+}

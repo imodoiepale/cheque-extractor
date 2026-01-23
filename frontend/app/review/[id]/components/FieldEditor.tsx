@@ -1,92 +1,186 @@
-'use client'
+'use client';
 
-import { useState } from 'react'
-import { Check, Edit2, X } from 'lucide-react'
-import ConfidenceBadge from './ConfidenceBadge'
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { Check } from '@/types/check';
+import ConfidenceBadge from './ConfidenceBadge';
+import { createClient } from '@/lib/supabase/client';
 
-interface FieldEditorProps {
-    label: string
-    field: string
-    value: string | number | null
-    confidence: number | null
-    checkId: string
-    type?: 'text' | 'number' | 'date'
-    onUpdate?: () => void
+interface Props {
+  check: Check;
 }
 
-export default function FieldEditor({
-    label,
-    field,
-    value,
-    confidence,
-    checkId,
-    type = 'text',
-    onUpdate
-}: FieldEditorProps) {
-    const [isEditing, setIsEditing] = useState(false)
-    const [currentValue, setCurrentValue] = useState(value || '')
-    const [saving, setSaving] = useState(false)
+export default function FieldEditor({ check }: Props) {
+  const router = useRouter();
+  const [fields, setFields] = useState({
+    payee: check.payee || '',
+    amount: check.amount?.toString() || '',
+    check_date: check.check_date || '',
+    check_number: check.check_number || '',
+    bank_name: check.bank_name || '',
+  });
+  const [saving, setSaving] = useState(false);
 
-    const handleSave = async () => {
-        setSaving(true)
-        try {
-            await fetch(`/api/checks/${checkId}`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ field, value: currentValue })
-            })
-            setIsEditing(false)
-            onUpdate?.()
-        } catch (error) {
-            console.error('Failed to update', error)
-        } finally {
-            setSaving(false)
-        }
+  const handleFieldChange = (field: string, value: string) => {
+    setFields(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const supabase = createClient();
+      
+      const { error } = await supabase
+        .from('checks')
+        .update({
+          payee: fields.payee,
+          amount: parseFloat(fields.amount),
+          check_date: fields.check_date,
+          check_number: fields.check_number,
+          bank_name: fields.bank_name,
+          // Mark as manual edits
+          payee_source: 'manual',
+          amount_source: 'manual',
+          check_date_source: 'manual',
+          check_number_source: 'manual',
+        })
+        .eq('id', check.id);
+
+      if (error) throw error;
+
+      // Create audit log
+      await fetch(`/api/checks/${check.id}/review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fields }),
+      });
+
+      router.refresh();
+      alert('Changes saved successfully!');
+    } catch (error) {
+      console.error('Save error:', error);
+      alert('Failed to save changes');
+    } finally {
+      setSaving(false);
     }
+  };
 
-    return (
-        <div className="p-4 bg-white rounded-lg border hover:border-blue-300 transition-colors">
-            <div className="flex justify-between items-start mb-2">
-                <label className="text-sm font-medium text-gray-500">{label}</label>
-                <ConfidenceBadge score={confidence} showLabel={false} />
-            </div>
+  return (
+    <div className="bg-white rounded-lg shadow">
+      <div className="px-6 py-4 border-b">
+        <h3 className="font-semibold">Extracted Fields</h3>
+        <p className="text-sm text-gray-600 mt-1">Review and edit as needed</p>
+      </div>
 
-            {isEditing ? (
-                <div className="flex gap-2">
-                    <input
-                        type={type}
-                        value={currentValue}
-                        onChange={(e) => setCurrentValue(e.target.value)}
-                        className="flex-1 border rounded px-2 py-1 text-sm"
-                        autoFocus
-                    />
-                    <button
-                        onClick={handleSave}
-                        disabled={saving}
-                        className="p-1 text-green-600 hover:bg-green-50 rounded"
-                    >
-                        <Check className="w-4 h-4" />
-                    </button>
-                    <button
-                        onClick={() => setIsEditing(false)}
-                        className="p-1 text-red-600 hover:bg-red-50 rounded"
-                    >
-                        <X className="w-4 h-4" />
-                    </button>
-                </div>
-            ) : (
-                <div className="flex justify-between items-center group">
-                    <span className={`text-base font-medium ${!value ? 'text-gray-400 italic' : 'text-gray-900'}`}>
-                        {value || 'Empty'}
-                    </span>
-                    <button
-                        onClick={() => setIsEditing(true)}
-                        className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-blue-600 transition-opacity"
-                    >
-                        <Edit2 className="w-4 h-4" />
-                    </button>
-                </div>
-            )}
+      <div className="p-6 space-y-4">
+        {/* Payee */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-sm font-medium text-gray-700">
+              Payee
+            </label>
+            <ConfidenceBadge 
+              confidence={check.payee_confidence || 0}
+              source={check.payee_source || 'ocr'}
+            />
+          </div>
+          <input
+            type="text"
+            value={fields.payee}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleFieldChange('payee', e.target.value)}
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
         </div>
-    )
+
+        {/* Amount */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-sm font-medium text-gray-700">
+              Amount
+            </label>
+            <ConfidenceBadge 
+              confidence={check.amount_confidence || 0}
+              source={check.amount_source || 'ocr'}
+            />
+          </div>
+          <div className="relative">
+            <span className="absolute left-4 top-2 text-gray-500">$</span>
+            <input
+              type="number"
+              step="0.01"
+              value={fields.amount}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleFieldChange('amount', e.target.value)}
+              className="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
+        </div>
+
+        {/* Date */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-sm font-medium text-gray-700">
+              Date
+            </label>
+            <ConfidenceBadge 
+              confidence={check.check_date_confidence || 0}
+              source={check.check_date_source || 'ocr'}
+            />
+          </div>
+          <input
+            type="date"
+            value={fields.check_date}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleFieldChange('check_date', e.target.value)}
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+        </div>
+
+        {/* Check Number */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-sm font-medium text-gray-700">
+              Check Number
+            </label>
+            <ConfidenceBadge 
+              confidence={check.check_number_confidence || 0}
+              source={check.check_number_source || 'ocr'}
+            />
+          </div>
+          <input
+            type="text"
+            value={fields.check_number}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleFieldChange('check_number', e.target.value)}
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+        </div>
+
+        {/* Bank Name */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-sm font-medium text-gray-700">
+              Bank Name
+            </label>
+            <ConfidenceBadge 
+              confidence={check.bank_name_confidence || 0}
+              source={check.bank_name_source || 'ocr'}
+            />
+          </div>
+          <input
+            type="text"
+            value={fields.bank_name}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleFieldChange('bank_name', e.target.value)}
+            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+        </div>
+
+        {/* Save Button */}
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium"
+        >
+          {saving ? 'Saving...' : 'Save Changes'}
+        </button>
+      </div>
+    </div>
+  );
 }

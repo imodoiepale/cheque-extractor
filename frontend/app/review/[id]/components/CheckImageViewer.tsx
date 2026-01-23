@@ -1,50 +1,72 @@
-'use client'
+'use client';
 
-import { useState } from 'react'
-import { ZoomIn, ZoomOut, RotateCw } from 'lucide-react'
+import { useState } from 'react';
+import Image from 'next/image';
+import { ZoomIn, ZoomOut, RotateCw } from 'lucide-react';
 
-interface ImageViewerProps {
-    src: string
-    alt: string
+interface Props {
+  imageUrl: string;
 }
 
-export default function ImageViewer({ src, alt }: ImageViewerProps) {
-    const [scale, setScale] = useState(1)
-    const [rotation, setRotation] = useState(0)
+export default function CheckImageViewer({ imageUrl }: Props) {
+  const [zoom, setZoom] = useState(100);
+  const [rotation, setRotation] = useState(0);
 
-    const handleZoomIn = () => setScale(s => Math.min(s + 0.5, 3))
-    const handleZoomOut = () => setScale(s => Math.max(s - 0.5, 1))
-    const handleRotate = () => setRotation(r => (r + 90) % 360)
+  const handleZoomIn = () => setZoom(prev => Math.min(prev + 25, 200));
+  const handleZoomOut = () => setZoom(prev => Math.max(prev - 25, 50));
+  const handleRotate = () => setRotation(prev => (prev + 90) % 360);
 
-    return (
-        <div className="bg-gray-100 rounded-lg border overflow-hidden h-full min-h-[500px] flex flex-col">
-            <div className="p-2 border-b bg-white flex justify-end gap-2">
-                <button onClick={handleZoomOut} className="p-2 hover:bg-gray-100 rounded" title="Zoom Out">
-                    <ZoomOut className="w-5 h-5" />
-                </button>
-                <button onClick={handleZoomIn} className="p-2 hover:bg-gray-100 rounded" title="Zoom In">
-                    <ZoomIn className="w-5 h-5" />
-                </button>
-                <button onClick={handleRotate} className="p-2 hover:bg-gray-100 rounded" title="Rotate">
-                    <RotateCw className="w-5 h-5" />
-                </button>
-            </div>
-
-            <div className="flex-1 overflow-auto flex items-center justify-center p-4">
-                <div
-                    style={{
-                        transform: `scale(${scale}) rotate(${rotation}deg)`,
-                        transition: 'transform 0.2s ease-in-out'
-                    }}
-                >
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                        src={src}
-                        alt={alt}
-                        className="max-w-full h-auto shadow-lg"
-                    />
-                </div>
-            </div>
+  return (
+    <div className="bg-white rounded-lg shadow overflow-hidden">
+      {/* Controls */}
+      <div className="px-4 py-3 border-b flex items-center justify-between bg-gray-50">
+        <h3 className="font-semibold">Check Image</h3>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleZoomOut}
+            className="p-2 hover:bg-gray-200 rounded"
+            title="Zoom Out"
+          >
+            <ZoomOut size={18} />
+          </button>
+          <span className="text-sm font-medium min-w-[60px] text-center">
+            {zoom}%
+          </span>
+          <button
+            onClick={handleZoomIn}
+            className="p-2 hover:bg-gray-200 rounded"
+            title="Zoom In"
+          >
+            <ZoomIn size={18} />
+          </button>
+          <div className="w-px h-6 bg-gray-300 mx-2" />
+          <button
+            onClick={handleRotate}
+            className="p-2 hover:bg-gray-200 rounded"
+            title="Rotate"
+          >
+            <RotateCw size={18} />
+          </button>
         </div>
-    )
+      </div>
+
+      {/* Image */}
+      <div className="p-4 bg-gray-100 overflow-auto" style={{ maxHeight: '600px' }}>
+        <div className="flex items-center justify-center">
+          <div
+            style={{
+              transform: `scale(${zoom / 100}) rotate(${rotation}deg)`,
+              transition: 'transform 0.2s',
+            }}
+          >
+            <img
+              src={imageUrl}
+              alt="Check"
+              className="max-w-full h-auto shadow-lg"
+            />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
