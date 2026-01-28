@@ -1,6 +1,5 @@
 import { analyzeImageWithVision } from './visionClient';
-import { analyzeTextContext, crossValidateFields } from './contextAnalyzer';
-import { calculateAIConfidence, adjustConfidenceByContext } from './confidenceCalculator';
+import { crossValidateFields } from './contextAnalyzer';
 import logger from '../../utils/logger';
 
 interface DocumentStructure {

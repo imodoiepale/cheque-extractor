@@ -3,7 +3,8 @@
 import { useState } from 'react';
 import { Check } from '@/types/check';
 import { formatCurrency, formatDate } from '@/lib/utils/formatting';
-import { Download, FileCheck } from 'lucide-react';
+import { Download, FileCheck, AlertCircle } from 'lucide-react';
+import Link from 'next/link';
 
 interface Props {
   checks: Check[];
@@ -113,6 +114,38 @@ export default function ExportQueue({ checks, hasConnection }: Props) {
 
   return (
     <div className="bg-white rounded-lg shadow">
+      <div className="p-6 border-b border-gray-200">
+        <h2 className="text-xl font-semibold text-gray-900">Export Queue</h2>
+        <p className="text-sm text-gray-600 mt-1">
+          {checks.length} check{checks.length !== 1 ? 's' : ''} ready for export
+        </p>
+      </div>
+
+      {/* QuickBooks Not Connected Alert */}
+      {!hasConnection && checks.length > 0 && (
+        <div className="p-6 border-b border-gray-200">
+          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+            <div className="flex items-start gap-3">
+              <AlertCircle className="text-yellow-600 flex-shrink-0 mt-0.5" size={20} />
+              <div className="flex-1">
+                <p className="font-medium text-yellow-900 mb-1">
+                  QuickBooks Not Connected
+                </p>
+                <p className="text-sm text-yellow-800 mb-3">
+                  Connect your QuickBooks Online account to export these checks.
+                </p>
+                <Link
+                  href="/settings/integrations"
+                  className="inline-flex items-center gap-2 px-4 py-2 bg-yellow-600 text-white text-sm rounded-lg hover:bg-yellow-700"
+                >
+                  Connect QuickBooks
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="px-6 py-4 border-b flex items-center justify-between">
         <div className="flex items-center gap-4">

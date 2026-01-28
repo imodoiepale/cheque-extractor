@@ -6,9 +6,6 @@ const nextConfig = {
       'localhost',
     ],
   },
-  experimental: {
-    serverActions: true,
-  },
 };
 
 module.exports = nextConfig;

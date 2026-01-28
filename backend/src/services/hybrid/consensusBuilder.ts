@@ -174,7 +174,7 @@ export function getConsensusScore(consensusReport: Record<string, ConsensusResul
         }
     });
 
-    const avgScore = scores.reduce((sum, score) => sum + score, 0) / scores.length;
+    const avgScore = scores.reduce((sum: number, score) => sum + score, 0) / scores.length;
 
     return avgScore;
 }

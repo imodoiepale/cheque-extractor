@@ -35,16 +35,8 @@ export default function SignupPage() {
       if (authError) throw authError;
 
       if (authData.user) {
-        // Create tenant
-        const { error: tenantError } = await supabase
-          .from('tenants')
-          .insert({
-            name: companyName,
-            slug: companyName.toLowerCase().replace(/\s+/g, '-'),
-          });
-
-        if (tenantError) throw tenantError;
-
+        // Tenant and profile are created automatically by database trigger
+        // Just redirect to dashboard
         router.push('/dashboard');
         router.refresh();
       }

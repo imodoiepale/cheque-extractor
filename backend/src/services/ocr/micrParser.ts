@@ -1,5 +1,4 @@
 import { FieldExtraction } from '../../types/extraction';
-import { MICR_PATTERNS } from '../../utils/constants';
 import { isValidRoutingNumber } from '../../utils/helpers';
 import logger from '../../utils/logger';
 

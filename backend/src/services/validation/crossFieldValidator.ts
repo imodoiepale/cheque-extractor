@@ -1,5 +1,4 @@
 import { CheckFields, ValidationError } from '../../types/extraction';
-import { parseAmount } from '../../utils/helpers';
 import logger from '../../utils/logger';
 
 export function validateCrossFieldConsistency(fields: CheckFields): ValidationError[] {
@@ -164,25 +163,34 @@ export function checkFieldCompleteness(fields: CheckFields): {
     completeness: number;
     missingFields: string[];
 } {
-    const requiredFields = ['payee', 'amount', 'checkDate', 'checkNumber'];
-    const optionalFields = ['bankName', 'micr', 'memo'];
+    const requiredFields: (keyof CheckFields)[] = ['payee', 'amount', 'checkDate', 'checkNumber'];
+    const optionalFields: (keyof CheckFields)[] = ['bankName', 'micr', 'memo'];
 
-    const presentRequired = requiredFields.filter(field =>
-        fields[field as keyof CheckFields]?.value
-    );
+    const presentRequired = requiredFields.filter(field => {
+        if (field === 'micr') {
+            return fields.micr !== undefined;
+        }
+        return (fields[field] as any)?.value !== undefined;
+    });
 
-    const presentOptional = optionalFields.filter(field =>
-        fields[field as keyof CheckFields]?.value
-    );
+    const presentOptional = optionalFields.filter(field => {
+        if (field === 'micr') {
+            return fields.micr !== undefined;
+        }
+        return (fields[field] as any)?.value !== undefined;
+    });
 
     const completeness = (
         (presentRequired.length / requiredFields.length) * 0.8 +
         (presentOptional.length / optionalFields.length) * 0.2
     );
 
-    const missingFields = requiredFields.filter(field =>
-        !fields[field as keyof CheckFields]?.value
-    );
+    const missingFields = requiredFields.filter(field => {
+        if (field === 'micr') {
+            return !fields.micr;
+        }
+        return !(fields[field] as any)?.value;
+    }).map(f => String(f));
 
     return {
         completeness,

@@ -57,7 +57,7 @@ function detectHandwriting(text: string, confidence: number): boolean {
     return indicatorCount >= 2;
 }
 
-function assessLegibility(text: string, confidence: number): 'clear' | 'moderate' | 'poor' {
+function assessLegibility(_text: string, confidence: number): 'clear' | 'moderate' | 'poor' {
     if (confidence > 0.8) return 'clear';
     if (confidence > 0.6) return 'moderate';
     return 'poor';
@@ -81,27 +81,10 @@ function determineBestApproach(
 
 export function enhanceHandwrittenText(text: string): string {
     try {
-        let enhanced = text;
-
-        // Common handwriting OCR corrections
-        const corrections: Record<string, string> = {
-            // Number confusions
-            'O': '0',
-            'l': '1',
-            'Z': '2',
-            'S': '5',
-
-            // Letter confusions
-            '0': 'O', // Context-dependent
-            '1': 'I', // Context-dependent
-        };
-
-        // Apply corrections cautiously
-        // This is simplified - production would use context-aware corrections
-
-        logger.debug({ original: text, enhanced }, 'Handwriting enhancement applied');
-
-        return enhanced;
+        // For now, return text as-is
+        // In production, implement handwriting-specific corrections
+        logger.debug({ original: text }, 'Handwriting enhancement (placeholder)');
+        return text;
     } catch (error) {
         logger.error({ error }, 'Handwriting enhancement failed');
         return text;

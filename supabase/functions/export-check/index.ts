@@ -50,19 +50,18 @@ serve(async (req) => {
         tenant_id: tenantId,
         export_type: exportType,
         check_ids: checkIds,
-        total_checks: checkIds.length,
         status: 'pending',
       })
       .select()
       .single();
 
     if (exportError) {
-      throw new Error('Failed to create export record');
+      throw new Error('Failed to create export record: ' + exportError.message);
     }
 
     // Call backend export service
-    const backendUrl = Deno.env.get('BACKEND_URL') || 'http://localhost:4000';
-    const response = await fetch(`${backendUrl}/export`, {
+    const backendUrl = Deno.env.get('BACKEND_URL') || 'http://localhost:3090';
+    const response = await fetch(`${backendUrl}/api/export`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -91,10 +90,14 @@ serve(async (req) => {
     await supabaseClient
       .from('export_history')
       .update({
-        status: result.failedCount === 0 ? 'success' : 'partial_success',
-        successful_count: result.successfulCount,
-        failed_count: result.failedCount,
-        check_results: result.results,
+        status: result.failedCount === 0 ? 'completed' : 'failed',
+        completed_at: new Date().toISOString(),
+        error_message: result.failedCount > 0 ? `${result.failedCount} checks failed to export` : null,
+        metadata: {
+          successful_count: result.successfulCount,
+          failed_count: result.failedCount,
+          results: result.results,
+        },
       })
       .eq('id', exportRecord.id);
 
@@ -113,10 +116,11 @@ serve(async (req) => {
       }
     );
 
-  } catch (error) {
+  } catch (error: any) {
+    console.error('Export function error:', error);
     return new Response(
       JSON.stringify({
-        error: error.message,
+        error: error.message || 'Unknown error occurred',
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },

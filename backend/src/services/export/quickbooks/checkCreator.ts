@@ -2,7 +2,6 @@ import axios from 'axios';
 import { QBOCheckData, ExportResult } from '../../../types/export';
 import { qboOAuthClient } from './oauthClient';
 import logger from '../../../utils/logger';
-import { ExportError } from '../../../utils/errors';
 
 const QBO_API_BASE = process.env.QBO_ENVIRONMENT === 'production'
     ? 'https://quickbooks.api.intuit.com'

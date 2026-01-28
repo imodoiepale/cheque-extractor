@@ -205,3 +205,14 @@ export function crossValidateFields(fields: Record<string, any>): {
         const now = new Date();
         const oneYearAgo = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
         const oneMonthAhead = new Date(now.getFullYear(), now.getMonth() + 1, now.getDate());
+
+        if (date < oneYearAgo || date > oneMonthAhead) {
+            issues.push('Check date is outside reasonable range');
+        }
+    }
+
+    return {
+        valid: issues.length === 0,
+        issues,
+    };
+}
