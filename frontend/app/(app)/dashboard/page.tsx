@@ -5,7 +5,7 @@ import Link from 'next/link';
 import {
   Upload, FileText, Image as ImageIcon, CheckCircle, Clock,
   Loader2, Eye, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut,
-  FileCheck, Download, ExternalLink, AlertCircle, RefreshCw,
+  FileCheck, Download, ExternalLink, AlertCircle, RefreshCw, Trash2, RotateCcw,
 } from 'lucide-react';
 
 // ── Types ──────────────────────────────────────────────────
@@ -16,6 +16,9 @@ interface JobCheck {
   height: number;
   image_file?: string;
   extraction?: any;
+  methods_used?: string[];
+  engine_results?: Record<string, any>;
+  engine_times_ms?: Record<string, number>;
 }
 
 interface Job {
@@ -63,6 +66,18 @@ function fmtDate(iso?: string): string {
   } catch { return iso; }
 }
 
+function jobExtractionStats(job: Job) {
+  const checks = job.checks || [];
+  const extracted = checks.filter((c) => c.extraction && Object.keys(c.extraction).length > 0).length;
+  const methods = new Set<string>();
+  checks.forEach((c) => (c.methods_used || []).forEach((m) => methods.add(m)));
+  const byMethod: Record<string, number> = {};
+  methods.forEach((m) => {
+    byMethod[m] = checks.filter((c) => (c.methods_used || []).includes(m) && c.extraction).length;
+  });
+  return { extracted, total: job.total_checks, methods: Array.from(methods), byMethod };
+}
+
 function statusBadge(status: string) {
   const map: Record<string, { bg: string; text: string; icon: any }> = {
     complete: { bg: 'bg-emerald-50 border-emerald-200', text: 'text-emerald-700', icon: <CheckCircle size={12} /> },
@@ -106,6 +121,34 @@ export default function DashboardPage() {
   const handleExport = (jobId: string, format: string) => {
     window.open(`/api/jobs/${jobId}/export?format=${format}`, '_blank');
     setExportDropdownOpen(false);
+  };
+
+  const handleDelete = async (jobId: string) => {
+    if (!confirm('Delete this document and all its extracted data?')) return;
+    try {
+      const res = await fetch(`/api/jobs/${jobId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete');
+      setJobs((prev) => prev.filter((j) => j.job_id !== jobId));
+      if (selectedJob?.job_id === jobId) { setSelectedJob(null); setSelectedCheckIdx(null); }
+    } catch (e: any) {
+      setError(e.message);
+    }
+  };
+
+  const handleRetryFailed = async (jobId: string) => {
+    setReExtracting(true);
+    try {
+      const res = await fetch('/api/start-extraction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: jobId, methods: ['hybrid'], force: false }),
+      });
+      if (!res.ok) throw new Error('Failed to start retry');
+      window.location.href = `/process/${jobId}?methods=hybrid`;
+    } catch (e: any) {
+      setError(e.message);
+      setReExtracting(false);
+    }
   };
 
   const handleReExtract = async (jobId: string) => {
@@ -248,32 +291,87 @@ export default function DashboardPage() {
             <table className="w-full text-[13px]">
               <thead>
                 <tr className="border-b border-gray-50 bg-gray-50/50">
-                  <th className="px-4 py-2.5 text-left text-[11px] font-medium text-gray-400 uppercase tracking-wider">Document</th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-medium text-gray-400 uppercase tracking-wider">Status</th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">Pages</th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">Cheques</th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-medium text-gray-400 uppercase tracking-wider">Format</th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-medium text-gray-400 uppercase tracking-wider">Size</th>
-                  <th className="px-4 py-2.5 text-left text-[11px] font-medium text-gray-400 uppercase tracking-wider">Date</th>
-                  <th className="px-4 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">Actions</th>
+                  <th className="px-3 py-2.5 text-left text-[11px] font-medium text-gray-400 uppercase tracking-wider">Document</th>
+                  <th className="px-3 py-2.5 text-left text-[11px] font-medium text-gray-400 uppercase tracking-wider">Status</th>
+                  <th className="px-3 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">Pages</th>
+                  <th className="px-3 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">Cheques</th>
+                  <th className="px-3 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">Extracted</th>
+                  <th className="px-3 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">
+                    <span title="Tesseract OCR">Tess</span>
+                  </th>
+                  <th className="px-3 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">
+                    <span title="NuMarkdown AI">NuMD</span>
+                  </th>
+                  <th className="px-3 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">
+                    <span title="Gemini AI">Gemini</span>
+                  </th>
+                  <th className="px-3 py-2.5 text-left text-[11px] font-medium text-gray-400 uppercase tracking-wider">Date</th>
+                  <th className="px-3 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {jobs.map((job) => (
+                {jobs.map((job) => {
+                  const stats = jobExtractionStats(job);
+                  const pct = stats.total > 0 ? Math.round((stats.extracted / stats.total) * 100) : 0;
+                  const tessCount = stats.byMethod['tesseract'] ?? 0;
+                  const numdCount = stats.byMethod['numarkdown'] ?? 0;
+                  const gemiCount = stats.byMethod['gemini'] ?? 0;
+                  const hasTess = stats.methods.includes('tesseract');
+                  const hasNumd = stats.methods.includes('numarkdown');
+                  const hasGemi = stats.methods.includes('gemini');
+                  return (
                   <tr key={job.job_id} className="hover:bg-gray-50/50 transition">
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-3">
                       <div className="flex items-center gap-2">
                         <FileText size={14} className="text-gray-400 flex-shrink-0" />
-                        <span className="font-medium text-gray-900 truncate max-w-[180px]">{job.pdf_name}</span>
+                        <span className="font-medium text-gray-900 truncate max-w-[160px]">{job.pdf_name}</span>
                       </div>
                     </td>
-                    <td className="px-4 py-3">{statusBadge(job.status)}</td>
-                    <td className="px-4 py-3 text-center text-gray-600">{job.total_pages}</td>
-                    <td className="px-4 py-3 text-center font-medium text-gray-900">{job.total_checks}</td>
-                    <td className="px-4 py-3 text-gray-500 text-[12px]">{job.doc_format || '—'}</td>
-                    <td className="px-4 py-3 text-gray-500 text-[12px]">{fmtSize(job.file_size)}</td>
-                    <td className="px-4 py-3 text-gray-500 text-[12px]">{fmtDate(job.created_at)}</td>
-                    <td className="px-4 py-3">
+                    <td className="px-3 py-3">{statusBadge(job.status)}</td>
+                    <td className="px-3 py-3 text-center text-gray-600">{job.total_pages}</td>
+                    <td className="px-3 py-3 text-center font-medium text-gray-900">{job.total_checks}</td>
+                    <td className="px-3 py-3">
+                      <div className="flex flex-col items-center gap-1">
+                        <span className={`text-[12px] font-bold ${pct === 100 ? 'text-emerald-600' : pct > 0 ? 'text-blue-600' : 'text-gray-400'}`}>
+                          {stats.extracted}/{stats.total}
+                        </span>
+                        <div className="w-14 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                          <div
+                            className={`h-full rounded-full transition-all ${pct === 100 ? 'bg-emerald-500' : pct > 0 ? 'bg-blue-500' : 'bg-gray-200'}`}
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      {hasTess ? (
+                        <span className={`inline-flex items-center justify-center w-7 h-5 rounded text-[10px] font-bold ${tessCount === stats.total ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
+                          {tessCount}
+                        </span>
+                      ) : (
+                        <span className="text-gray-300 text-[11px]">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      {hasNumd ? (
+                        <span className={`inline-flex items-center justify-center w-7 h-5 rounded text-[10px] font-bold ${numdCount === stats.total ? 'bg-emerald-100 text-emerald-700' : 'bg-purple-100 text-purple-700'}`}>
+                          {numdCount}
+                        </span>
+                      ) : (
+                        <span className="text-gray-300 text-[11px]">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 text-center">
+                      {hasGemi ? (
+                        <span className={`inline-flex items-center justify-center w-7 h-5 rounded text-[10px] font-bold ${gemiCount === stats.total ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                          {gemiCount}
+                        </span>
+                      ) : (
+                        <span className="text-gray-300 text-[11px]">—</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 text-gray-500 text-[12px]">{fmtDate(job.created_at)}</td>
+                    <td className="px-3 py-3">
                       <div className="flex items-center justify-center gap-1">
                         <button
                           onClick={() => { setSelectedJob(job); setPdfOpen(true); }}
@@ -309,10 +407,36 @@ export default function DashboardPage() {
                             <Loader2 size={14} />
                           </Link>
                         )}
+                        {job.status === 'error' && (
+                          <button
+                            onClick={() => handleRetryFailed(job.job_id)}
+                            className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded transition"
+                            title="Retry Extraction"
+                          >
+                            <RotateCcw size={14} />
+                          </button>
+                        )}
+                        {job.status === 'complete' && stats.extracted < stats.total && stats.total > 0 && (
+                          <button
+                            onClick={() => handleRetryFailed(job.job_id)}
+                            className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded transition"
+                            title={`Retry ${stats.total - stats.extracted} missing`}
+                          >
+                            <RotateCcw size={14} />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDelete(job.job_id)}
+                          className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition"
+                          title="Delete"
+                        >
+                          <Trash2 size={14} />
+                        </button>
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -527,59 +651,122 @@ export default function DashboardPage() {
                   style={{ transform: `scale(${imageZoom})`, transformOrigin: 'center', maxWidth: '100%', maxHeight: '68vh', objectFit: 'contain' }}
                 />
               </div>
-              {/* Data */}
-              <div className="w-1/2 p-5 overflow-y-auto">
-                <h4 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-3">Extracted Data</h4>
-                {selectedCheck.extraction ? (
-                  <div className="space-y-2">
-                    {[
-                      { label: 'Payee', field: 'payee' },
-                      { label: 'Amount', field: 'amount' },
-                      { label: 'Date', field: 'checkDate' },
-                      { label: 'Check #', field: 'checkNumber' },
-                      { label: 'Bank', field: 'bankName' },
-                      { label: 'Memo', field: 'memo' },
-                    ].map(({ label, field }) => {
-                      const val = extVal(selectedCheck.extraction, field);
-                      const conf = extConf(selectedCheck.extraction, field);
-                      if (!val) return null;
-                      return (
-                        <div key={field} className="flex items-center justify-between p-2.5 bg-gray-50 rounded-lg">
-                          <div>
-                            <p className="text-[11px] text-gray-400">{label}</p>
-                            <p className="text-[13px] font-medium text-gray-900">{val}</p>
-                          </div>
-                          {conf > 0 && (
-                            <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium ${
-                              conf >= 0.9 ? 'bg-emerald-100 text-emerald-700' :
-                              conf >= 0.7 ? 'bg-amber-100 text-amber-700' :
-                              'bg-red-100 text-red-700'
+              {/* Data — Engine Comparison Table */}
+              <div className="w-1/2 p-4 overflow-y-auto">
+                <h4 className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-2">Extraction Comparison</h4>
+                {selectedCheck.extraction ? (() => {
+                  const engines = ['tesseract', 'numarkdown', 'gemini'];
+                  const engineLabels: Record<string, string> = { tesseract: 'Tesseract', numarkdown: 'NuMarkdown', gemini: 'Gemini' };
+                  const er = selectedCheck.engine_results || {};
+                  const fields = [
+                    { label: 'Payee', field: 'payee' },
+                    { label: 'Amount', field: 'amount' },
+                    { label: 'Date', field: 'checkDate' },
+                    { label: 'Check #', field: 'checkNumber' },
+                    { label: 'Bank', field: 'bankName' },
+                    { label: 'Memo', field: 'memo' },
+                  ];
+                  const times = selectedCheck.engine_times_ms || {};
+                  return (
+                    <div className="space-y-3">
+                      {/* Engine timing badges */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {engines.map(eng => {
+                          const ms = times[eng];
+                          const hasData = !!er[eng];
+                          return (
+                            <span key={eng} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium ${
+                              hasData ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-gray-50 text-gray-400 border border-gray-100'
                             }`}>
-                              {Math.round(conf * 100)}%
+                              {engineLabels[eng]}
+                              {ms != null && ms > 0 && <span className="opacity-60">{ms}ms</span>}
                             </span>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {selectedCheck.extraction.micr && typeof selectedCheck.extraction.micr === 'object' && (
-                      <div className="mt-3 p-2.5 bg-sky-50 rounded-lg">
-                        <p className="text-[11px] text-sky-600 font-semibold uppercase mb-1.5">MICR</p>
-                        <div className="space-y-0.5 text-[12px]">
-                          {selectedCheck.extraction.micr.routing?.value && (
-                            <p><span className="text-gray-400">Routing:</span> {selectedCheck.extraction.micr.routing.value}</p>
-                          )}
-                          {selectedCheck.extraction.micr.account?.value && (
-                            <p><span className="text-gray-400">Account:</span> {selectedCheck.extraction.micr.account.value}</p>
-                          )}
-                        </div>
+                          );
+                        })}
                       </div>
-                    )}
-                  </div>
-                ) : (
+
+                      {/* Comparison table */}
+                      <div className="border border-gray-200 rounded-lg overflow-hidden">
+                        <table className="w-full text-[11px]">
+                          <thead>
+                            <tr className="bg-gray-50 border-b border-gray-200">
+                              <th className="px-2 py-1.5 text-left font-semibold text-gray-500 w-[60px]">Field</th>
+                              {engines.filter(e => er[e]).map(eng => (
+                                <th key={eng} className="px-2 py-1.5 text-left font-semibold text-gray-500">{engineLabels[eng]}</th>
+                              ))}
+                              <th className="px-2 py-1.5 text-left font-semibold text-blue-600 bg-blue-50/50">Hybrid</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {fields.map(({ label, field }) => {
+                              const hybridVal = extVal(selectedCheck.extraction, field);
+                              const hybridConf = extConf(selectedCheck.extraction, field);
+                              const activeEngines = engines.filter(e => er[e]);
+                              const hasAnyValue = hybridVal || activeEngines.some(e => {
+                                const f = er[e]?.[field];
+                                return f && (typeof f === 'object' ? f.value : f);
+                              });
+                              if (!hasAnyValue) return null;
+                              return (
+                                <tr key={field} className="hover:bg-gray-50/50">
+                                  <td className="px-2 py-1.5 font-medium text-gray-500 whitespace-nowrap">{label}</td>
+                                  {activeEngines.map(eng => {
+                                    const f = er[eng]?.[field];
+                                    const val = f ? (typeof f === 'object' ? f.value || '' : String(f)) : '';
+                                    const conf = f && typeof f === 'object' ? f.confidence || 0 : 0;
+                                    return (
+                                      <td key={eng} className="px-2 py-1.5">
+                                        <div className="text-gray-900 truncate max-w-[100px]" title={val}>{val || <span className="text-gray-300">—</span>}</div>
+                                        {conf > 0 && (
+                                          <span className={`text-[9px] font-medium ${
+                                            conf >= 0.9 ? 'text-emerald-600' : conf >= 0.7 ? 'text-amber-600' : 'text-red-500'
+                                          }`}>{Math.round(conf * 100)}%</span>
+                                        )}
+                                      </td>
+                                    );
+                                  })}
+                                  <td className="px-2 py-1.5 bg-blue-50/30">
+                                    <div className="text-gray-900 font-medium truncate max-w-[100px]" title={hybridVal}>{hybridVal || <span className="text-gray-300">—</span>}</div>
+                                    {hybridConf > 0 && (
+                                      <span className={`text-[9px] font-medium ${
+                                        hybridConf >= 0.9 ? 'text-emerald-600' : hybridConf >= 0.7 ? 'text-amber-600' : 'text-red-500'
+                                      }`}>{Math.round(hybridConf * 100)}%</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      {/* MICR section */}
+                      {selectedCheck.extraction.micr && typeof selectedCheck.extraction.micr === 'object' && (
+                        <div className="p-2.5 bg-sky-50 rounded-lg">
+                          <p className="text-[10px] text-sky-600 font-semibold uppercase mb-1">MICR</p>
+                          <div className="space-y-0.5 text-[11px]">
+                            {selectedCheck.extraction.micr.routing?.value && (
+                              <p><span className="text-gray-400">Routing:</span> <span className="font-medium">{selectedCheck.extraction.micr.routing.value}</span></p>
+                            )}
+                            {selectedCheck.extraction.micr.account?.value && (
+                              <p><span className="text-gray-400">Account:</span> <span className="font-medium">{selectedCheck.extraction.micr.account.value}</span></p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Methods used */}
+                      {selectedCheck.methods_used && selectedCheck.methods_used.length > 0 && (
+                        <div className="text-[10px] text-gray-400">
+                          Methods: {selectedCheck.methods_used.join(', ')}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })() : (
                   <p className="text-[13px] text-gray-400">No extraction data</p>
                 )}
-                <div className="mt-4 pt-3 border-t text-[11px] text-gray-400">
+                <div className="mt-3 pt-2 border-t text-[10px] text-gray-400">
                   {selectedCheck.width > 0 && <p>{selectedCheck.width} × {selectedCheck.height}px</p>}
                   <p className="mt-0.5">← → arrow keys to navigate</p>
                 </div>

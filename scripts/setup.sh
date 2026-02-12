@@ -1,119 +1,119 @@
 #!/bin/bash
-
 set -e
 
-echo "🚀 OCR Check Processor - Setup Script"
-echo "======================================"
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT_DIR"
+
+echo ""
+echo "  CheckPro - Setup"
+echo "  ================"
 echo ""
 
-# Check prerequisites
-echo "📋 Checking prerequisites..."
+# ── Prerequisites ──────────────────────────────────────────
+echo "  Checking prerequisites..."
+
+fail=0
+
+# Python
+if command -v python3 &> /dev/null; then
+    PY=python3
+elif command -v python &> /dev/null; then
+    PY=python
+else
+    echo "  [x] Python 3.9+ is required. Install from https://python.org"
+    fail=1
+fi
+if [ $fail -eq 0 ]; then
+    echo "  [ok] $($PY --version)"
+fi
 
 # Node.js
 if ! command -v node &> /dev/null; then
-    echo "❌ Node.js is not installed. Please install Node.js >= 18.0.0"
-    exit 1
-fi
-echo "✅ Node.js $(node -v)"
-
-# npm
-if ! command -v npm &> /dev/null; then
-    echo "❌ npm is not installed"
-    exit 1
-fi
-echo "✅ npm $(npm -v)"
-
-# Redis
-if ! command -v redis-cli &> /dev/null; then
-    echo "⚠️  Redis is not installed. Install it for queue functionality."
+    echo "  [x] Node.js 18+ is required. Install from https://nodejs.org"
+    fail=1
 else
-    echo "✅ Redis installed"
+    echo "  [ok] Node.js $(node -v)"
 fi
 
 # Tesseract
 if ! command -v tesseract &> /dev/null; then
-    echo "⚠️  Tesseract OCR is not installed. Install it for OCR functionality."
+    echo "  [!] Tesseract OCR not found. Install:"
+    echo "      macOS:  brew install tesseract"
+    echo "      Ubuntu: sudo apt install tesseract-ocr"
+    echo "      Windows: choco install tesseract"
 else
-    echo "✅ Tesseract $(tesseract --version | head -n 1)"
+    echo "  [ok] Tesseract $(tesseract --version 2>&1 | head -1)"
 fi
 
+# poppler (for pdf2image)
+if ! command -v pdftoppm &> /dev/null; then
+    echo "  [!] poppler-utils not found (needed for PDF rendering). Install:"
+    echo "      macOS:  brew install poppler"
+    echo "      Ubuntu: sudo apt install poppler-utils"
+    echo "      Windows: choco install poppler"
+else
+    echo "  [ok] poppler (pdftoppm found)"
+fi
+
+if [ $fail -ne 0 ]; then
+    echo ""
+    echo "  Fix the issues above and re-run this script."
+    exit 1
+fi
+
+# ── Environment files ──────────────────────────────────────
 echo ""
-echo "📦 Installing dependencies..."
+echo "  Setting up environment files..."
 
-# Root dependencies
-echo "Installing root dependencies..."
-npm install
-
-# Frontend dependencies
-echo "Installing frontend dependencies..."
-cd frontend
-npm install
-cd ..
-
-# Backend dependencies
-echo "Installing backend dependencies..."
-cd backend
-npm install
-cd ..
-
-echo ""
-echo "🔧 Setting up environment files..."
-
-# Copy environment files
 if [ ! -f .env ]; then
     cp .env.example .env
-    echo "✅ Created .env"
+    echo "  [ok] Created .env from .env.example"
 else
-    echo "⚠️  .env already exists"
+    echo "  [ok] .env exists"
 fi
 
 if [ ! -f frontend/.env.local ]; then
-    cp frontend/.env.example frontend/.env.local
-    echo "✅ Created frontend/.env.local"
+    cat > frontend/.env.local << 'EOF'
+NEXT_PUBLIC_SUPABASE_URL=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=
+NEXT_PUBLIC_BACKEND_URL=http://localhost:3090
+EOF
+    echo "  [ok] Created frontend/.env.local"
 else
-    echo "⚠️  frontend/.env.local already exists"
+    echo "  [ok] frontend/.env.local exists"
 fi
 
-if [ ! -f backend/.env ]; then
-    cp backend/.env.example backend/.env
-    echo "✅ Created backend/.env"
-else
-    echo "⚠️  backend/.env already exists"
-fi
+# ── Backend (Python) ──────────────────────────────────────
+echo ""
+echo "  Installing backend dependencies..."
 
-echo ""
-echo "🗄️  Database setup..."
-read -p "Do you want to run Supabase migrations now? (y/N) " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    if command -v supabase &> /dev/null; then
-        cd supabase
-        supabase db push
-        cd ..
-        echo "✅ Migrations completed"
-    else
-        echo "❌ Supabase CLI not installed. Please install it and run 'supabase db push' manually."
-    fi
-fi
+cd backend
+$PY -m pip install --quiet -r requirements.txt
+cd "$ROOT_DIR"
+echo "  [ok] Python packages installed"
 
+# ── Frontend (Next.js) ────────────────────────────────────
 echo ""
-echo "✅ Setup complete!"
+echo "  Installing frontend dependencies..."
+
+cd frontend
+npm install --silent
+cd "$ROOT_DIR"
+echo "  [ok] Node modules installed"
+
+# ── Done ──────────────────────────────────────────────────
 echo ""
-echo "📝 Next steps:"
-echo "1. Edit .env files with your credentials:"
-echo "   - .env"
-echo "   - frontend/.env.local"
-echo "   - backend/.env"
+echo "  Setup complete!"
 echo ""
-echo "2. Start the development servers:"
-echo "   ./scripts/dev.sh"
+echo "  Next steps:"
+echo "  1. Edit .env with your Supabase + Gemini credentials"
+echo "  2. Edit frontend/.env.local with your Supabase URL + anon key"
+echo "  3. Run the Supabase migration SQL in your Supabase dashboard"
+echo "     (see supabase/migrations/)"
+echo "  4. Start the app:"
+echo "       Backend:  cd backend && python api_server.py"
+echo "       Frontend: cd frontend && npm run dev"
 echo ""
-echo "   Or start individually:"
-echo "   - Frontend: cd frontend && npm run dev"
-echo "   - Backend: cd backend && npm run dev"
+echo "  Or use Docker:"
+echo "       cd docker && docker compose up --build"
 echo ""
-echo "3. Access the application:"
-echo "   - Frontend: http://localhost:3000"
-echo "   - Backend: http://localhost:4000"
-echo ""
-echo "📚 For more information, see README.md"

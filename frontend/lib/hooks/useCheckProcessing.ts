@@ -21,6 +21,12 @@ export interface MethodProgress {
     error?: string
 }
 
+export interface ProgressLog {
+    ts: string
+    msg: string
+    level: 'info' | 'success' | 'warn' | 'error'
+}
+
 export interface JobData {
     job_id: string
     status: string
@@ -34,6 +40,10 @@ export interface JobData {
     completed_at: string | null
     methods_progress?: MethodProgress[]
     selected_methods?: string[]
+    extraction_progress?: number
+    progress_logs?: ProgressLog[]
+    processing_count?: number
+    processed_count?: number
 }
 
 const STAGE_MAP: Record<string, string> = {
@@ -158,13 +168,19 @@ export function useCheckProcessing(jobId: string, selectedMethods?: string[]) {
                 })
             }
 
-            // Calculate overall progress
-            if (data.status === 'pending' || data.status === 'analyzing') setProgress(5)
-            else if (data.status === 'detecting') setProgress(20)
-            else if (data.status === 'extracting' || data.status === 'ocr_running') setProgress(40)
-            else if (data.status === 'ai_running' || data.status === 'hybrid_running') setProgress(60)
-            else if (data.status === 'merging') setProgress(85)
-            else if (data.status === 'complete') {
+            // Calculate overall progress using real extraction_progress from backend
+            // Pipeline: upload(0-10) → segmentation(10-20) → extraction(20-90) → merging(90-95) → complete(100)
+            if (data.status === 'pending' || data.status === 'analyzing') {
+                setProgress(5)
+            } else if (data.status === 'detecting') {
+                setProgress(15)
+            } else if (data.status === 'extracting' || data.status === 'ocr_running' || data.status === 'ai_running' || data.status === 'hybrid_running') {
+                // Use real extraction_progress (0-100) mapped to 20-90 range
+                const extPct = data.extraction_progress ?? 0
+                setProgress(20 + Math.round(extPct * 0.7))
+            } else if (data.status === 'merging') {
+                setProgress(92)
+            } else if (data.status === 'complete') {
                 setProgress(100)
                 setIsComplete(true)
                 return true // stop polling
@@ -191,7 +207,7 @@ export function useCheckProcessing(jobId: string, selectedMethods?: string[]) {
                 stopped = true
                 clearInterval(interval)
             }
-        }, 1500)
+        }, 1000) // Poll every 1s for smoother progress updates
 
         // Initial poll
         poll()

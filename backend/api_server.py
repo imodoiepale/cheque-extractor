@@ -28,11 +28,12 @@ from dotenv import load_dotenv
 load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env.local")
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
 from PIL import Image as PILImage
+import hashlib
 
 from check_extractor import CheckExtractorApp
 
@@ -113,15 +114,98 @@ def _supabase_upload_file(bucket: str, path: str, file_bytes: bytes, content_typ
     return f"{_sb_url}/storage/v1/object/public/{bucket}/{path}"
 
 
-def _cleanup_local_files(job_id: str, pdf_path: str = None):
-    """Remove local files after successful storage upload to Supabase.
-    Deletes: uploaded PDF, output directory (pages, images, ocr_results).
-    Only runs if Supabase storage is configured.
-    """
+def _supabase_select(table: str, columns: str = "*", filters: dict = None, limit: int = 200):
+    """Select rows from a Supabase table. Returns list of dicts or empty list."""
     if not _supabase_ok:
-        print(f"  Skipping cleanup for {job_id} — Supabase not configured, keeping local files")
-        return
+        return []
+    query = f"{_sb_url}/rest/v1/{table}?select={columns}"
+    if filters:
+        query += "&" + "&".join(f"{k}=eq.{v}" for k, v in filters.items())
+    query += f"&limit={limit}&order=created_at.desc"
+    try:
+        resp = _requests.get(query, headers=_sb_headers(), timeout=15)
+        if resp.status_code >= 400:
+            print(f"  Supabase select error ({resp.status_code}): {resp.text[:200]}")
+            return []
+        return resp.json()
+    except Exception as e:
+        print(f"  Supabase select exception: {e}")
+        return []
 
+
+def _supabase_rpc(fn_name: str, params: dict = None):
+    """Call a Supabase RPC function."""
+    if not _supabase_ok:
+        return None
+    try:
+        resp = _requests.post(
+            f"{_sb_url}/rest/v1/rpc/{fn_name}",
+            headers=_sb_headers(),
+            json=params or {},
+            timeout=15,
+        )
+        if resp.status_code >= 400:
+            print(f"  Supabase RPC {fn_name} error ({resp.status_code}): {resp.text[:200]}")
+            return None
+        return resp.json()
+    except Exception as e:
+        print(f"  Supabase RPC {fn_name} exception: {e}")
+        return None
+
+
+def _load_jobs_from_supabase():
+    """Load existing jobs from Supabase into in-memory store on startup."""
+    rows = _supabase_select("check_jobs")
+    if not rows:
+        return
+    loaded = 0
+    for row in rows:
+        jid = row.get("job_id")
+        if not jid or jid in jobs:
+            continue
+        checks_data = row.get("checks_data", [])
+        if isinstance(checks_data, str):
+            try:
+                checks_data = json.loads(checks_data)
+            except Exception:
+                checks_data = []
+        # Rebuild in-memory check list from DB
+        checks = []
+        for cd in (checks_data or []):
+            checks.append({
+                "check_id": cd.get("check_id", ""),
+                "page": cd.get("page", 0),
+                "width": cd.get("width", 0),
+                "height": cd.get("height", 0),
+                "extraction": cd.get("extraction"),
+                "methods_used": cd.get("methods_used", []),
+                "storage_url": cd.get("image_url", ""),
+                "engine_results": cd.get("engine_results", {}),
+                "engine_times_ms": cd.get("engine_times_ms", {}),
+            })
+        jobs[jid] = {
+            "job_id": jid,
+            "status": row.get("status", "unknown"),
+            "pdf_name": row.get("pdf_name", ""),
+            "file_size": row.get("file_size"),
+            "doc_format": row.get("doc_format"),
+            "total_pages": row.get("total_pages", 0),
+            "total_checks": row.get("total_checks", 0),
+            "checks": checks,
+            "error": row.get("error_message"),
+            "created_at": row.get("created_at", ""),
+            "completed_at": row.get("completed_at"),
+        }
+        loaded += 1
+    if loaded:
+        print(f"✓ Loaded {loaded} jobs from Supabase")
+
+
+def _cleanup_local_files(job_id: str, pdf_path: str = None, keep_images: bool = False):
+    """Remove local files after extraction completes.
+    Always deletes: uploaded PDF, OCR result JSONs, page images.
+    Images are kept if keep_images=True (e.g. when Supabase storage upload failed).
+    """
     cleaned = []
     # Remove uploaded PDF
     if pdf_path and os.path.exists(pdf_path):
@@ -131,17 +215,113 @@ def _cleanup_local_files(job_id: str, pdf_path: str = None):
         except Exception as e:
             print(f"  Cleanup: failed to remove PDF {pdf_path}: {e}")
 
-    # Remove output directory (pages, images, ocr_results)
     out_dir = OUTPUT_DIR / job_id
-    if out_dir.exists():
+    if not out_dir.exists():
+        return
+
+    # Always remove OCR result JSONs
+    ocr_dir = out_dir / "ocr_results"
+    if ocr_dir.exists():
         try:
-            shutil.rmtree(str(out_dir))
-            cleaned.append(f"output/{job_id}/")
+            shutil.rmtree(str(ocr_dir))
+            cleaned.append("ocr_results/")
         except Exception as e:
-            print(f"  Cleanup: failed to remove {out_dir}: {e}")
+            print(f"  Cleanup: failed to remove {ocr_dir}: {e}")
+
+    # Always remove page images
+    pages_dir = out_dir / "pages"
+    if pages_dir.exists():
+        try:
+            shutil.rmtree(str(pages_dir))
+            cleaned.append("pages/")
+        except Exception as e:
+            print(f"  Cleanup: failed to remove {pages_dir}: {e}")
+
+    # Remove check images only if they were uploaded to Supabase Storage
+    if not keep_images:
+        images_dir = out_dir / "images"
+        if images_dir.exists():
+            try:
+                shutil.rmtree(str(images_dir))
+                cleaned.append("images/")
+            except Exception as e:
+                print(f"  Cleanup: failed to remove {images_dir}: {e}")
+
+    # Remove the job output dir if it's now empty
+    try:
+        if out_dir.exists() and not any(out_dir.iterdir()):
+            out_dir.rmdir()
+            cleaned.append(f"output/{job_id}/")
+    except Exception:
+        pass
 
     if cleaned:
         print(f"  Cleanup {job_id}: removed {', '.join(cleaned)}")
+
+
+def _load_engine_results(results_dir: str, check: dict):
+    """Load per-engine OCR results + hybrid into a check dict.
+    Populates check['extraction'], check['methods_used'], and check['engine_results'].
+    """
+    cid = check["check_id"]
+    check_dir = os.path.join(results_dir, cid)
+    if not os.path.isdir(check_dir):
+        return
+    # Load hybrid
+    hybrid_path = os.path.join(check_dir, "hybrid.json")
+    if os.path.exists(hybrid_path):
+        with open(hybrid_path) as f:
+            hybrid = json.load(f)
+        check["extraction"] = hybrid.get("extraction", {})
+        check["methods_used"] = hybrid.get("methods_used", [])
+        check["engine_times_ms"] = hybrid.get("engine_times_ms", {})
+    # Load individual engine results
+    engine_results = {}
+    for engine in ("tesseract", "numarkdown", "gemini"):
+        eng_path = os.path.join(check_dir, f"{engine}.json")
+        if os.path.exists(eng_path):
+            try:
+                with open(eng_path) as f:
+                    data = json.load(f)
+                engine_results[engine] = data.get("fields", {})
+            except Exception:
+                pass
+    if engine_results:
+        check["engine_results"] = engine_results
+
+
+# ── Optional JWT auth ────────────────────────────────────────
+_require_auth = os.environ.get("REQUIRE_AUTH", "").lower() in ("true", "1", "yes")
+_jwt_secret = os.environ.get("SUPABASE_JWT_SECRET", "")
+
+try:
+    import jwt as _pyjwt
+    _HAS_JWT = True
+except ImportError:
+    _HAS_JWT = False
+    if _require_auth:
+        print("⚠ REQUIRE_AUTH is set but PyJWT not installed. Auth disabled.")
+        _require_auth = False
+
+
+def _verify_token(request: Request):
+    """Verify Supabase JWT from Authorization header. Skips if auth not required."""
+    if not _require_auth:
+        return None
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(401, "Missing or invalid Authorization header")
+    token = auth[7:]
+    try:
+        payload = _pyjwt.decode(
+            token,
+            _jwt_secret or _sb_key,
+            algorithms=["HS256"],
+            options={"verify_aud": False},
+        )
+        return payload
+    except Exception as e:
+        raise HTTPException(401, f"Invalid token: {e}")
 
 
 app = FastAPI(title="Check Extractor API", version="1.0.0")
@@ -154,6 +334,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+if _require_auth:
+    print("✓ Backend auth enabled — JWT verification required on API calls")
+
 # In-memory job store
 jobs: dict = {}
 _SCRIPT_DIR = Path(__file__).resolve().parent
@@ -161,6 +344,9 @@ UPLOAD_DIR = _SCRIPT_DIR / "uploads"
 OUTPUT_DIR = _SCRIPT_DIR / "output"
 UPLOAD_DIR.mkdir(exist_ok=True)
 OUTPUT_DIR.mkdir(exist_ok=True)
+
+# Load persisted jobs from Supabase on startup
+_load_jobs_from_supabase()
 
 
 def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
@@ -201,7 +387,7 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
         db_row = _supabase_insert("check_jobs", {
             "job_id": job_id,
             "pdf_name": pdf_name,
-            "status": "processing",
+            "status": "detecting",
             "doc_format": jobs[job_id]["doc_format"],
             "total_pages": jobs[job_id]["total_pages"],
             "total_checks": len(checks),
@@ -235,19 +421,29 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
                 print(f"  Image upload failed for {check['check_id']}: {e}")
 
         # ── Phase 2: Run OCR (Tesseract + Gemini) ────────────────
-        jobs[job_id]["status"] = "ocr"
+        jobs[job_id]["status"] = "ocr_running"
+        jobs[job_id]["processing_count"] = len(manifest)
+        jobs[job_id]["processed_count"] = 0
+        jobs[job_id]["progress_logs"] = []
+        jobs[job_id]["extraction_progress"] = 0
+
+        def _on_progress_legacy(info):
+            evt = info.get("event")
+            total = info.get("total", 1)
+            if evt == "check_done":
+                done = info.get("index", 0) + 1
+                pct = int((done / max(total, 1)) * 100)
+                jobs[job_id]["processed_count"] = done
+                jobs[job_id]["extraction_progress"] = pct
+
         try:
-            app_ext.run_parallel_ocr(manifest)
+            app_ext.run_parallel_ocr(manifest, progress_callback=_on_progress_legacy)
             app_ext.save_summary(manifest)
 
-            # Load hybrid results back into checks
+            # Load all engine results back into checks
             results_dir = os.path.join(out_dir, "ocr_results")
             for check in checks:
-                hybrid_path = os.path.join(results_dir, check["check_id"], "hybrid.json")
-                if os.path.exists(hybrid_path):
-                    with open(hybrid_path) as f:
-                        hybrid = json.load(f)
-                    check["extraction"] = hybrid.get("extraction", {})
+                _load_engine_results(results_dir, check)
         except Exception as ocr_err:
             print(f"OCR phase error (non-fatal): {ocr_err}")
             traceback.print_exc()
@@ -263,6 +459,9 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
                 "height": c["height"],
                 "image_url": c.get("storage_url", f"/api/checks/{job_id}/{c['check_id']}/image"),
                 "extraction": c.get("extraction"),
+                "methods_used": c.get("methods_used", []),
+                "engine_results": c.get("engine_results", {}),
+                "engine_times_ms": c.get("engine_times_ms", {}),
             })
 
         _supabase_update("check_jobs", {"job_id": job_id}, {
@@ -280,8 +479,23 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
         jobs[job_id]["completed_at"] = datetime.now().isoformat()
         jobs[job_id]["checks"] = checks
 
+        # Track incomplete extractions
+        incomplete = [c for c in checks if not c.get("extraction")]
+        if incomplete:
+            jobs[job_id]["has_incomplete"] = True
+            jobs[job_id]["incomplete_count"] = len(incomplete)
+            print(f"  Warning: {len(incomplete)}/{len(checks)} checks have no extraction")
+        else:
+            jobs[job_id]["has_incomplete"] = False
+            jobs[job_id]["incomplete_count"] = 0
+
+        # Flatten checks_data into individual rows in the checks table
+        _supabase_rpc("flatten_checks_from_job", {"p_job_id": job_id})
+
         # ── Cleanup local files after successful DB save ───────────
-        _cleanup_local_files(job_id, pdf_path)
+        # Keep images locally only if storage upload failed
+        any_missing_storage = any(not c.get("storage_url") for c in checks)
+        _cleanup_local_files(job_id, pdf_path, keep_images=any_missing_storage)
 
     except Exception as e:
         jobs[job_id]["status"] = "error"
@@ -302,7 +516,7 @@ def health():
 
 
 @app.post("/api/upload-pdf")
-async def upload_pdf(file: UploadFile = File(...)):
+async def upload_pdf(file: UploadFile = File(...), _auth=Depends(_verify_token)):
     """Upload a PDF file, start detection + extraction in background."""
     if not file.filename:
         raise HTTPException(400, "No file provided")
@@ -311,14 +525,24 @@ async def upload_pdf(file: UploadFile = File(...)):
     if ext not in ("pdf",):
         raise HTTPException(400, "Only PDF files are supported")
 
+    content = await file.read()
+    file_size = len(content)
+
+    # Duplicate detection: check if same filename + size already exists
+    file_hash = hashlib.md5(content).hexdigest()
+    for existing in jobs.values():
+        if (existing.get("pdf_name") == file.filename
+                and existing.get("file_size") == file_size
+                and existing.get("file_hash") == file_hash
+                and existing.get("status") not in ("error",)):
+            return {"job_id": existing["job_id"], "status": existing["status"],
+                    "message": "Duplicate detected — returning existing job", "duplicate": True}
+
     job_id = str(uuid.uuid4())[:8]
     pdf_path = str(UPLOAD_DIR / f"{job_id}.pdf")
 
     with open(pdf_path, "wb") as f:
-        content = await file.read()
         f.write(content)
-
-    file_size = len(content)
 
     jobs[job_id] = {
         "job_id": job_id,
@@ -326,6 +550,7 @@ async def upload_pdf(file: UploadFile = File(...)):
         "pdf_name": file.filename,
         "pdf_path": pdf_path,
         "file_size": file_size,
+        "file_hash": file_hash,
         "doc_format": None,
         "total_pages": 0,
         "total_checks": 0,
@@ -344,7 +569,7 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 
 @app.post("/api/upload-analyze")
-async def upload_analyze(file: UploadFile = File(...)):
+async def upload_analyze(file: UploadFile = File(...), _auth=Depends(_verify_token)):
     """Upload a PDF, detect cheques, return page info with dimensions — no OCR yet."""
     if not file.filename:
         raise HTTPException(400, "No file provided")
@@ -353,14 +578,24 @@ async def upload_analyze(file: UploadFile = File(...)):
     if ext not in ("pdf",):
         raise HTTPException(400, "Only PDF files are supported")
 
+    content = await file.read()
+    file_size = len(content)
+
+    # Duplicate detection
+    file_hash = hashlib.md5(content).hexdigest()
+    for existing in jobs.values():
+        if (existing.get("pdf_name") == file.filename
+                and existing.get("file_size") == file_size
+                and existing.get("file_hash") == file_hash
+                and existing.get("status") not in ("error",)):
+            return {"job_id": existing["job_id"], "status": existing["status"],
+                    "message": "Duplicate detected — returning existing job", "duplicate": True}
+
     job_id = str(uuid.uuid4())[:8]
     pdf_path = str(UPLOAD_DIR / f"{job_id}.pdf")
 
     with open(pdf_path, "wb") as f:
-        content = await file.read()
         f.write(content)
-
-    file_size = len(content)
 
     # Synchronously analyze the PDF: load pages, detect cheques
     try:
@@ -417,6 +652,7 @@ async def upload_analyze(file: UploadFile = File(...)):
             "pdf_name": file.filename,
             "pdf_path": pdf_path,
             "file_size": file_size,
+            "file_hash": file_hash,
             "doc_format": doc_format,
             "total_pages": len(app_ext.pages),
             "total_checks": len(manifest),
@@ -500,7 +736,7 @@ class StartExtractionRequest(BaseModel):
 
 
 @app.post("/api/start-extraction")
-def start_extraction(req: StartExtractionRequest):
+def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
     """Start OCR extraction on a previously analyzed job.
     Supports page_range ({from, to}) and cheque_range ({from, to}) filtering.
     Allows re-extraction on complete jobs (only processes checks without results).
@@ -676,14 +912,9 @@ def start_extraction(req: StartExtractionRequest):
             app_ext.run_parallel_ocr(filtered_manifest, methods=req.methods, progress_callback=_on_progress)
             app_ext.save_summary(filtered_manifest)
 
-            # Load results back into checks (for ALL checks, not just filtered)
+            # Load all engine results back into checks (for ALL checks, not just filtered)
             for check in checks:
-                hybrid_path = os.path.join(results_dir, check["check_id"], "hybrid.json")
-                if os.path.exists(hybrid_path):
-                    with open(hybrid_path) as f:
-                        hybrid = json.load(f)
-                    check["extraction"] = hybrid.get("extraction", {})
-                    check["methods_used"] = hybrid.get("methods_used", [])
+                _load_engine_results(results_dir, check)
 
             # Save to DB
             checks_data = []
@@ -696,6 +927,8 @@ def start_extraction(req: StartExtractionRequest):
                     "image_url": c.get("storage_url", f"/api/checks/{req.job_id}/{c['check_id']}/image"),
                     "extraction": c.get("extraction"),
                     "methods_used": c.get("methods_used", []),
+                    "engine_results": c.get("engine_results", {}),
+                    "engine_times_ms": c.get("engine_times_ms", {}),
                 })
 
             _supabase_update("check_jobs", {"job_id": req.job_id}, {
@@ -712,9 +945,23 @@ def start_extraction(req: StartExtractionRequest):
             job["status"] = "complete"
             job["completed_at"] = datetime.now().isoformat()
 
+            # Track incomplete extractions
+            incomplete = [c for c in checks if not c.get("extraction")]
+            if incomplete:
+                job["has_incomplete"] = True
+                job["incomplete_count"] = len(incomplete)
+                print(f"  Warning: {len(incomplete)}/{len(checks)} checks have no extraction")
+            else:
+                job["has_incomplete"] = False
+                job["incomplete_count"] = 0
+
+            # Flatten checks_data into individual rows in the checks table
+            _supabase_rpc("flatten_checks_from_job", {"p_job_id": req.job_id})
+
             # ── Cleanup local files after successful extraction ────
             pdf_path = str(UPLOAD_DIR / f"{req.job_id}.pdf")
-            _cleanup_local_files(req.job_id, pdf_path)
+            any_missing_storage = any(not c.get("storage_url") for c in checks)
+            _cleanup_local_files(req.job_id, pdf_path, keep_images=any_missing_storage)
 
         except Exception as e:
             job["status"] = "error"
@@ -745,19 +992,35 @@ def get_job(job_id: str):
 
 
 @app.get("/api/jobs")
-def list_jobs():
-    """List all jobs."""
+def list_jobs(limit: int = 50, offset: int = 0, status: str = None):
+    """List jobs with optional pagination and status filter."""
+    all_jobs = list(jobs.values())
+    # Sort by created_at descending
+    all_jobs.sort(key=lambda j: j.get("created_at", ""), reverse=True)
+    # Filter by status if provided
+    if status:
+        all_jobs = [j for j in all_jobs if j.get("status") == status]
+    total = len(all_jobs)
+    # Paginate
+    page = all_jobs[offset:offset + limit]
     clean = []
-    for j in jobs.values():
+    for j in page:
         clean.append({k: v for k, v in j.items() if not k.startswith("_")})
-    return {"jobs": clean}
+    return {"jobs": clean, "total": total, "limit": limit, "offset": offset}
 
 
 @app.get("/api/jobs/{job_id}/pdf")
 def get_job_pdf(job_id: str):
-    """Serve the uploaded PDF for iframe viewing."""
+    """Serve the uploaded PDF for iframe viewing. Falls back to Supabase Storage."""
     pdf_path = UPLOAD_DIR / f"{job_id}.pdf"
     if not pdf_path.exists():
+        # Try Supabase Storage fallback
+        job = jobs.get(job_id)
+        if job:
+            pdf_name = job.get("pdf_name", "")
+            if _supabase_ok and pdf_name:
+                storage_url = f"{_sb_url}/storage/v1/object/public/checks/jobs/{job_id}/{pdf_name}"
+                return RedirectResponse(storage_url)
         raise HTTPException(404, "PDF not found")
     return FileResponse(
         str(pdf_path),
@@ -777,11 +1040,23 @@ def get_page_image(job_id: str, page_num: int):
 
 @app.get("/api/checks/{job_id}/{check_id}/image")
 def get_check_image(job_id: str, check_id: str):
-    """Get the cropped check image."""
+    """Get the cropped check image. Falls back to Supabase Storage if local file was cleaned up."""
     img_path = OUTPUT_DIR / job_id / "images" / f"{check_id}.png"
-    if not img_path.exists():
-        raise HTTPException(404, "Check image not found")
-    return FileResponse(str(img_path), media_type="image/png")
+    if img_path.exists():
+        return FileResponse(str(img_path), media_type="image/png")
+    # Fallback: check in-memory job for storage_url
+    job = jobs.get(job_id)
+    if job:
+        for c in job.get("checks", []):
+            if c.get("check_id") == check_id:
+                url = c.get("storage_url", "")
+                if url and url.startswith("http"):
+                    return RedirectResponse(url)
+    # Fallback: construct Supabase Storage URL
+    if _supabase_ok:
+        storage_url = f"{_sb_url}/storage/v1/object/public/checks/jobs/{job_id}/images/{check_id}.png"
+        return RedirectResponse(storage_url)
+    raise HTTPException(404, "Check image not found")
 
 
 @app.get("/api/checks/{job_id}/{check_id}/ocr/{engine}")
@@ -1102,10 +1377,35 @@ def list_export_formats():
     }
 
 
-@app.delete("/api/jobs/{job_id}")
-def delete_job(job_id: str):
-    """Delete a job and its files."""
+@app.post("/api/jobs/{job_id}/retry-failed")
+def retry_failed(job_id: str, _auth=Depends(_verify_token)):
+    """Re-extract only checks that have null extraction (failed/incomplete)."""
     if job_id not in jobs:
+        raise HTTPException(404, "Job not found")
+    job = jobs[job_id]
+    if job["status"] in ("extracting", "ocr_running"):
+        return {"job_id": job_id, "status": job["status"], "message": "Already processing"}
+
+    incomplete = [c for c in job.get("checks", []) if not c.get("extraction")]
+    if not incomplete:
+        return {"job_id": job_id, "message": "All checks already extracted", "incomplete": 0}
+
+    # Trigger extraction with force=False — the smart skip logic will only process
+    # checks without existing results
+    req = StartExtractionRequest(
+        job_id=job_id,
+        methods=job.get("selected_methods", ["hybrid"]),
+        force=False,
+    )
+    return start_extraction(req, _auth=None)
+
+
+@app.delete("/api/jobs/{job_id}")
+def delete_job(job_id: str, _auth=Depends(_verify_token)):
+    """Delete a job and its local files + Supabase data."""
+    # Allow deleting jobs that exist in DB but not in memory
+    in_memory = job_id in jobs
+    if not in_memory and not _supabase_ok:
         raise HTTPException(404, "Job not found")
 
     out_path = OUTPUT_DIR / job_id
@@ -1115,7 +1415,19 @@ def delete_job(job_id: str):
     if pdf_path.exists():
         pdf_path.unlink()
 
-    del jobs[job_id]
+    # Delete from Supabase DB
+    if _supabase_ok:
+        try:
+            _requests.delete(
+                f"{_sb_url}/rest/v1/check_jobs?job_id=eq.{job_id}",
+                headers=_sb_headers(),
+                timeout=10,
+            )
+        except Exception as e:
+            print(f"  Supabase delete error: {e}")
+
+    if in_memory:
+        del jobs[job_id]
     return {"message": "Job deleted"}
 
 

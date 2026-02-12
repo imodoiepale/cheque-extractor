@@ -6,30 +6,41 @@ services:
       context: ..
       dockerfile: docker/Dockerfile.backend
     ports:
-      - '3090:3090'
+      - '${BACKEND_PORT:-3090}:3090'
     environment:
       - PORT=3090
       - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_API_KEYS=${GEMINI_API_KEYS}
     volumes:
       - backend_uploads:/app/uploads
       - backend_output:/app/output
+    healthcheck:
+      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:3090/api/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     restart: unless-stopped
 
   frontend:
     build:
       context: ..
       dockerfile: docker/Dockerfile.frontend
+      args:
+        - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+        - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
+        - NEXT_PUBLIC_BACKEND_URL=http://backend:3090
     ports:
-      - '3080:3080'
+      - '${FRONTEND_PORT:-3080}:3080'
     environment:
       - NODE_ENV=production
       - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
       - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
       - NEXT_PUBLIC_BACKEND_URL=http://backend:3090
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

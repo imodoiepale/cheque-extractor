@@ -2,11 +2,11 @@
 
 import { useParams, useSearchParams } from 'next/navigation';
 import { useCheckProcessing } from '@/lib/hooks/useCheckProcessing';
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   CheckCircle, Clock, Loader2, FileText, Image as ImageIcon,
   Download, Eye, X, ChevronLeft, ChevronRight, LayoutGrid, List,
-  ZoomIn, ZoomOut, AlertCircle, RefreshCw,
+  ZoomIn, ZoomOut, AlertCircle, RefreshCw, Terminal,
 } from 'lucide-react';
 
 type ViewMode = 'card' | 'table';
@@ -53,9 +53,19 @@ export default function ProcessingPage() {
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
   const [imageZoom, setImageZoom] = useState(1);
+  const logsEndRef = useRef<HTMLDivElement>(null);
 
   const stageIndex = STAGES.findIndex((s) => s.name === currentStage);
   const checks = jobData?.checks || [];
+  const progressLogs = jobData?.progress_logs || [];
+  const extractionPct = jobData?.extraction_progress ?? 0;
+  const processedCount = jobData?.processed_count ?? 0;
+  const processingCount = jobData?.processing_count ?? 0;
+
+  // Auto-scroll logs to bottom
+  useEffect(() => {
+    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [progressLogs.length]);
 
   const EXPORT_FORMATS = [
     { id: 'csv', name: 'Generic CSV', desc: 'Excel, Google Sheets', icon: '📊' },
@@ -240,83 +250,165 @@ export default function ProcessingPage() {
           PROCESSING VIEW (while not complete)
          ══════════════════════════════════════════════════════ */}
       {!isComplete && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* ── Pipeline stages ──────────────────────────── */}
+        <>
+          {/* ── Big overall progress bar ──────────────────── */}
           <div className="bg-white rounded-xl shadow p-6">
-            <h2 className="text-lg font-semibold mb-4">Processing Pipeline</h2>
-            <div className="space-y-3">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                  progress >= 100 ? 'bg-green-100' : 'bg-blue-100'
+                }`}>
+                  {progress >= 100 ? (
+                    <CheckCircle className="text-green-600" size={20} />
+                  ) : (
+                    <Loader2 className="text-blue-600 animate-spin" size={20} />
+                  )}
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900">
+                    {currentStage === 'upload' ? 'Uploading & Validating' :
+                     currentStage === 'segmentation' ? 'Detecting Cheques' :
+                     currentStage === 'extraction' ? 'Extracting Data' :
+                     currentStage === 'merging' ? 'Merging Results' : 'Processing'}
+                  </h2>
+                  <p className="text-sm text-gray-500">
+                    {processingCount > 0
+                      ? `${processedCount} of ${processingCount} cheques processed`
+                      : 'Preparing extraction pipeline...'}
+                  </p>
+                </div>
+              </div>
+              <div className="text-right">
+                <p className="text-3xl font-bold text-gray-900">{progress}%</p>
+                <p className="text-xs text-gray-400 mt-0.5">overall</p>
+              </div>
+            </div>
+            {/* Animated progress bar */}
+            <div className="relative w-full h-4 bg-gray-100 rounded-full overflow-hidden">
+              <div
+                className="absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out"
+                style={{
+                  width: `${progress}%`,
+                  background: progress >= 100
+                    ? 'linear-gradient(90deg, #22c55e, #16a34a)'
+                    : 'linear-gradient(90deg, #3b82f6, #6366f1, #8b5cf6)',
+                }}
+              />
+              {progress < 100 && progress > 0 && (
+                <div
+                  className="absolute inset-y-0 left-0 rounded-full animate-pulse opacity-30"
+                  style={{
+                    width: `${Math.min(progress + 5, 100)}%`,
+                    background: 'linear-gradient(90deg, #3b82f6, #6366f1, #8b5cf6)',
+                  }}
+                />
+              )}
+            </div>
+            {/* Pipeline stage dots */}
+            <div className="flex items-center justify-between mt-4">
               {STAGES.map((stage, index) => {
                 const isDone = index < stageIndex || (isComplete && index <= stageIndex);
                 const isCurrent = index === stageIndex && !isComplete;
                 return (
-                  <div key={stage.name} className="flex items-center gap-3">
-                    <div
-                      className={`w-8 h-8 rounded-full flex items-center justify-center ${
-                        isDone ? 'bg-green-100' : isCurrent ? 'bg-blue-100' : 'bg-gray-100'
-                      }`}
-                    >
-                      {isDone ? (
-                        <CheckCircle className="text-green-600" size={16} />
-                      ) : isCurrent ? (
-                        <Loader2 className="text-blue-600 animate-spin" size={16} />
-                      ) : (
-                        <Clock className="text-gray-400" size={16} />
-                      )}
+                  <div key={stage.name} className="flex flex-col items-center gap-1">
+                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold transition-all duration-300 ${
+                      isDone ? 'bg-green-500 text-white scale-100' :
+                      isCurrent ? 'bg-blue-500 text-white scale-110 ring-4 ring-blue-100' :
+                      'bg-gray-200 text-gray-400'
+                    }`}>
+                      {isDone ? '✓' : index + 1}
                     </div>
-                    <span className={`text-sm ${isCurrent ? 'text-blue-600 font-medium' : isDone ? 'text-green-700' : 'text-gray-500'}`}>
+                    <span className={`text-[10px] font-medium ${
+                      isCurrent ? 'text-blue-600' : isDone ? 'text-green-600' : 'text-gray-400'
+                    }`}>
                       {stage.label}
                     </span>
                   </div>
                 );
               })}
             </div>
-            {/* Overall progress bar */}
-            <div className="mt-5">
-              <div className="w-full bg-gray-200 rounded-full h-2">
-                <div
-                  className="bg-blue-600 h-2 rounded-full transition-all duration-500"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-              <p className="text-xs text-gray-500 mt-1 text-right">{progress}%</p>
-            </div>
           </div>
 
-          {/* ── Per-method extraction progress ───────────── */}
-          <div className="bg-white rounded-xl shadow p-6">
-            <h2 className="text-lg font-semibold mb-4">Extraction Methods</h2>
-            {methodsProgress.length > 0 ? (
-              <div className="space-y-4">
-                {methodsProgress.map((mp) => (
-                  <div key={mp.method} className={`rounded-lg border p-4 transition ${methodStatusColor(mp.status)}`}>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        {methodStatusIcon(mp.status)}
-                        <span className="font-medium text-sm text-gray-900">{mp.label}</span>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* ── Per-method extraction progress ───────────── */}
+            <div className="bg-white rounded-xl shadow p-6">
+              <h2 className="text-lg font-semibold mb-4">Extraction Engines</h2>
+              {methodsProgress.length > 0 ? (
+                <div className="space-y-4">
+                  {methodsProgress.map((mp) => (
+                    <div key={mp.method} className={`rounded-lg border p-4 transition ${methodStatusColor(mp.status)}`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2">
+                          {methodStatusIcon(mp.status)}
+                          <span className="font-medium text-sm text-gray-900">{mp.label}</span>
+                        </div>
+                        <span className={`text-sm font-bold ${
+                          mp.status === 'complete' ? 'text-green-600' :
+                          mp.status === 'running' ? 'text-blue-600' :
+                          mp.status === 'error' ? 'text-red-600' : 'text-gray-400'
+                        }`}>{mp.progress}%</span>
                       </div>
-                      <span className="text-xs font-medium text-gray-600 capitalize">{mp.status}</span>
+                      <div className="w-full bg-white/60 rounded-full h-2.5 mb-1.5 overflow-hidden">
+                        <div
+                          className={`h-2.5 rounded-full transition-all duration-700 ease-out ${methodBarColor(mp.status)}`}
+                          style={{ width: `${mp.progress}%` }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between text-xs text-gray-500">
+                        <span>{mp.checks_processed} / {mp.checks_total} cheques</span>
+                        <span className="capitalize">{mp.status}</span>
+                      </div>
+                      {mp.error && <p className="text-xs text-red-600 mt-1">{mp.error}</p>}
                     </div>
-                    <div className="w-full bg-white/60 rounded-full h-2 mb-1.5">
-                      <div
-                        className={`h-2 rounded-full transition-all duration-500 ${methodBarColor(mp.status)}`}
-                        style={{ width: `${mp.progress}%` }}
-                      />
-                    </div>
-                    <div className="flex items-center justify-between text-xs text-gray-500">
-                      <span>{mp.checks_processed} / {mp.checks_total} cheques</span>
-                      <span>{mp.progress}%</span>
-                    </div>
-                    {mp.error && <p className="text-xs text-red-600 mt-1">{mp.error}</p>}
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center py-8 text-gray-400">
+                  <Loader2 className="animate-spin mb-2" size={24} />
+                  <p className="text-sm">Waiting for extraction to begin...</p>
+                </div>
+              )}
+            </div>
+
+            {/* ── Live progress logs ──────────────────────── */}
+            <div className="bg-gray-900 rounded-xl shadow p-5 flex flex-col">
+              <div className="flex items-center gap-2 mb-3">
+                <Terminal size={16} className="text-green-400" />
+                <h2 className="text-sm font-semibold text-green-400">Live Progress</h2>
+                <div className="flex-1" />
+                {progressLogs.length > 0 && (
+                  <span className="text-[10px] text-gray-500 font-mono">{progressLogs.length} entries</span>
+                )}
+              </div>
+              <div className="flex-1 overflow-y-auto max-h-[280px] font-mono text-[11px] leading-relaxed space-y-0.5 scrollbar-thin scrollbar-thumb-gray-700">
+                {progressLogs.length === 0 ? (
+                  <div className="flex items-center gap-2 text-gray-500 py-4">
+                    <Loader2 size={12} className="animate-spin" />
+                    <span>Waiting for extraction logs...</span>
                   </div>
-                ))}
+                ) : (
+                  progressLogs.map((log, i) => (
+                    <div key={i} className={`flex items-start gap-2 px-2 py-0.5 rounded ${
+                      log.level === 'success' ? 'text-green-400' :
+                      log.level === 'warn' ? 'text-yellow-400' :
+                      log.level === 'error' ? 'text-red-400' :
+                      'text-gray-400'
+                    }`}>
+                      <span className="text-gray-600 flex-shrink-0 select-none">
+                        {new Date(log.ts).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </span>
+                      <span className="flex-shrink-0">
+                        {log.level === 'success' ? '✓' : log.level === 'warn' ? '⚠' : log.level === 'error' ? '✗' : '›'}
+                      </span>
+                      <span>{log.msg}</span>
+                    </div>
+                  ))
+                )}
+                <div ref={logsEndRef} />
               </div>
-            ) : (
-              <div className="text-sm text-gray-400 text-center py-8">
-                Waiting for extraction to begin...
-              </div>
-            )}
+            </div>
           </div>
-        </div>
+        </>
       )}
 
       {/* ── Cheque image previews (show during processing too) ── */}

@@ -1,44 +1,34 @@
-FROM node:18-alpine AS base
+FROM python:3.11-slim
 
-# Install Tesseract OCR
-RUN apk add --no-cache \
+# Install system deps: Tesseract OCR, poppler (pdf2image), OpenCV libs
+RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
-    tesseract-ocr-data-eng \
-    imagemagick \
-    python3 \
-    make \
-    g++
+    tesseract-ocr-eng \
+    poppler-utils \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
 
-# Install dependencies
-FROM base AS deps
 WORKDIR /app
 
-COPY backend/package.json backend/package-lock.json* ./
-RUN npm ci
+# Install Python dependencies
+COPY backend/requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Build application
-FROM base AS builder
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
-COPY backend ./
+# Copy backend source
+COPY backend/ ./
 
-RUN npm run build
+# Create dirs for uploads and output
+RUN mkdir -p uploads output
 
-# Production image
-FROM base AS runner
-WORKDIR /app
+# Non-root user
+RUN adduser --system --uid 1001 appuser && \
+    chown -R appuser:nogroup /app
+USER appuser
 
-ENV NODE_ENV production
+EXPOSE 3090
 
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nodeapp
+ENV PORT=3090
+ENV PYTHONUNBUFFERED=1
 
-COPY --from=builder --chown=nodeapp:nodejs /app/dist ./dist
-COPY --from=builder --chown=nodeapp:nodejs /app/node_modules ./node_modules
-COPY --from=builder --chown=nodeapp:nodejs /app/package.json ./package.json
-
-USER nodeapp
-
-EXPOSE 4000
-
-CMD ["node", "dist/index.js"]
+CMD ["python", "api_server.py"]
