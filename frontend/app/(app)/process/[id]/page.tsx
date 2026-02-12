@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   CheckCircle, Clock, Loader2, FileText, Image as ImageIcon,
   Download, Eye, X, ChevronLeft, ChevronRight, LayoutGrid, List,
-  ZoomIn, ZoomOut, AlertCircle,
+  ZoomIn, ZoomOut, AlertCircle, RefreshCw,
 } from 'lucide-react';
 
 type ViewMode = 'card' | 'table';
@@ -58,12 +58,12 @@ export default function ProcessingPage() {
   const checks = jobData?.checks || [];
 
   const EXPORT_FORMATS = [
-    { id: 'csv', name: 'Generic CSV', desc: 'Excel, Google Sheets' },
-    { id: 'iif', name: 'QuickBooks Desktop', desc: 'IIF format (CHECK transactions)' },
-    { id: 'qbo', name: 'QuickBooks Online', desc: 'CSV bank transaction import' },
-    { id: 'xero', name: 'Xero', desc: 'Bank statement CSV' },
-    { id: 'zoho', name: 'Zoho Books', desc: 'Bank statement CSV' },
-    { id: 'sage', name: 'Sage', desc: 'Accounting CSV import' },
+    { id: 'csv', name: 'Generic CSV', desc: 'Excel, Google Sheets', icon: '📊' },
+    { id: 'iif', name: 'QuickBooks Desktop', desc: 'IIF format (CHECK transactions)', icon: '💼' },
+    { id: 'qbo', name: 'QuickBooks Online', desc: 'CSV bank transaction import', icon: '☁️' },
+    { id: 'xero', name: 'Xero', desc: 'Bank statement CSV', icon: '📘' },
+    { id: 'zoho', name: 'Zoho Books', desc: 'Bank statement CSV', icon: '📗' },
+    { id: 'sage', name: 'Sage', desc: 'Accounting CSV import', icon: '📕' },
   ];
 
   // Arrow key navigation in dialog
@@ -89,12 +89,31 @@ export default function ProcessingPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
+  const [reExtracting, setReExtracting] = useState(false);
+
   const handleExport = (format: string) => {
     window.open(`/api/jobs/${jobId}/export?format=${format}`, '_blank');
     setExportOpen(false);
   };
 
+  const handleReExtract = async (force: boolean = true) => {
+    setReExtracting(true);
+    try {
+      const res = await fetch('/api/start-extraction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: jobId, methods: selectedMethods, force }),
+      });
+      if (!res.ok) throw new Error('Failed to start re-extraction');
+      window.location.reload();
+    } catch (e: any) {
+      console.error('Re-extract error:', e);
+      setReExtracting(false);
+    }
+  };
+
   const selected = selectedIdx !== null ? checks[selectedIdx] : null;
+  const missingCount = checks.filter((c: any) => !c.extraction).length;
 
   // Method progress status icon
   const methodStatusIcon = (status: string) => {
@@ -136,7 +155,19 @@ export default function ProcessingPage() {
           </p>
         </div>
         {isComplete && checks.length > 0 && (
-          <div className="relative">
+          <div className="flex items-center gap-2">
+            {/* Re-extract button */}
+            <button
+              onClick={() => handleReExtract(missingCount > 0 ? false : true)}
+              disabled={reExtracting}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition disabled:opacity-50 text-sm font-medium"
+              title={missingCount > 0 ? `Re-extract ${missingCount} missing cheques` : 'Force re-extract all cheques'}
+            >
+              {reExtracting ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+              {missingCount > 0 ? `Re-extract (${missingCount} missing)` : 'Re-extract'}
+            </button>
+            {/* Export dropdown */}
+            <div className="relative">
             <button
               onClick={() => setExportOpen(!exportOpen)}
               className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
@@ -159,6 +190,7 @@ export default function ProcessingPage() {
                 ))}
               </div>
             )}
+            </div>
           </div>
         )}
       </div>
@@ -264,7 +296,6 @@ export default function ProcessingPage() {
                       </div>
                       <span className="text-xs font-medium text-gray-600 capitalize">{mp.status}</span>
                     </div>
-                    {/* Progress bar */}
                     <div className="w-full bg-white/60 rounded-full h-2 mb-1.5">
                       <div
                         className={`h-2 rounded-full transition-all duration-500 ${methodBarColor(mp.status)}`}
@@ -272,9 +303,7 @@ export default function ProcessingPage() {
                       />
                     </div>
                     <div className="flex items-center justify-between text-xs text-gray-500">
-                      <span>
-                        {mp.checks_processed} / {mp.checks_total} cheques
-                      </span>
+                      <span>{mp.checks_processed} / {mp.checks_total} cheques</span>
                       <span>{mp.progress}%</span>
                     </div>
                     {mp.error && <p className="text-xs text-red-600 mt-1">{mp.error}</p>}
@@ -370,7 +399,6 @@ export default function ProcessingPage() {
                       selectedIdx === idx ? 'border-blue-400' : 'border-transparent hover:border-blue-200'
                     }`}
                   >
-                    {/* Cheque image */}
                     <div className="aspect-[16/9] bg-gray-100 relative overflow-hidden">
                       <img
                         src={`/api/check-image/${jobId}/${check.check_id}`}
@@ -383,7 +411,6 @@ export default function ProcessingPage() {
                           <ZoomIn size={18} className="text-gray-700" />
                         </div>
                       </div>
-                      {/* Badge */}
                       <div className="absolute top-2 left-2 bg-black/60 text-white text-xs px-2 py-0.5 rounded font-medium">
                         #{idx + 1}
                       </div>
@@ -391,14 +418,13 @@ export default function ProcessingPage() {
                         Page {check.page}
                       </div>
                     </div>
-                    {/* Extracted data summary */}
                     <div className="p-4 space-y-2">
                       <div className="flex items-center justify-between">
                         <p className="font-semibold text-gray-900 truncate">
                           {extVal(ext, 'payee') || 'Unknown Payee'}
                         </p>
                         <p className="font-bold text-green-700 whitespace-nowrap ml-2">
-                          {extVal(ext, 'amount') || '—'}
+                          {extVal(ext, 'amount') ? `$${extVal(ext, 'amount')}` : '—'}
                         </p>
                       </div>
                       <div className="flex items-center gap-4 text-xs text-gray-500">
@@ -455,7 +481,7 @@ export default function ProcessingPage() {
                           <td className="px-3 py-3 text-gray-500 font-mono text-xs">{idx + 1}</td>
                           <td className="px-3 py-3">{check.page}</td>
                           <td className="px-3 py-3 font-medium">{extVal(ext, 'payee') || '—'}</td>
-                          <td className="px-3 py-3 font-medium text-green-700">{extVal(ext, 'amount') || '—'}</td>
+                          <td className="px-3 py-3 font-medium text-green-700">{extVal(ext, 'amount') ? `$${extVal(ext, 'amount')}` : '—'}</td>
                           <td className="px-3 py-3">{extVal(ext, 'checkDate') || '—'}</td>
                           <td className="px-3 py-3">{extVal(ext, 'checkNumber') || '—'}</td>
                           <td className="px-3 py-3 text-gray-500">{extVal(ext, 'bankName') || '—'}</td>
@@ -498,6 +524,40 @@ export default function ProcessingPage() {
               </div>
             </div>
           )}
+
+          {/* ══════════════════════════════════════════════════
+              EXPORT SECTION
+             ══════════════════════════════════════════════════ */}
+          <div className="bg-white rounded-xl shadow p-6">
+            <div className="flex items-center justify-between mb-5">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Export Results</h2>
+                <p className="text-sm text-gray-500 mt-0.5">Download extracted cheque data in your preferred accounting format</p>
+              </div>
+              <div className="flex items-center gap-2 text-sm text-gray-400">
+                <CheckCircle size={16} className="text-green-500" />
+                {checks.length} cheque{checks.length !== 1 ? 's' : ''} ready
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {EXPORT_FORMATS.map((fmt) => (
+                <button
+                  key={fmt.id}
+                  onClick={() => handleExport(fmt.id)}
+                  className="flex items-center gap-3 p-4 rounded-lg border border-gray-200 hover:border-green-400 hover:bg-green-50/50 transition text-left group"
+                >
+                  <div className="p-2.5 bg-green-50 rounded-lg group-hover:bg-green-100 transition flex-shrink-0">
+                    <Download size={18} className="text-green-600" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm text-gray-900">{fmt.name}</p>
+                    <p className="text-xs text-gray-500 truncate">{fmt.desc}</p>
+                  </div>
+                  <ChevronRight size={14} className="text-gray-300 group-hover:text-green-500 transition flex-shrink-0" />
+                </button>
+              ))}
+            </div>
+          </div>
         </>
       )}
 
@@ -531,7 +591,6 @@ export default function ProcessingPage() {
                 <span className="text-xs text-gray-400">Page {selected.page}</span>
               </div>
               <div className="flex items-center gap-2">
-                {/* Zoom controls */}
                 <button onClick={() => setImageZoom(Math.max(0.5, imageZoom - 0.25))} className="p-1.5 hover:bg-gray-100 rounded" disabled={imageZoom <= 0.5}>
                   <ZoomOut size={16} />
                 </button>
@@ -540,23 +599,20 @@ export default function ProcessingPage() {
                   <ZoomIn size={16} />
                 </button>
                 <div className="w-px h-5 bg-gray-200 mx-1" />
-                {/* Navigation */}
                 <button
                   onClick={() => { setSelectedIdx(Math.max(0, selectedIdx - 1)); setImageZoom(1); }}
                   disabled={selectedIdx === 0}
                   className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-30"
-                  title="Previous (←)"
+                  title="Previous"
                 >
                   <ChevronLeft size={20} />
                 </button>
-                <span className="text-sm text-gray-500">
-                  {selectedIdx + 1}/{checks.length}
-                </span>
+                <span className="text-sm text-gray-500">{selectedIdx + 1}/{checks.length}</span>
                 <button
                   onClick={() => { setSelectedIdx(Math.min(checks.length - 1, selectedIdx + 1)); setImageZoom(1); }}
                   disabled={selectedIdx === checks.length - 1}
                   className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-30"
-                  title="Next (→)"
+                  title="Next"
                 >
                   <ChevronRight size={20} />
                 </button>
@@ -568,7 +624,6 @@ export default function ProcessingPage() {
 
             {/* Dialog body: image left, data right */}
             <div className="flex flex-1 overflow-hidden min-h-0">
-              {/* Left: Cheque image with zoom */}
               <div className="w-1/2 flex items-center justify-center bg-gray-50 border-r overflow-auto p-4">
                 <img
                   src={`/api/check-image/${jobId}/${selected.check_id}`}
@@ -584,10 +639,9 @@ export default function ProcessingPage() {
                 />
               </div>
 
-              {/* Right: Extracted data */}
               <div className="w-1/2 p-6 overflow-y-auto">
                 <h4 className="text-sm font-semibold text-gray-500 uppercase mb-4">Extracted Data</h4>
-                {selected.extraction ? (
+                {selected!.extraction ? (
                   <div className="space-y-3">
                     {[
                       { label: 'Payee', field: 'payee' },
@@ -598,8 +652,8 @@ export default function ProcessingPage() {
                       { label: 'Memo', field: 'memo' },
                       { label: 'Amount Written', field: 'amountWritten' },
                     ].map(({ label, field }) => {
-                      const val = extVal(selected.extraction, field);
-                      const conf = extConf(selected.extraction, field);
+                      const val = extVal(selected!.extraction, field);
+                      const conf = extConf(selected!.extraction, field);
                       if (!val) return null;
                       return (
                         <div key={field} className="flex items-start justify-between p-3 bg-gray-50 rounded-lg">
@@ -625,24 +679,18 @@ export default function ProcessingPage() {
                     })}
 
                     {/* MICR section */}
-                    {selected.extraction.micr && typeof selected.extraction.micr === 'object' && (
+                    {selected!.extraction.micr && typeof selected!.extraction.micr === 'object' && (
                       <div className="mt-4 p-3 bg-blue-50 rounded-lg">
                         <p className="text-xs text-blue-600 font-semibold uppercase mb-2">MICR Data</p>
                         <div className="space-y-1 text-sm">
                           {selected.extraction.micr.routing?.value && (
-                            <p>
-                              <span className="text-gray-500">Routing:</span> {selected.extraction.micr.routing.value}
-                            </p>
+                            <p><span className="text-gray-500">Routing:</span> {selected.extraction.micr.routing.value}</p>
                           )}
                           {selected.extraction.micr.account?.value && (
-                            <p>
-                              <span className="text-gray-500">Account:</span> {selected.extraction.micr.account.value}
-                            </p>
+                            <p><span className="text-gray-500">Account:</span> {selected.extraction.micr.account.value}</p>
                           )}
                           {selected.extraction.micr.serial?.value && (
-                            <p>
-                              <span className="text-gray-500">Serial:</span> {selected.extraction.micr.serial.value}
-                            </p>
+                            <p><span className="text-gray-500">Serial:</span> {selected.extraction.micr.serial.value}</p>
                           )}
                         </div>
                       </div>
@@ -653,8 +701,8 @@ export default function ProcessingPage() {
                 )}
 
                 <div className="mt-6 pt-4 border-t text-xs text-gray-400">
-                  {selected.width > 0 && <p>Dimensions: {selected.width} × {selected.height}px</p>}
-                  <p className="mt-1">Use ← → arrow keys to navigate between cheques</p>
+                  {selected.width > 0 && <p>Dimensions: {selected.width} x {selected.height}px</p>}
+                  <p className="mt-1">Use arrow keys to navigate between cheques</p>
                 </div>
               </div>
             </div>

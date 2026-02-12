@@ -907,7 +907,10 @@ class CheckExtractorApp:
 
     # ── PHASE 1: Extract all images ──────────────────────────────────
     def extract_all_images(self):
-        """Crop all detected checks and save as PNGs. Fast."""
+        """Crop all detected checks and save as PNGs. Fast.
+        Flat images: images/check_XXXX.png (for API serving).
+        Per-page copies: images/page_X/cheque_Y.png (well-labeled).
+        """
         img_dir = f"{self.output_dir}/images"
         os.makedirs(img_dir, exist_ok=True)
         counter = 1
@@ -917,6 +920,10 @@ class CheckExtractorApp:
             boxes = self.page_boxes.get(pg, [])
             if not boxes:
                 continue
+            page_num = pg + 1
+            page_dir = os.path.join(img_dir, f"page_{page_num}")
+            os.makedirs(page_dir, exist_ok=True)
+            cheque_on_page = 0
             page_img = self.pages[pg]
             for (x1, y1, x2, y2) in boxes:
                 x1, y1 = max(0, x1), max(0, y1)
@@ -927,17 +934,20 @@ class CheckExtractorApp:
                 arr = np.array(crop.convert("L"))
                 if np.mean(arr) > 252:
                     continue
+                cheque_on_page += 1
                 cid = f"check_{counter:04d}"
                 img_path = os.path.join(img_dir, f"{cid}.png")
                 crop.save(img_path)
-                manifest.append((cid, img_path, pg + 1))
+                # Also save well-labeled copy in per-page subfolder
+                crop.save(os.path.join(page_dir, f"cheque_{cheque_on_page}.png"))
+                manifest.append((cid, img_path, page_num))
                 counter += 1
 
         print(f"\nPhase 1 complete: {len(manifest)} check images saved to {img_dir}/")
         return manifest
 
     # ── PHASE 2: Parallel OCR ────────────────────────────────────────
-    def run_parallel_ocr(self, manifest, methods=None):
+    def run_parallel_ocr(self, manifest, methods=None, progress_callback=None):
         """Run selected OCR engines in parallel for each check.
         methods: list of engine names. Supported values:
           'hybrid' = all 3 engines + merge
@@ -945,6 +955,7 @@ class CheckExtractorApp:
           'ai'     = gemini only
           'tesseract', 'numarkdown', 'gemini' = individual engines
         Default (None or ['hybrid']) = run all 3 + merge.
+        progress_callback: optional callable(info_dict) called after each check completes.
         """
         results_dir = f"{self.output_dir}/ocr_results"
         os.makedirs(results_dir, exist_ok=True)
@@ -965,11 +976,29 @@ class CheckExtractorApp:
         total = len(manifest)
         print(f"\nPhase 2: Running engines [{', '.join(engine_names)}] on {total} checks...")
 
+        # Notify callback of start
+        if progress_callback:
+            progress_callback({
+                "event": "start",
+                "total": total,
+                "engines": engine_names,
+            })
+
         for idx, (cid, img_path, page_num) in enumerate(manifest):
             check_dir = os.path.join(results_dir, cid)
             os.makedirs(check_dir, exist_ok=True)
 
             print(f"  [{idx+1}/{total}] {cid} (page {page_num})...", end="", flush=True)
+
+            # Notify callback of check start
+            if progress_callback:
+                progress_callback({
+                    "event": "check_start",
+                    "check_id": cid,
+                    "page": page_num,
+                    "index": idx,
+                    "total": total,
+                })
 
             # Submit only selected engines
             workers = sum([run_tess, run_numd, run_gemi])
@@ -1031,6 +1060,26 @@ class CheckExtractorApp:
             if run_numd: parts.append(f"N:{n_ms}ms")
             if run_gemi: parts.append(f"G:{g_ms}ms")
             print(f" {' '.join(parts)} | payee={payee}")
+
+            # Notify callback of check completion with details
+            if progress_callback:
+                progress_callback({
+                    "event": "check_done",
+                    "check_id": cid,
+                    "page": page_num,
+                    "index": idx,
+                    "total": total,
+                    "payee": payee,
+                    "engine_times_ms": {
+                        "tesseract": t_ms,
+                        "numarkdown": n_ms,
+                        "gemini": g_ms,
+                    },
+                    "engines": engine_names,
+                    "has_error": bool(
+                        tess_result.get("error") or numd_result.get("error") or gemi_result.get("error")
+                    ),
+                })
 
         print(f"\nPhase 2 complete: results in {results_dir}/")
 

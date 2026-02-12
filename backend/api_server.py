@@ -113,6 +113,37 @@ def _supabase_upload_file(bucket: str, path: str, file_bytes: bytes, content_typ
     return f"{_sb_url}/storage/v1/object/public/{bucket}/{path}"
 
 
+def _cleanup_local_files(job_id: str, pdf_path: str = None):
+    """Remove local files after successful storage upload to Supabase.
+    Deletes: uploaded PDF, output directory (pages, images, ocr_results).
+    Only runs if Supabase storage is configured.
+    """
+    if not _supabase_ok:
+        print(f"  Skipping cleanup for {job_id} — Supabase not configured, keeping local files")
+        return
+
+    cleaned = []
+    # Remove uploaded PDF
+    if pdf_path and os.path.exists(pdf_path):
+        try:
+            os.remove(pdf_path)
+            cleaned.append(f"PDF: {os.path.basename(pdf_path)}")
+        except Exception as e:
+            print(f"  Cleanup: failed to remove PDF {pdf_path}: {e}")
+
+    # Remove output directory (pages, images, ocr_results)
+    out_dir = OUTPUT_DIR / job_id
+    if out_dir.exists():
+        try:
+            shutil.rmtree(str(out_dir))
+            cleaned.append(f"output/{job_id}/")
+        except Exception as e:
+            print(f"  Cleanup: failed to remove {out_dir}: {e}")
+
+    if cleaned:
+        print(f"  Cleanup {job_id}: removed {', '.join(cleaned)}")
+
+
 app = FastAPI(title="Check Extractor API", version="1.0.0")
 
 app.add_middleware(
@@ -248,6 +279,9 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
         jobs[job_id]["status"] = "complete"
         jobs[job_id]["completed_at"] = datetime.now().isoformat()
         jobs[job_id]["checks"] = checks
+
+        # ── Cleanup local files after successful DB save ───────────
+        _cleanup_local_files(job_id, pdf_path)
 
     except Exception as e:
         jobs[job_id]["status"] = "error"
@@ -462,6 +496,7 @@ class StartExtractionRequest(BaseModel):
     methods: list[str] = ["hybrid"]
     page_range: Optional[dict] = None
     cheque_range: Optional[dict] = None
+    force: bool = False  # Force re-extraction even if results exist
 
 
 @app.post("/api/start-extraction")
@@ -469,6 +504,8 @@ def start_extraction(req: StartExtractionRequest):
     """Start OCR extraction on a previously analyzed job.
     Supports page_range ({from, to}) and cheque_range ({from, to}) filtering.
     Allows re-extraction on complete jobs (only processes checks without results).
+    force=True will re-extract all checks in range regardless of existing results.
+    If methods differ from previous extraction, affected checks are re-extracted.
     """
     if req.job_id not in jobs:
         raise HTTPException(404, "Job not found")
@@ -512,21 +549,50 @@ def start_extraction(req: StartExtractionRequest):
                 ]
                 print(f"  Page range filter: pages {p_from}-{p_to} → {len(filtered_manifest)} checks")
 
-            # ── For re-extraction: only process checks that are missing results ──
+            # ── Smart re-extraction logic ─────────────────────────
+            # Resolve requested engine set for comparison
+            requested_methods = set(req.methods)
+            if "hybrid" in requested_methods:
+                requested_engines = {"tesseract", "numarkdown", "gemini"}
+            else:
+                requested_engines = set()
+                for m in requested_methods:
+                    if m in ("ocr", "tesseract"):
+                        requested_engines.add("tesseract")
+                    elif m == "numarkdown":
+                        requested_engines.add("numarkdown")
+                    elif m in ("ai", "gemini"):
+                        requested_engines.add("gemini")
+
             results_dir = os.path.join(out_dir, "ocr_results")
-            only_missing = req.cheque_range is None and req.page_range is None
-            if only_missing and any(c.get("extraction") for c in checks):
-                # Some checks already have results — only re-run the missing ones
-                existing_ids = {
-                    c["check_id"] for c in checks if c.get("extraction")
-                }
+
+            if not req.force:
+                # Build a lookup of check_id → set of methods already used
+                checks_by_id = {c["check_id"]: c for c in checks}
                 before = len(filtered_manifest)
-                filtered_manifest = [
-                    (cid, ip, pn) for cid, ip, pn in filtered_manifest
-                    if cid not in existing_ids
-                ]
-                if len(filtered_manifest) < before:
-                    print(f"  Re-extraction: skipping {before - len(filtered_manifest)} already-extracted checks")
+                keep = []
+                for item in filtered_manifest:
+                    cid = item[0]
+                    c = checks_by_id.get(cid, {})
+                    existing_extraction = c.get("extraction")
+                    existing_methods = set(c.get("methods_used", []))
+
+                    if not existing_extraction:
+                        # No results at all — must extract
+                        keep.append(item)
+                    elif not requested_engines.issubset(existing_methods):
+                        # New methods requested that weren't run before
+                        keep.append(item)
+                    else:
+                        # Already extracted with same or superset of methods — skip
+                        pass
+
+                filtered_manifest = keep
+                skipped = before - len(filtered_manifest)
+                if skipped > 0:
+                    print(f"  Smart skip: {skipped} checks already extracted with [{', '.join(sorted(requested_engines))}]")
+            else:
+                print(f"  Force mode: re-extracting all {len(filtered_manifest)} checks in range")
 
             if not filtered_manifest:
                 print(f"  No checks to process for job {req.job_id}")
@@ -536,9 +602,78 @@ def start_extraction(req: StartExtractionRequest):
             # Run OCR with selected methods
             job["status"] = "ocr_running"
             job["processing_count"] = len(filtered_manifest)
+            job["processed_count"] = 0
+            job["progress_logs"] = []
+            job["extraction_progress"] = 0
             _supabase_update("check_jobs", {"job_id": req.job_id}, {"status": "ocr_running"})
 
-            app_ext.run_parallel_ocr(filtered_manifest, methods=req.methods)
+            # Progress callback — updates job dict so polling endpoint returns live data
+            def _on_progress(info):
+                evt = info.get("event")
+                total = info.get("total", 1)
+
+                if evt == "start":
+                    engines = info.get("engines", [])
+                    job["methods_progress"] = []
+                    for eng in engines:
+                        job["methods_progress"].append({
+                            "method": eng,
+                            "status": "running",
+                            "progress": 0,
+                            "checks_processed": 0,
+                            "checks_total": total,
+                        })
+                    job["progress_logs"].append({
+                        "ts": datetime.now().isoformat(),
+                        "msg": f"Starting extraction with [{', '.join(engines)}] on {total} cheques",
+                        "level": "info",
+                    })
+
+                elif evt == "check_start":
+                    idx = info.get("index", 0)
+                    cid = info.get("check_id", "")
+                    page = info.get("page", 0)
+                    pct = int((idx / max(total, 1)) * 100)
+                    job["extraction_progress"] = pct
+                    job["progress_logs"].append({
+                        "ts": datetime.now().isoformat(),
+                        "msg": f"[{idx+1}/{total}] Extracting {cid} (page {page})...",
+                        "level": "info",
+                    })
+
+                elif evt == "check_done":
+                    idx = info.get("index", 0)
+                    cid = info.get("check_id", "")
+                    payee = info.get("payee", "?")
+                    times = info.get("engine_times_ms", {})
+                    has_err = info.get("has_error", False)
+                    done = idx + 1
+                    pct = int((done / max(total, 1)) * 100)
+
+                    job["processed_count"] = done
+                    job["extraction_progress"] = pct
+
+                    # Update per-engine progress
+                    if "methods_progress" in job:
+                        for mp in job["methods_progress"]:
+                            mp["checks_processed"] = done
+                            mp["progress"] = pct
+                            if done >= total:
+                                mp["status"] = "complete"
+
+                    parts = [f"{k}:{v}ms" for k, v in times.items() if v > 0]
+                    level = "warn" if has_err else "success"
+                    job["progress_logs"].append({
+                        "ts": datetime.now().isoformat(),
+                        "msg": f"[{done}/{total}] ✓ {cid} — payee={payee} | {' '.join(parts)}",
+                        "level": level,
+                    })
+
+                    # Keep only last 100 log entries to avoid memory bloat
+                    if len(job["progress_logs"]) > 100:
+                        job["progress_logs"] = job["progress_logs"][-100:]
+
+            app_ext.run_parallel_ocr(filtered_manifest, methods=req.methods, progress_callback=_on_progress)
             app_ext.save_summary(filtered_manifest)
 
             # Load results back into checks (for ALL checks, not just filtered)
@@ -576,6 +711,10 @@ def start_extraction(req: StartExtractionRequest):
             job.pop("_manifest", None)
             job["status"] = "complete"
             job["completed_at"] = datetime.now().isoformat()
+
+            # ── Cleanup local files after successful extraction ────
+            pdf_path = str(UPLOAD_DIR / f"{req.job_id}.pdf")
+            _cleanup_local_files(req.job_id, pdf_path)
 
         except Exception as e:
             job["status"] = "error"

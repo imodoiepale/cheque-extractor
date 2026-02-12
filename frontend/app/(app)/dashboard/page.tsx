@@ -91,6 +91,39 @@ export default function DashboardPage() {
   const [selectedCheckIdx, setSelectedCheckIdx] = useState<number | null>(null);
   const [pdfOpen, setPdfOpen] = useState(false);
   const [imageZoom, setImageZoom] = useState(1);
+  const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
+  const [reExtracting, setReExtracting] = useState(false);
+
+  const EXPORT_FORMATS = [
+    { id: 'csv', name: 'Generic CSV', desc: 'Excel, Google Sheets' },
+    { id: 'iif', name: 'QuickBooks Desktop', desc: 'IIF format' },
+    { id: 'qbo', name: 'QuickBooks Online', desc: 'CSV bank import' },
+    { id: 'xero', name: 'Xero', desc: 'Bank statement CSV' },
+    { id: 'zoho', name: 'Zoho Books', desc: 'Bank statement CSV' },
+    { id: 'sage', name: 'Sage', desc: 'Accounting CSV' },
+  ];
+
+  const handleExport = (jobId: string, format: string) => {
+    window.open(`/api/jobs/${jobId}/export?format=${format}`, '_blank');
+    setExportDropdownOpen(false);
+  };
+
+  const handleReExtract = async (jobId: string) => {
+    setReExtracting(true);
+    try {
+      const res = await fetch('/api/start-extraction', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: jobId, methods: ['hybrid'], force: true }),
+      });
+      if (!res.ok) throw new Error('Failed to start re-extraction');
+      // Redirect to process page to watch progress
+      window.location.href = `/process/${jobId}?methods=hybrid`;
+    } catch (e: any) {
+      setError(e.message);
+      setReExtracting(false);
+    }
+  };
 
   // Fetch jobs
   const fetchJobs = useCallback(async () => {
@@ -250,13 +283,22 @@ export default function DashboardPage() {
                           <ExternalLink size={14} />
                         </button>
                         {job.status === 'complete' && job.checks?.length > 0 && (
-                          <button
-                            onClick={() => { setSelectedJob(job); setSelectedCheckIdx(0); }}
-                            className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition"
-                            title="View Cheques"
-                          >
-                            <Eye size={14} />
-                          </button>
+                          <>
+                            <button
+                              onClick={() => { setSelectedJob(job); setSelectedCheckIdx(0); }}
+                              className="p-1.5 text-gray-400 hover:text-emerald-600 hover:bg-emerald-50 rounded transition"
+                              title="View Cheques"
+                            >
+                              <Eye size={14} />
+                            </button>
+                            <button
+                              onClick={() => handleExport(job.job_id, 'csv')}
+                              className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded transition"
+                              title="Export CSV"
+                            >
+                              <Download size={14} />
+                            </button>
+                          </>
                         )}
                         {(job.status === 'pending' || job.status === 'extracting' || job.status === 'ocr_running') && (
                           <Link
@@ -410,6 +452,41 @@ export default function DashboardPage() {
                 <span className="text-[11px] text-gray-400">Page {selectedCheck.page}</span>
               </div>
               <div className="flex items-center gap-1">
+                {/* Export dropdown */}
+                <div className="relative">
+                  <button
+                    onClick={() => setExportDropdownOpen(!exportDropdownOpen)}
+                    className="flex items-center gap-1 px-2.5 py-1.5 text-[12px] font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 rounded-lg transition"
+                  >
+                    <Download size={13} />
+                    Export
+                  </button>
+                  {exportDropdownOpen && (
+                    <div className="absolute right-0 mt-1 w-56 bg-white rounded-lg shadow-xl border z-50 py-1">
+                      {EXPORT_FORMATS.map((fmt) => (
+                        <button
+                          key={fmt.id}
+                          onClick={() => handleExport(selectedJob.job_id, fmt.id)}
+                          className="w-full text-left px-3 py-2 hover:bg-gray-50 transition"
+                        >
+                          <p className="text-[12px] font-medium text-gray-900">{fmt.name}</p>
+                          <p className="text-[10px] text-gray-400">{fmt.desc}</p>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                {/* Re-extract button */}
+                <button
+                  onClick={() => handleReExtract(selectedJob.job_id)}
+                  disabled={reExtracting}
+                  className="flex items-center gap-1 px-2.5 py-1.5 text-[12px] font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 rounded-lg transition disabled:opacity-50"
+                  title="Re-extract with all methods"
+                >
+                  {reExtracting ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />}
+                  Re-extract
+                </button>
+                <div className="w-px h-4 bg-gray-200 mx-1" />
                 <button onClick={() => setImageZoom(Math.max(0.5, imageZoom - 0.25))} className="p-1.5 hover:bg-gray-100 rounded" disabled={imageZoom <= 0.5}>
                   <ZoomOut size={14} />
                 </button>
@@ -433,7 +510,7 @@ export default function DashboardPage() {
                 >
                   <ChevronRight size={16} />
                 </button>
-                <button onClick={() => { setSelectedCheckIdx(null); setImageZoom(1); }} className="p-1.5 hover:bg-gray-100 rounded ml-1">
+                <button onClick={() => { setSelectedCheckIdx(null); setImageZoom(1); setExportDropdownOpen(false); }} className="p-1.5 hover:bg-gray-100 rounded ml-1">
                   <X size={16} />
                 </button>
               </div>

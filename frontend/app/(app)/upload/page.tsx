@@ -46,7 +46,7 @@ interface JobEntry {
   result?: AnalyzeResult;
 }
 
-type Step = 'upload' | 'preview' | 'starting';
+type Step = 'upload' | 'preview' | 'configure' | 'starting';
 type ViewMode = 'card' | 'table';
 type RangeType = 'all' | 'pages' | 'cheques';
 
@@ -60,10 +60,13 @@ function fmtSize(bytes?: number): string {
 // ── Extraction methods available ───────────────────────────
 const EXTRACTION_METHODS = [
   { id: 'tesseract', name: 'Tesseract OCR', desc: 'Fast offline text recognition via Tesseract', icon: '🔍' },
-  { id: 'numarkdown', name: 'NuMarkdown', desc: 'Vision-language model — good for structured layouts', icon: '�' },
+  { id: 'numarkdown', name: 'NuMarkdown', desc: 'Vision-language model — good for structured layouts', icon: '📝' },
   { id: 'ai', name: 'Gemini AI', desc: 'Google Gemini 2.0 Flash — best for handwritten fields', icon: '🤖' },
   { id: 'hybrid', name: 'All (Hybrid)', desc: 'Run all 3 engines and merge results for best accuracy', icon: '⚡' },
 ];
+
+const STEP_ORDER: ('upload' | 'preview' | 'configure')[] = ['upload', 'preview', 'configure'];
+const STEP_LABELS: Record<string, string> = { upload: 'Upload', preview: 'Preview', configure: 'Configure & Extract' };
 
 export default function UploadPage() {
   const router = useRouter();
@@ -91,6 +94,7 @@ export default function UploadPage() {
   const [pageTo, setPageTo] = useState(1);
   const [chequeFrom, setChequeFrom] = useState(1);
   const [chequeTo, setChequeTo] = useState(1);
+  const [forceExtract, setForceExtract] = useState(false);
 
   // ── Derived from active job ────────────────────────────────
   const activeJob = jobEntries.find((j) => j.id === activeJobId);
@@ -165,7 +169,6 @@ export default function UploadPage() {
     setUploading(true);
     setError(null);
 
-    // Create job entries for all files
     const entries: JobEntry[] = files.map((file, i) => ({
       id: `pending_${Date.now()}_${i}`,
       file,
@@ -173,12 +176,10 @@ export default function UploadPage() {
     }));
     setJobEntries(entries);
 
-    // Upload all files in parallel
     const settled = await Promise.allSettled(
       entries.map(async (entry) => {
         try {
           const result = await analyzeOneFile(entry.file, entry.id);
-          // Update entry with real job_id
           setJobEntries((prev) =>
             prev.map((j) =>
               j.id === entry.id
@@ -200,7 +201,6 @@ export default function UploadPage() {
       })
     );
 
-    // Find first successful result to set as active
     const firstSuccess = settled.find((s) => s.status === 'fulfilled') as
       | PromiseFulfilledResult<AnalyzeResult>
       | undefined;
@@ -257,6 +257,7 @@ export default function UploadPage() {
       const body: Record<string, unknown> = {
         job_id: jobId,
         methods: selectedMethods,
+        force: forceExtract,
       };
       if (rangeType === 'pages') {
         body.page_range = { from: pageFrom, to: pageTo };
@@ -284,30 +285,29 @@ export default function UploadPage() {
       console.error('Start extraction error:', err);
       updateJob(jobId, { status: 'error', error: err.message });
       setError(err.message || 'Failed to start extraction');
-      if (jobId === activeJobId) setStep('preview');
+      if (jobId === activeJobId) setStep('configure');
     }
   };
 
   const handleExtractAll = async () => {
     const analyzedJobs = jobEntries.filter((j) => j.status === 'analyzed' && j.result);
     if (analyzedJobs.length === 0) return;
-
-    // Start extraction for all analyzed jobs in parallel
     await Promise.allSettled(
       analyzedJobs.map((job) => handleStartExtraction(job.id))
     );
   };
+
+  // ── Step indicator helpers ─────────────────────────────────
+  const currentStepIdx = STEP_ORDER.indexOf(step === 'starting' ? 'configure' : step);
 
   // ── Render ───────────────────────────────────────────────
   return (
     <div className="max-w-5xl mx-auto p-5 space-y-5">
       {/* ── Step indicator ──────────────────────────────── */}
       <div className="flex items-center gap-1.5">
-        {(['upload', 'preview'] as Step[]).map((s, i) => {
-          const labels: Record<string, string> = { upload: 'Upload', preview: 'Preview & Extract' };
-          const stepNum = i + 1;
-          const isCurrent = s === step || (step === 'starting' && s === 'preview');
-          const isDone = (['upload', 'preview'] as Step[]).indexOf(step === 'starting' ? 'preview' : step) > i;
+        {STEP_ORDER.map((s, i) => {
+          const isCurrent = i === currentStepIdx;
+          const isDone = i < currentStepIdx;
           return (
             <div key={s} className="flex items-center gap-1.5">
               {i > 0 && <ChevronRight size={12} className="text-gray-300" />}
@@ -316,8 +316,8 @@ export default function UploadPage() {
                 isDone ? 'bg-emerald-100 text-emerald-700' :
                 'bg-gray-100 text-gray-400'
               }`}>
-                {isDone ? <CheckCircle size={12} /> : <span className="w-3.5 h-3.5 rounded-full border-[1.5px] border-current flex items-center justify-center text-[9px] font-bold">{stepNum}</span>}
-                {labels[s]}
+                {isDone ? <CheckCircle size={12} /> : <span className="w-3.5 h-3.5 rounded-full border-[1.5px] border-current flex items-center justify-center text-[9px] font-bold">{i + 1}</span>}
+                {STEP_LABELS[s]}
               </div>
             </div>
           );
@@ -394,7 +394,7 @@ export default function UploadPage() {
                   ) : (
                     <>
                       <Upload size={14} />
-                      Upload & Analyze
+                      Upload &amp; Analyze
                     </>
                   )}
                 </button>
@@ -407,7 +407,7 @@ export default function UploadPage() {
       {/* ══════════════════════════════════════════════════
           STEP 2: PREVIEW — show pages, cheque count, images
          ══════════════════════════════════════════════════ */}
-      {(step === 'preview' || step === 'starting') && analyzeResult && (
+      {step === 'preview' && analyzeResult && (
         <>
           <div className="flex items-center justify-between">
             <div>
@@ -454,15 +454,6 @@ export default function UploadPage() {
                   </button>
                 );
               })}
-              {jobEntries.filter((j) => j.status === 'analyzed').length > 1 && (
-                <button
-                  onClick={handleExtractAll}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-gray-900 text-white hover:bg-gray-800 transition ml-auto"
-                >
-                  <Play size={12} />
-                  Extract All ({jobEntries.filter((j) => j.status === 'analyzed').length})
-                </button>
-              )}
             </div>
           )}
 
@@ -556,7 +547,6 @@ export default function UploadPage() {
                         <Eye size={14} className="text-gray-700" />
                       </div>
                     </div>
-                    {/* Page number badge */}
                     <div className="absolute top-1.5 left-1.5 bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded font-medium">
                       {page.page_number}
                     </div>
@@ -571,7 +561,7 @@ export default function UploadPage() {
                       )}
                     </div>
                     {page.width > 0 && (
-                      <p className="text-[11px] text-gray-400 mt-0.5">{page.width} × {page.height}px</p>
+                      <p className="text-[11px] text-gray-400 mt-0.5">{page.width} x {page.height}px</p>
                     )}
                   </div>
                 </div>
@@ -620,7 +610,7 @@ export default function UploadPage() {
                         )}
                       </td>
                       <td className="px-3 py-2 text-gray-500 text-[12px] font-mono">
-                        {page.width > 0 ? `${page.width} × ${page.height}` : '—'}
+                        {page.width > 0 ? `${page.width} x ${page.height}` : '—'}
                       </td>
                       <td className="px-3 py-2 text-center">
                         <button className="text-blue-500 hover:text-blue-700">
@@ -636,10 +626,8 @@ export default function UploadPage() {
 
           {/* ── Detected Cheques Preview ──────────────── */}
           {analyzeResult.checks.length > 0 && (
-            <>
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold text-gray-900">Detected Cheques ({analyzeResult.checks.length})</h2>
-              </div>
+            <div className="space-y-3">
+              <h2 className="text-sm font-semibold text-gray-900">Detected Cheques ({analyzeResult.checks.length})</h2>
               <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                 {analyzeResult.checks.map((check, idx) => (
                   <div
@@ -670,187 +658,18 @@ export default function UploadPage() {
                   </div>
                 ))}
               </div>
-            </>
+            </div>
           )}
 
-          {/* ── Configure Extraction (inline) ──────────── */}
-          <div className="border-t border-gray-100 pt-5 space-y-4">
-            <h2 className="text-sm font-semibold text-gray-900">Configure Extraction</h2>
-
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* ── Method Selection ──────────────────── */}
-              <div className="bg-white rounded-xl border border-gray-100 p-4">
-                <div className="flex items-center gap-2 mb-2.5">
-                  <Settings2 size={14} className="text-gray-500" />
-                  <h3 className="text-[13px] font-semibold text-gray-900">Method</h3>
-                </div>
-                <div className="space-y-1.5">
-                  {EXTRACTION_METHODS.map((method) => {
-                    const isSelected = selectedMethods.includes(method.id);
-                    return (
-                      <button
-                        key={method.id}
-                        onClick={() => toggleMethod(method.id)}
-                        disabled={step === 'starting'}
-                        className={`w-full text-left p-2.5 rounded-lg border transition ${
-                          isSelected ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-300'
-                        } disabled:opacity-50`}
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="text-base">{method.icon}</span>
-                          <div className="flex-1 min-w-0">
-                            <p className="font-medium text-[12px] text-gray-900">{method.name}</p>
-                            <p className="text-[10px] text-gray-400 truncate">{method.desc}</p>
-                          </div>
-                          <div className={`w-3.5 h-3.5 rounded-full border-[1.5px] flex items-center justify-center transition flex-shrink-0 ${
-                            isSelected ? 'border-gray-900 bg-gray-900' : 'border-gray-300'
-                          }`}>
-                            {isSelected && <CheckCircle size={8} className="text-white" />}
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {/* ── Range Selection (Page or Cheque) ──── */}
-              <div className="bg-white rounded-xl border border-gray-100 p-4">
-                <div className="flex items-center gap-2 mb-2.5">
-                  <FileText size={14} className="text-gray-500" />
-                  <h3 className="text-[13px] font-semibold text-gray-900">Range</h3>
-                </div>
-                <div className="space-y-1.5">
-                  {/* All */}
-                  <button
-                    onClick={() => setRangeType('all')}
-                    disabled={step === 'starting'}
-                    className={`w-full text-left p-2.5 rounded-lg border transition ${
-                      rangeType === 'all' ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-300'
-                    } disabled:opacity-50`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-medium text-[12px] text-gray-900">All</p>
-                        <p className="text-[10px] text-gray-400">{totalPages} pages, {totalChecks} cheques</p>
-                      </div>
-                      <div className={`w-3.5 h-3.5 rounded-full border-[1.5px] flex items-center justify-center ${
-                        rangeType === 'all' ? 'border-gray-900 bg-gray-900' : 'border-gray-300'
-                      }`}>
-                        {rangeType === 'all' && <CheckCircle size={8} className="text-white" />}
-                      </div>
-                    </div>
-                  </button>
-
-                  {/* Page range */}
-                  <button
-                    onClick={() => setRangeType('pages')}
-                    disabled={step === 'starting'}
-                    className={`w-full text-left p-2.5 rounded-lg border transition ${
-                      rangeType === 'pages' ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-300'
-                    } disabled:opacity-50`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-medium text-[12px] text-gray-900">Page Range</p>
-                        <p className="text-[10px] text-gray-400">Select specific pages</p>
-                      </div>
-                      <div className={`w-3.5 h-3.5 rounded-full border-[1.5px] flex items-center justify-center ${
-                        rangeType === 'pages' ? 'border-gray-900 bg-gray-900' : 'border-gray-300'
-                      }`}>
-                        {rangeType === 'pages' && <CheckCircle size={8} className="text-white" />}
-                      </div>
-                    </div>
-                  </button>
-                  {rangeType === 'pages' && (
-                    <div className="flex items-center gap-2 pl-3 pt-0.5">
-                      <div>
-                        <label className="text-[10px] text-gray-400 block">From</label>
-                        <input type="number" min={1} max={totalPages} value={pageFrom}
-                          onChange={(e) => setPageFrom(Math.max(1, Math.min(totalPages, parseInt(e.target.value) || 1)))}
-                          disabled={step === 'starting'}
-                          className="w-14 px-2 py-1 border rounded text-[12px] disabled:opacity-50" />
-                      </div>
-                      <span className="text-gray-400 mt-3 text-[11px]">to</span>
-                      <div>
-                        <label className="text-[10px] text-gray-400 block">To</label>
-                        <input type="number" min={pageFrom} max={totalPages} value={pageTo}
-                          onChange={(e) => setPageTo(Math.max(pageFrom, Math.min(totalPages, parseInt(e.target.value) || 1)))}
-                          disabled={step === 'starting'}
-                          className="w-14 px-2 py-1 border rounded text-[12px] disabled:opacity-50" />
-                      </div>
-                      <span className="text-[10px] text-gray-400 mt-3">of {totalPages}</span>
-                    </div>
-                  )}
-
-                  {/* Cheque range */}
-                  {totalChecks > 0 && (
-                    <>
-                      <button
-                        onClick={() => setRangeType('cheques')}
-                        disabled={step === 'starting'}
-                        className={`w-full text-left p-2.5 rounded-lg border transition ${
-                          rangeType === 'cheques' ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-300'
-                        } disabled:opacity-50`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <p className="font-medium text-[12px] text-gray-900">Cheque Range</p>
-                            <p className="text-[10px] text-gray-400">Select specific cheques</p>
-                          </div>
-                          <div className={`w-3.5 h-3.5 rounded-full border-[1.5px] flex items-center justify-center ${
-                            rangeType === 'cheques' ? 'border-gray-900 bg-gray-900' : 'border-gray-300'
-                          }`}>
-                            {rangeType === 'cheques' && <CheckCircle size={8} className="text-white" />}
-                          </div>
-                        </div>
-                      </button>
-                      {rangeType === 'cheques' && (
-                        <div className="flex items-center gap-2 pl-3 pt-0.5">
-                          <div>
-                            <label className="text-[10px] text-gray-400 block">From</label>
-                            <input type="number" min={1} max={totalChecks} value={chequeFrom}
-                              onChange={(e) => setChequeFrom(Math.max(1, Math.min(totalChecks, parseInt(e.target.value) || 1)))}
-                              disabled={step === 'starting'}
-                              className="w-14 px-2 py-1 border rounded text-[12px] disabled:opacity-50" />
-                          </div>
-                          <span className="text-gray-400 mt-3 text-[11px]">to</span>
-                          <div>
-                            <label className="text-[10px] text-gray-400 block">To</label>
-                            <input type="number" min={chequeFrom} max={totalChecks} value={chequeTo}
-                              onChange={(e) => setChequeTo(Math.max(chequeFrom, Math.min(totalChecks, parseInt(e.target.value) || 1)))}
-                              disabled={step === 'starting'}
-                              className="w-14 px-2 py-1 border rounded text-[12px] disabled:opacity-50" />
-                          </div>
-                          <span className="text-[10px] text-gray-400 mt-3">of {totalChecks}</span>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Start extraction button */}
-            <div className="flex justify-end">
-              <button
-                onClick={() => handleStartExtraction()}
-                disabled={step === 'starting' || selectedMethods.length === 0}
-                className="flex items-center gap-1.5 px-6 py-2.5 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 text-[13px] font-medium transition shadow-sm"
-              >
-                {step === 'starting' ? (
-                  <>
-                    <Loader2 size={14} className="animate-spin" />
-                    Starting...
-                  </>
-                ) : (
-                  <>
-                    <Play size={14} />
-                    Start Extraction
-                  </>
-                )}
-              </button>
-            </div>
+          {/* ── Continue to Configure button ──────────── */}
+          <div className="flex justify-end pt-2">
+            <button
+              onClick={() => setStep('configure')}
+              className="flex items-center gap-1.5 px-5 py-2.5 bg-gray-900 text-white rounded-lg hover:bg-gray-800 text-[13px] font-medium transition shadow-sm"
+            >
+              Continue to Configure
+              <ChevronRight size={14} />
+            </button>
           </div>
 
           {/* ── Full-size page image modal ──────────────── */}
@@ -870,7 +689,7 @@ export default function UploadPage() {
                   </div>
                 </div>
                 <div className="flex-1 overflow-auto p-4 bg-gray-50 flex items-center justify-center">
-                  <img src={`/api/page-image/${analyzeResult?.job_id}/${selectedPage}`} alt={`Page ${selectedPage}`}
+                  <img src={`/api/page-image/${analyzeResult.job_id}/${selectedPage}`} alt={`Page ${selectedPage}`}
                     className="shadow-lg rounded transition-transform" style={{ transform: `scale(${zoom})`, transformOrigin: 'center center', maxWidth: '100%', maxHeight: '75vh' }} />
                 </div>
                 {(() => {
@@ -878,7 +697,7 @@ export default function UploadPage() {
                   return pg ? (
                     <div className="px-5 py-2.5 border-t bg-white flex items-center justify-between text-[12px] text-gray-500">
                       <span>{pg.checks_on_page > 0 ? `${pg.checks_on_page} cheque${pg.checks_on_page > 1 ? 's' : ''} detected` : 'No cheques detected'}</span>
-                      {pg.width > 0 && <span className="font-mono text-gray-400">{pg.width} × {pg.height}px</span>}
+                      {pg.width > 0 && <span className="font-mono text-gray-400">{pg.width} x {pg.height}px</span>}
                     </div>
                   ) : null;
                 })()}
@@ -888,37 +707,283 @@ export default function UploadPage() {
 
           {/* ── Cheque detail dialog ────────────────────── */}
           {selectedCheck !== null && analyzeResult && (() => {
-            const checks = analyzeResult.checks;
-            const idx = checks.findIndex((c) => c.check_id === selectedCheck);
-            const check = checks[idx];
+            const chks = analyzeResult.checks;
+            const idx = chks.findIndex((c) => c.check_id === selectedCheck);
+            const check = chks[idx];
             if (!check) return null;
             return (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setSelectedCheck(null)}>
                 <div className="bg-white rounded-xl shadow-2xl w-[90vw] max-w-3xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
                   <div className="flex items-center justify-between px-5 py-3 border-b">
-                    <h3 className="text-sm font-semibold text-gray-900">Cheque #{idx + 1} of {checks.length}</h3>
+                    <h3 className="text-sm font-semibold text-gray-900">Cheque #{idx + 1} of {chks.length}</h3>
                     <div className="flex items-center gap-1">
                       <button onClick={() => setZoom(Math.max(0.25, zoom - 0.25))} className="p-1.5 hover:bg-gray-100 rounded" disabled={zoom <= 0.25}><ZoomOut size={14} /></button>
                       <span className="text-[11px] font-medium text-gray-500 min-w-[2.5rem] text-center">{(zoom * 100).toFixed(0)}%</span>
                       <button onClick={() => setZoom(Math.min(3, zoom + 0.25))} className="p-1.5 hover:bg-gray-100 rounded" disabled={zoom >= 3}><ZoomIn size={14} /></button>
                       <div className="w-px h-4 bg-gray-200 mx-1" />
-                      <button onClick={() => { if (idx > 0) { setSelectedCheck(checks[idx - 1].check_id); setZoom(1); } }} disabled={idx <= 0} className="p-1.5 hover:bg-gray-100 rounded disabled:opacity-30"><ChevronLeft size={16} /></button>
-                      <button onClick={() => { if (idx < checks.length - 1) { setSelectedCheck(checks[idx + 1].check_id); setZoom(1); } }} disabled={idx >= checks.length - 1} className="p-1.5 hover:bg-gray-100 rounded disabled:opacity-30"><ChevronRight size={16} /></button>
+                      <button onClick={() => { if (idx > 0) { setSelectedCheck(chks[idx - 1].check_id); setZoom(1); } }} disabled={idx <= 0} className="p-1.5 hover:bg-gray-100 rounded disabled:opacity-30"><ChevronLeft size={16} /></button>
+                      <button onClick={() => { if (idx < chks.length - 1) { setSelectedCheck(chks[idx + 1].check_id); setZoom(1); } }} disabled={idx >= chks.length - 1} className="p-1.5 hover:bg-gray-100 rounded disabled:opacity-30"><ChevronRight size={16} /></button>
                       <button onClick={() => { setSelectedCheck(null); setZoom(1); }} className="p-1.5 hover:bg-gray-100 rounded ml-1"><X size={14} /></button>
                     </div>
                   </div>
                   <div className="flex-1 overflow-auto p-4 bg-gray-50 flex items-center justify-center">
-                    <img src={`/api/check-image/${analyzeResult!.job_id}/${check.check_id}`} alt={`Cheque ${check.check_id}`}
+                    <img src={`/api/check-image/${analyzeResult.job_id}/${check.check_id}`} alt={`Cheque ${check.check_id}`}
                       className="shadow-lg rounded transition-transform" style={{ transform: `scale(${zoom})`, transformOrigin: 'center center', maxWidth: '100%', maxHeight: '70vh' }} />
                   </div>
                   <div className="px-5 py-2.5 border-t bg-white flex items-center justify-between text-[12px] text-gray-500">
                     <span>Page {check.page}</span>
-                    <span className="font-mono text-gray-400">{check.width} × {check.height}px</span>
+                    <span className="font-mono text-gray-400">{check.width} x {check.height}px</span>
                   </div>
                 </div>
               </div>
             );
           })()}
+        </>
+      )}
+
+      {/* ══════════════════════════════════════════════════
+          STEP 3: CONFIGURE & EXTRACT
+         ══════════════════════════════════════════════════ */}
+      {(step === 'configure' || step === 'starting') && analyzeResult && (
+        <>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Configure Extraction</h1>
+              <p className="text-[13px] text-gray-500 mt-0.5">{analyzeResult.pdf_name} — {totalPages} pages, {totalChecks} cheques</p>
+            </div>
+            <button
+              onClick={() => setStep('preview')}
+              className="text-[12px] text-gray-400 hover:text-gray-600 flex items-center gap-0.5 transition"
+            >
+              <ChevronLeft size={12} /> Back to Preview
+            </button>
+          </div>
+
+          {/* ── Multi-job tabs ──────────────────────────── */}
+          {jobEntries.length > 1 && (
+            <div className="flex items-center gap-2 overflow-x-auto pb-1">
+              {jobEntries.map((entry) => {
+                const isActive = entry.id === activeJobId;
+                const statusColors: Record<JobStatus, string> = {
+                  uploading: 'bg-blue-400',
+                  analyzed: 'bg-emerald-400',
+                  extracting: 'bg-amber-400 animate-pulse',
+                  complete: 'bg-emerald-500',
+                  error: 'bg-red-400',
+                };
+                return (
+                  <button
+                    key={entry.id}
+                    onClick={() => handleSelectJob(entry.id)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12px] font-medium whitespace-nowrap transition border ${
+                      isActive
+                        ? 'border-gray-900 bg-gray-50 text-gray-900'
+                        : 'border-gray-200 text-gray-500 hover:border-gray-300 hover:text-gray-700'
+                    }`}
+                  >
+                    <span className={`w-2 h-2 rounded-full ${statusColors[entry.status]}`} />
+                    {entry.result?.pdf_name || entry.file.name}
+                  </button>
+                );
+              })}
+              {jobEntries.filter((j) => j.status === 'analyzed').length > 1 && (
+                <button
+                  onClick={handleExtractAll}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-gray-900 text-white hover:bg-gray-800 transition ml-auto"
+                >
+                  <Play size={12} />
+                  Extract All ({jobEntries.filter((j) => j.status === 'analyzed').length})
+                </button>
+              )}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* ── Method Selection ──────────────────── */}
+            <div className="bg-white rounded-xl border border-gray-100 p-4">
+              <div className="flex items-center gap-2 mb-2.5">
+                <Settings2 size={14} className="text-gray-500" />
+                <h3 className="text-[13px] font-semibold text-gray-900">Extraction Method</h3>
+              </div>
+              <div className="space-y-1.5">
+                {EXTRACTION_METHODS.map((method) => {
+                  const isSelected = selectedMethods.includes(method.id);
+                  return (
+                    <button
+                      key={method.id}
+                      onClick={() => toggleMethod(method.id)}
+                      disabled={step === 'starting'}
+                      className={`w-full text-left p-2.5 rounded-lg border transition ${
+                        isSelected ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-300'
+                      } disabled:opacity-50`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className="text-base">{method.icon}</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-[12px] text-gray-900">{method.name}</p>
+                          <p className="text-[10px] text-gray-400 truncate">{method.desc}</p>
+                        </div>
+                        <div className={`w-3.5 h-3.5 rounded-full border-[1.5px] flex items-center justify-center transition flex-shrink-0 ${
+                          isSelected ? 'border-gray-900 bg-gray-900' : 'border-gray-300'
+                        }`}>
+                          {isSelected && <CheckCircle size={8} className="text-white" />}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* ── Range Selection ──────────────────── */}
+            <div className="bg-white rounded-xl border border-gray-100 p-4">
+              <div className="flex items-center gap-2 mb-2.5">
+                <FileText size={14} className="text-gray-500" />
+                <h3 className="text-[13px] font-semibold text-gray-900">Range</h3>
+              </div>
+              <div className="space-y-1.5">
+                <button
+                  onClick={() => setRangeType('all')}
+                  disabled={step === 'starting'}
+                  className={`w-full text-left p-2.5 rounded-lg border transition ${
+                    rangeType === 'all' ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-300'
+                  } disabled:opacity-50`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium text-[12px] text-gray-900">All</p>
+                      <p className="text-[10px] text-gray-400">{totalPages} pages, {totalChecks} cheques</p>
+                    </div>
+                    <div className={`w-3.5 h-3.5 rounded-full border-[1.5px] flex items-center justify-center ${
+                      rangeType === 'all' ? 'border-gray-900 bg-gray-900' : 'border-gray-300'
+                    }`}>
+                      {rangeType === 'all' && <CheckCircle size={8} className="text-white" />}
+                    </div>
+                  </div>
+                </button>
+
+                <button
+                  onClick={() => setRangeType('pages')}
+                  disabled={step === 'starting'}
+                  className={`w-full text-left p-2.5 rounded-lg border transition ${
+                    rangeType === 'pages' ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-300'
+                  } disabled:opacity-50`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium text-[12px] text-gray-900">Page Range</p>
+                      <p className="text-[10px] text-gray-400">Select specific pages</p>
+                    </div>
+                    <div className={`w-3.5 h-3.5 rounded-full border-[1.5px] flex items-center justify-center ${
+                      rangeType === 'pages' ? 'border-gray-900 bg-gray-900' : 'border-gray-300'
+                    }`}>
+                      {rangeType === 'pages' && <CheckCircle size={8} className="text-white" />}
+                    </div>
+                  </div>
+                </button>
+                {rangeType === 'pages' && (
+                  <div className="flex items-center gap-2 pl-3 pt-0.5">
+                    <div>
+                      <label className="text-[10px] text-gray-400 block">From</label>
+                      <input type="number" min={1} max={totalPages} value={pageFrom}
+                        onChange={(e) => setPageFrom(Math.max(1, Math.min(totalPages, parseInt(e.target.value) || 1)))}
+                        disabled={step === 'starting'}
+                        className="w-14 px-2 py-1 border rounded text-[12px] disabled:opacity-50" />
+                    </div>
+                    <span className="text-gray-400 mt-3 text-[11px]">to</span>
+                    <div>
+                      <label className="text-[10px] text-gray-400 block">To</label>
+                      <input type="number" min={pageFrom} max={totalPages} value={pageTo}
+                        onChange={(e) => setPageTo(Math.max(pageFrom, Math.min(totalPages, parseInt(e.target.value) || 1)))}
+                        disabled={step === 'starting'}
+                        className="w-14 px-2 py-1 border rounded text-[12px] disabled:opacity-50" />
+                    </div>
+                    <span className="text-[10px] text-gray-400 mt-3">of {totalPages}</span>
+                  </div>
+                )}
+
+                {totalChecks > 0 && (
+                  <>
+                    <button
+                      onClick={() => setRangeType('cheques')}
+                      disabled={step === 'starting'}
+                      className={`w-full text-left p-2.5 rounded-lg border transition ${
+                        rangeType === 'cheques' ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-300'
+                      } disabled:opacity-50`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="font-medium text-[12px] text-gray-900">Cheque Range</p>
+                          <p className="text-[10px] text-gray-400">Select specific cheques</p>
+                        </div>
+                        <div className={`w-3.5 h-3.5 rounded-full border-[1.5px] flex items-center justify-center ${
+                          rangeType === 'cheques' ? 'border-gray-900 bg-gray-900' : 'border-gray-300'
+                        }`}>
+                          {rangeType === 'cheques' && <CheckCircle size={8} className="text-white" />}
+                        </div>
+                      </div>
+                    </button>
+                    {rangeType === 'cheques' && (
+                      <div className="flex items-center gap-2 pl-3 pt-0.5">
+                        <div>
+                          <label className="text-[10px] text-gray-400 block">From</label>
+                          <input type="number" min={1} max={totalChecks} value={chequeFrom}
+                            onChange={(e) => setChequeFrom(Math.max(1, Math.min(totalChecks, parseInt(e.target.value) || 1)))}
+                            disabled={step === 'starting'}
+                            className="w-14 px-2 py-1 border rounded text-[12px] disabled:opacity-50" />
+                        </div>
+                        <span className="text-gray-400 mt-3 text-[11px]">to</span>
+                        <div>
+                          <label className="text-[10px] text-gray-400 block">To</label>
+                          <input type="number" min={chequeFrom} max={totalChecks} value={chequeTo}
+                            onChange={(e) => setChequeTo(Math.max(chequeFrom, Math.min(totalChecks, parseInt(e.target.value) || 1)))}
+                            disabled={step === 'starting'}
+                            className="w-14 px-2 py-1 border rounded text-[12px] disabled:opacity-50" />
+                        </div>
+                        <span className="text-[10px] text-gray-400 mt-3">of {totalChecks}</span>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Force re-extract toggle */}
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={forceExtract}
+              onChange={(e) => setForceExtract(e.target.checked)}
+              disabled={step === 'starting'}
+              className="w-3.5 h-3.5 rounded border-gray-300 text-gray-900 focus:ring-gray-500 disabled:opacity-50"
+            />
+            <span className="text-[12px] text-gray-600">
+              Force re-extract
+              <span className="text-gray-400 ml-1">— re-run even if results already exist</span>
+            </span>
+          </label>
+
+          {/* Start extraction button */}
+          <div className="flex justify-end">
+            <button
+              onClick={() => handleStartExtraction()}
+              disabled={step === 'starting' || selectedMethods.length === 0}
+              className="flex items-center gap-1.5 px-6 py-2.5 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 text-[13px] font-medium transition shadow-sm"
+            >
+              {step === 'starting' ? (
+                <>
+                  <Loader2 size={14} className="animate-spin" />
+                  Starting Extraction...
+                </>
+              ) : (
+                <>
+                  <Play size={14} />
+                  Start Extraction
+                </>
+              )}
+            </button>
+          </div>
         </>
       )}
     </div>
