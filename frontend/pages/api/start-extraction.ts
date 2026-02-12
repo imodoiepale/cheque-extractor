@@ -2,32 +2,19 @@ import type { NextApiRequest, NextApiResponse } from 'next'
 
 const PYTHON_API = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090'
 
-export const config = {
-    api: {
-        bodyParser: false, // We forward the raw multipart body
-    },
-}
-
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' })
     }
 
     try {
-        // Collect raw body
-        const chunks: Buffer[] = []
-        for await (const chunk of req) {
-            chunks.push(typeof chunk === 'string' ? Buffer.from(chunk) : chunk)
-        }
-        const body = Buffer.concat(chunks)
+        const { job_id, methods, page_range } = req.body
 
-        // Forward to Python API with same content-type (multipart)
-        const response = await fetch(`${PYTHON_API}/api/upload-pdf`, {
+        // Forward to Python API - start extraction with selected methods and page range
+        const response = await fetch(`${PYTHON_API}/api/start-extraction`, {
             method: 'POST',
-            headers: {
-                'content-type': req.headers['content-type'] || 'application/octet-stream',
-            },
-            body,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ job_id, methods, page_range }),
         })
 
         const data = await response.json()
@@ -38,7 +25,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
         return res.status(200).json(data)
     } catch (error) {
-        console.error('Upload proxy error:', error)
+        console.error('Start extraction proxy error:', error)
         return res.status(500).json({ error: 'Failed to connect to processing server' })
     }
 }
