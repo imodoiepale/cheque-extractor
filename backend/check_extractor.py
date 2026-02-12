@@ -937,13 +937,33 @@ class CheckExtractorApp:
         return manifest
 
     # ── PHASE 2: Parallel OCR ────────────────────────────────────────
-    def run_parallel_ocr(self, manifest):
-        """Run Tesseract, NuMarkdown, Gemini in parallel for each check."""
+    def run_parallel_ocr(self, manifest, methods=None):
+        """Run selected OCR engines in parallel for each check.
+        methods: list of engine names. Supported values:
+          'hybrid' = all 3 engines + merge
+          'ocr'    = tesseract only
+          'ai'     = gemini only
+          'tesseract', 'numarkdown', 'gemini' = individual engines
+        Default (None or ['hybrid']) = run all 3 + merge.
+        """
         results_dir = f"{self.output_dir}/ocr_results"
         os.makedirs(results_dir, exist_ok=True)
 
+        # Resolve which engines to run
+        if not methods or "hybrid" in methods:
+            run_tess = run_numd = run_gemi = True
+        else:
+            run_tess = "ocr" in methods or "tesseract" in methods
+            run_numd = "numarkdown" in methods
+            run_gemi = "ai" in methods or "gemini" in methods
+
+        engine_names = []
+        if run_tess: engine_names.append("tesseract")
+        if run_numd: engine_names.append("numarkdown")
+        if run_gemi: engine_names.append("gemini")
+
         total = len(manifest)
-        print(f"\nPhase 2: Running 3 OCR engines in parallel on {total} checks...")
+        print(f"\nPhase 2: Running engines [{', '.join(engine_names)}] on {total} checks...")
 
         for idx, (cid, img_path, page_num) in enumerate(manifest):
             check_dir = os.path.join(results_dir, cid)
@@ -951,25 +971,40 @@ class CheckExtractorApp:
 
             print(f"  [{idx+1}/{total}] {cid} (page {page_num})...", end="", flush=True)
 
-            # Run all 3 engines in parallel
-            with ThreadPoolExecutor(max_workers=3) as pool:
-                fut_tess = pool.submit(extract_with_tesseract, img_path)
-                fut_numd = pool.submit(extract_with_numarkdown, img_path)
-                fut_gemi = pool.submit(extract_with_gemini, img_path)
+            # Submit only selected engines
+            workers = sum([run_tess, run_numd, run_gemi])
+            tess_result = {"source": "tesseract", "fields": _empty_fields(), "processing_time_ms": 0}
+            numd_result = {"source": "numarkdown", "fields": _empty_fields(), "processing_time_ms": 0}
+            gemi_result = {"source": "gemini", "fields": _empty_fields(), "processing_time_ms": 0}
 
-                tess_result = fut_tess.result()
-                numd_result = fut_numd.result()
-                gemi_result = fut_gemi.result()
+            with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+                futures = {}
+                if run_tess:
+                    futures["tesseract"] = pool.submit(extract_with_tesseract, img_path)
+                if run_numd:
+                    futures["numarkdown"] = pool.submit(extract_with_numarkdown, img_path)
+                if run_gemi:
+                    futures["gemini"] = pool.submit(extract_with_gemini, img_path)
+
+                if "tesseract" in futures:
+                    tess_result = futures["tesseract"].result()
+                if "numarkdown" in futures:
+                    numd_result = futures["numarkdown"].result()
+                if "gemini" in futures:
+                    gemi_result = futures["gemini"].result()
 
             # Save individual engine results
-            with open(os.path.join(check_dir, "tesseract.json"), "w") as f:
-                json.dump(tess_result, f, indent=2)
-            with open(os.path.join(check_dir, "numarkdown.json"), "w") as f:
-                json.dump(numd_result, f, indent=2)
-            with open(os.path.join(check_dir, "gemini.json"), "w") as f:
-                json.dump(gemi_result, f, indent=2)
+            if run_tess:
+                with open(os.path.join(check_dir, "tesseract.json"), "w") as f:
+                    json.dump(tess_result, f, indent=2)
+            if run_numd:
+                with open(os.path.join(check_dir, "numarkdown.json"), "w") as f:
+                    json.dump(numd_result, f, indent=2)
+            if run_gemi:
+                with open(os.path.join(check_dir, "gemini.json"), "w") as f:
+                    json.dump(gemi_result, f, indent=2)
 
-            # Merge
+            # Merge (works even if some engines returned empty fields)
             hybrid = merge_all(tess_result, numd_result, gemi_result)
             hybrid_out = {
                 "check_id": cid,
@@ -977,6 +1012,7 @@ class CheckExtractorApp:
                 "image_file": f"{cid}.png",
                 "timestamp": datetime.now().isoformat(),
                 "extraction": hybrid,
+                "methods_used": engine_names,
                 "engine_times_ms": {
                     "tesseract": tess_result.get("processing_time_ms", 0),
                     "numarkdown": numd_result.get("processing_time_ms", 0),
@@ -990,7 +1026,11 @@ class CheckExtractorApp:
             n_ms = numd_result.get("processing_time_ms", 0)
             g_ms = gemi_result.get("processing_time_ms", 0)
             payee = hybrid["payee"]["value"] or "?"
-            print(f" T:{t_ms}ms N:{n_ms}ms G:{g_ms}ms | payee={payee}")
+            parts = []
+            if run_tess: parts.append(f"T:{t_ms}ms")
+            if run_numd: parts.append(f"N:{n_ms}ms")
+            if run_gemi: parts.append(f"G:{g_ms}ms")
+            print(f" {' '.join(parts)} | payee={payee}")
 
         print(f"\nPhase 2 complete: results in {results_dir}/")
 

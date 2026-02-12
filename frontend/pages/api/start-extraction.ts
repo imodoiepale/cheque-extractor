@@ -8,13 +8,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     try {
-        const { job_id, methods, page_range } = req.body
+        const { job_id, methods, page_range, cheque_range } = req.body
 
-        // Forward to Python API - start extraction with selected methods and page range
+        // Forward to Python API - start extraction with selected methods and range
         const response = await fetch(`${PYTHON_API}/api/start-extraction`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ job_id, methods, page_range }),
+            body: JSON.stringify({ job_id, methods, page_range, cheque_range }),
         })
 
         const data = await response.json()

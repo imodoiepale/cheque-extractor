@@ -461,17 +461,21 @@ class StartExtractionRequest(BaseModel):
     job_id: str
     methods: list[str] = ["hybrid"]
     page_range: Optional[dict] = None
+    cheque_range: Optional[dict] = None
 
 
 @app.post("/api/start-extraction")
 def start_extraction(req: StartExtractionRequest):
-    """Start OCR extraction on a previously analyzed job."""
+    """Start OCR extraction on a previously analyzed job.
+    Supports page_range ({from, to}) and cheque_range ({from, to}) filtering.
+    Allows re-extraction on complete jobs (only processes checks without results).
+    """
     if req.job_id not in jobs:
         raise HTTPException(404, "Job not found")
 
     job = jobs[req.job_id]
-    if job["status"] not in ("analyzed", "pending"):
-        # Already processing or complete
+    # Allow re-extraction on complete/error jobs too
+    if job["status"] in ("extracting", "ocr_running"):
         return {"job_id": req.job_id, "status": job["status"], "message": "Already processing"}
 
     job["selected_methods"] = req.methods
@@ -490,21 +494,61 @@ def start_extraction(req: StartExtractionRequest):
                 app_ext = CheckExtractorApp(pdf_path, output_dir=out_dir)
                 manifest = app_ext.extract_all_images()
 
-            # Run OCR
+            # ── Filter manifest by range ──────────────────────────
+            filtered_manifest = list(manifest)
+
+            if req.cheque_range:
+                # Cheque range: 1-indexed cheque numbers
+                c_from = max(1, req.cheque_range.get("from", 1))
+                c_to = min(len(manifest), req.cheque_range.get("to", len(manifest)))
+                filtered_manifest = filtered_manifest[c_from - 1 : c_to]
+                print(f"  Cheque range filter: #{c_from}-#{c_to} → {len(filtered_manifest)} checks")
+            elif req.page_range:
+                p_from = req.page_range.get("from", 1)
+                p_to = req.page_range.get("to", job.get("total_pages", 9999))
+                filtered_manifest = [
+                    (cid, ip, pn) for cid, ip, pn in filtered_manifest
+                    if p_from <= pn <= p_to
+                ]
+                print(f"  Page range filter: pages {p_from}-{p_to} → {len(filtered_manifest)} checks")
+
+            # ── For re-extraction: only process checks that are missing results ──
+            results_dir = os.path.join(out_dir, "ocr_results")
+            only_missing = req.cheque_range is None and req.page_range is None
+            if only_missing and any(c.get("extraction") for c in checks):
+                # Some checks already have results — only re-run the missing ones
+                existing_ids = {
+                    c["check_id"] for c in checks if c.get("extraction")
+                }
+                before = len(filtered_manifest)
+                filtered_manifest = [
+                    (cid, ip, pn) for cid, ip, pn in filtered_manifest
+                    if cid not in existing_ids
+                ]
+                if len(filtered_manifest) < before:
+                    print(f"  Re-extraction: skipping {before - len(filtered_manifest)} already-extracted checks")
+
+            if not filtered_manifest:
+                print(f"  No checks to process for job {req.job_id}")
+                job["status"] = "complete"
+                return
+
+            # Run OCR with selected methods
             job["status"] = "ocr_running"
+            job["processing_count"] = len(filtered_manifest)
             _supabase_update("check_jobs", {"job_id": req.job_id}, {"status": "ocr_running"})
 
-            app_ext.run_parallel_ocr(manifest)
-            app_ext.save_summary(manifest)
+            app_ext.run_parallel_ocr(filtered_manifest, methods=req.methods)
+            app_ext.save_summary(filtered_manifest)
 
-            # Load results
-            results_dir = os.path.join(out_dir, "ocr_results")
+            # Load results back into checks (for ALL checks, not just filtered)
             for check in checks:
                 hybrid_path = os.path.join(results_dir, check["check_id"], "hybrid.json")
                 if os.path.exists(hybrid_path):
                     with open(hybrid_path) as f:
                         hybrid = json.load(f)
                     check["extraction"] = hybrid.get("extraction", {})
+                    check["methods_used"] = hybrid.get("methods_used", [])
 
             # Save to DB
             checks_data = []
@@ -516,6 +560,7 @@ def start_extraction(req: StartExtractionRequest):
                     "height": c["height"],
                     "image_url": c.get("storage_url", f"/api/checks/{req.job_id}/{c['check_id']}/image"),
                     "extraction": c.get("extraction"),
+                    "methods_used": c.get("methods_used", []),
                 })
 
             _supabase_update("check_jobs", {"job_id": req.job_id}, {
@@ -546,7 +591,8 @@ def start_extraction(req: StartExtractionRequest):
     thread.daemon = True
     thread.start()
 
-    return {"job_id": req.job_id, "status": "extracting", "message": "Extraction started"}
+    return {"job_id": req.job_id, "status": "extracting", "message": "Extraction started",
+            "methods": req.methods}
 
 
 @app.get("/api/jobs/{job_id}")
