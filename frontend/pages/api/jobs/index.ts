@@ -8,7 +8,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     try {
-        const response = await fetch(`${PYTHON_API}/api/jobs`)
+        // Forward pagination/filter query params
+        const params = new URLSearchParams()
+        if (req.query.limit) params.set('limit', String(req.query.limit))
+        if (req.query.offset) params.set('offset', String(req.query.offset))
+        if (req.query.status) params.set('status', String(req.query.status))
+        const qs = params.toString() ? `?${params.toString()}` : ''
+
+        const response = await fetch(`${PYTHON_API}/api/jobs${qs}`)
         const data = await response.json()
 
         if (!response.ok) {
