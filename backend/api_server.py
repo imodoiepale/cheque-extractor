@@ -764,6 +764,26 @@ def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
             if not app_ext or not manifest:
                 # Fallback: re-load
                 pdf_path = job.get("pdf_path", str(UPLOAD_DIR / f"{req.job_id}.pdf"))
+                
+                # If local PDF doesn't exist, try to download from Supabase Storage
+                if not os.path.exists(pdf_path):
+                    pdf_url = job.get("pdf_url") or jobs[req.job_id].get("pdf_url")
+                    if pdf_url and _supabase_ok:
+                        try:
+                            print(f"  Local PDF missing, downloading from Storage: {pdf_url}")
+                            resp = _requests.get(pdf_url, timeout=30)
+                            if resp.status_code == 200:
+                                UPLOAD_DIR.mkdir(exist_ok=True)
+                                with open(pdf_path, "wb") as f:
+                                    f.write(resp.content)
+                                print(f"  ✓ Downloaded PDF ({len(resp.content)} bytes)")
+                            else:
+                                raise HTTPException(404, f"PDF not found locally or in Storage (HTTP {resp.status_code})")
+                        except Exception as e:
+                            raise HTTPException(500, f"Failed to download PDF from Storage: {e}")
+                    else:
+                        raise HTTPException(404, "PDF file not found locally and no Storage URL available")
+                
                 app_ext = CheckExtractorApp(pdf_path, output_dir=out_dir)
                 manifest = app_ext.extract_all_images()
 
