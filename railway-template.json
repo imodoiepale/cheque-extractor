@@ -1,0 +1,40 @@
+{
+  "name": "CheckPro - Cheque Extraction System",
+  "description": "Automated cheque processing with OpenCV detection, triple OCR (Tesseract + NuMarkdown + Gemini), and hybrid cross-validation",
+  "repository": "https://github.com/imodoiepale/cheque-extractor",
+  "services": [
+    {
+      "name": "backend",
+      "type": "web",
+      "plan": "starter",
+      "region": "us-west1",
+      "buildCommand": "echo 'Using Dockerfile'",
+      "startCommand": "python api_server.py",
+      "dockerfilePath": "docker/Dockerfile.backend",
+      "healthcheckPath": "/api/health",
+      "healthcheckTimeout": 100,
+      "env": {
+        "NEXT_PUBLIC_SUPABASE_URL": {
+          "description": "Supabase project URL",
+          "required": true
+        },
+        "SUPABASE_SERVICE_ROLE_KEY": {
+          "description": "Supabase service role key (secret)",
+          "required": true
+        },
+        "GEMINI_API_KEYS": {
+          "description": "Google Gemini API keys (comma-separated for rotation)",
+          "required": true
+        },
+        "PORT": {
+          "description": "Backend port",
+          "value": "3090"
+        },
+        "PYTHONUNBUFFERED": {
+          "description": "Python unbuffered output",
+          "value": "1"
+        }
+      }
+    }
+  ]
+}
