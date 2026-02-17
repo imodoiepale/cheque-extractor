@@ -449,6 +449,52 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
             print(f"OCR phase error (non-fatal): {ocr_err}")
             traceback.print_exc()
 
+        # ── Upload page images to Supabase Storage ───────────────
+        pages_dir = Path(out_dir) / "pages"
+        if pages_dir.exists():
+            for page_file in pages_dir.glob("page_*.png"):
+                try:
+                    with open(page_file, "rb") as f:
+                        _supabase_upload_file(
+                            "checks",
+                            f"jobs/{job_id}/pages/{page_file.name}",
+                            f.read(),
+                            "image/png",
+                        )
+                except Exception as e:
+                    print(f"  Page image upload failed for {page_file.name}: {e}")
+
+        # ── Upload OCR result JSONs to Supabase Storage ──────────
+        ocr_results_dir = Path(out_dir) / "ocr_results"
+        if ocr_results_dir.exists():
+            for check_dir in ocr_results_dir.iterdir():
+                if check_dir.is_dir():
+                    for json_file in check_dir.glob("*.json"):
+                        try:
+                            with open(json_file, "rb") as f:
+                                _supabase_upload_file(
+                                    "checks",
+                                    f"jobs/{job_id}/ocr_results/{check_dir.name}/{json_file.name}",
+                                    f.read(),
+                                    "application/json",
+                                )
+                        except Exception as e:
+                            print(f"  OCR JSON upload failed for {json_file.name}: {e}")
+
+        # ── Upload extraction summary to Supabase Storage ─────────
+        summary_file = Path(out_dir) / "extraction_summary.json"
+        if summary_file.exists():
+            try:
+                with open(summary_file, "rb") as f:
+                    _supabase_upload_file(
+                        "checks",
+                        f"jobs/{job_id}/extraction_summary.json",
+                        f.read(),
+                        "application/json",
+                    )
+            except Exception as e:
+                print(f"  Extraction summary upload failed: {e}")
+
         # ── Save final results to Supabase ───────────────────────
         # Build clean checks_data JSON (no local paths)
         checks_data = []
@@ -494,9 +540,8 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
         _supabase_rpc("flatten_checks_from_job", {"p_job_id": job_id})
 
         # ── Cleanup local files after successful DB save ───────────
-        # Keep images locally only if storage upload failed
-        any_missing_storage = any(not c.get("storage_url") for c in checks)
-        _cleanup_local_files(job_id, pdf_path, keep_images=any_missing_storage)
+        # All files are now in Storage, safe to delete everything locally
+        _cleanup_local_files(job_id, pdf_path, keep_images=False)
 
     except Exception as e:
         jobs[job_id]["status"] = "error"
@@ -941,6 +986,52 @@ def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
             for check in checks:
                 _load_engine_results(results_dir, check)
 
+            # ── Upload page images to Supabase Storage ───────────────
+            pages_dir = Path(out_dir) / "pages"
+            if pages_dir.exists():
+                for page_file in pages_dir.glob("page_*.png"):
+                    try:
+                        with open(page_file, "rb") as f:
+                            _supabase_upload_file(
+                                "checks",
+                                f"jobs/{req.job_id}/pages/{page_file.name}",
+                                f.read(),
+                                "image/png",
+                            )
+                    except Exception as e:
+                        print(f"  Page image upload failed for {page_file.name}: {e}")
+
+            # ── Upload OCR result JSONs to Supabase Storage ──────────
+            ocr_results_dir = Path(out_dir) / "ocr_results"
+            if ocr_results_dir.exists():
+                for check_dir in ocr_results_dir.iterdir():
+                    if check_dir.is_dir():
+                        for json_file in check_dir.glob("*.json"):
+                            try:
+                                with open(json_file, "rb") as f:
+                                    _supabase_upload_file(
+                                        "checks",
+                                        f"jobs/{req.job_id}/ocr_results/{check_dir.name}/{json_file.name}",
+                                        f.read(),
+                                        "application/json",
+                                    )
+                            except Exception as e:
+                                print(f"  OCR JSON upload failed for {json_file.name}: {e}")
+
+            # ── Upload extraction summary to Supabase Storage ─────────
+            summary_file = Path(out_dir) / "extraction_summary.json"
+            if summary_file.exists():
+                try:
+                    with open(summary_file, "rb") as f:
+                        _supabase_upload_file(
+                            "checks",
+                            f"jobs/{req.job_id}/extraction_summary.json",
+                            f.read(),
+                            "application/json",
+                        )
+                except Exception as e:
+                    print(f"  Extraction summary upload failed: {e}")
+
             # Save to DB
             checks_data = []
             for c in checks:
@@ -984,9 +1075,9 @@ def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
             _supabase_rpc("flatten_checks_from_job", {"p_job_id": req.job_id})
 
             # ── Cleanup local files after successful extraction ────
+            # All files are now in Storage, safe to delete everything locally
             pdf_path = str(UPLOAD_DIR / f"{req.job_id}.pdf")
-            any_missing_storage = any(not c.get("storage_url") for c in checks)
-            _cleanup_local_files(req.job_id, pdf_path, keep_images=any_missing_storage)
+            _cleanup_local_files(req.job_id, pdf_path, keep_images=False)
 
         except Exception as e:
             job["status"] = "error"
