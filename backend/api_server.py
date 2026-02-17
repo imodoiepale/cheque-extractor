@@ -187,6 +187,7 @@ def _load_jobs_from_supabase():
             "job_id": jid,
             "status": row.get("status", "unknown"),
             "pdf_name": row.get("pdf_name", ""),
+            "pdf_url": row.get("pdf_url"),
             "file_size": row.get("file_size"),
             "doc_format": row.get("doc_format"),
             "total_pages": row.get("total_pages", 0),
@@ -782,7 +783,11 @@ def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
                         except Exception as e:
                             raise HTTPException(500, f"Failed to download PDF from Storage: {e}")
                     else:
-                        raise HTTPException(404, "PDF file not found locally and no Storage URL available")
+                        raise HTTPException(
+                            404, 
+                            f"PDF file not found. The original PDF for job {req.job_id} was not uploaded to Storage. "
+                            f"Please delete this job and re-upload the PDF to extract it again."
+                        )
                 
                 app_ext = CheckExtractorApp(pdf_path, output_dir=out_dir)
                 manifest = app_ext.extract_all_images()
