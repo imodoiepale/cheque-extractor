@@ -476,7 +476,7 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
                                     "checks",
                                     f"jobs/{job_id}/ocr_results/{check_dir.name}/{json_file.name}",
                                     f.read(),
-                                    "application/json",
+                                    "text/plain",  # Supabase doesn't accept application/json
                                 )
                         except Exception as e:
                             print(f"  OCR JSON upload failed for {json_file.name}: {e}")
@@ -490,7 +490,7 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
                         "checks",
                         f"jobs/{job_id}/extraction_summary.json",
                         f.read(),
-                        "application/json",
+                        "text/plain",  # Supabase doesn't accept application/json
                     )
             except Exception as e:
                 print(f"  Extraction summary upload failed: {e}")
@@ -1013,7 +1013,7 @@ def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
                                         "checks",
                                         f"jobs/{req.job_id}/ocr_results/{check_dir.name}/{json_file.name}",
                                         f.read(),
-                                        "application/json",
+                                        "text/plain",  # Supabase doesn't accept application/json
                                     )
                             except Exception as e:
                                 print(f"  OCR JSON upload failed for {json_file.name}: {e}")
@@ -1027,7 +1027,7 @@ def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
                             "checks",
                             f"jobs/{req.job_id}/extraction_summary.json",
                             f.read(),
-                            "application/json",
+                            "text/plain",  # Supabase doesn't accept application/json
                         )
                 except Exception as e:
                     print(f"  Extraction summary upload failed: {e}")
