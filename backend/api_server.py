@@ -187,7 +187,7 @@ def _load_jobs_from_supabase():
             "job_id": jid,
             "status": row.get("status", "unknown"),
             "pdf_name": row.get("pdf_name", ""),
-            "pdf_url": row.get("pdf_url"),
+                "pdf_url": row.get("pdf_url"),
             "file_size": row.get("file_size"),
             "doc_format": row.get("doc_format"),
             "total_pages": row.get("total_pages", 0),
@@ -1545,6 +1545,476 @@ def delete_job(job_id: str, _auth=Depends(_verify_token)):
     if in_memory:
         del jobs[job_id]
     return {"message": "Job deleted"}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# QuickBooks Data Management
+# ══════════════════════════════════════════════════════════════════════════════
+
+class QuickBooksEntry(BaseModel):
+    """QuickBooks entry model for comparison"""
+    check_number: str
+    date: str
+    amount: str
+    payee: str
+    account: str
+    memo: Optional[str] = ""
+
+
+@app.get("/api/quickbooks/entries")
+def get_quickbooks_entries(_auth=Depends(_verify_token)):
+    """
+    Get QuickBooks entries for comparison.
+    In production, this would fetch from QuickBooks API or uploaded CSV.
+    For now, returns data from Supabase table 'quickbooks_entries' if available.
+    """
+    if not _supabase_ok:
+        return {"entries": []}
+    
+    entries = _supabase_select("quickbooks_entries", limit=1000)
+    return {"entries": entries or []}
+
+
+@app.post("/api/quickbooks/upload")
+async def upload_quickbooks_data(file: UploadFile = File(...), _auth=Depends(_verify_token)):
+    """
+    Upload QuickBooks data from CSV/IIF file for comparison.
+    Parses the file and stores entries in Supabase.
+    """
+    if not _supabase_ok:
+        raise HTTPException(503, "Database not configured")
+    
+    try:
+        content = await file.read()
+        text = content.decode('utf-8')
+        
+        # Parse CSV (assuming QuickBooks export format)
+        entries = []
+        lines = text.strip().split('\n')
+        
+        # Try to detect format
+        if lines[0].startswith('!'):
+            # IIF format
+            entries = _parse_iif_format(lines)
+        else:
+            # CSV format
+            reader = csv.DictReader(io.StringIO(text))
+            for row in reader:
+                # Normalize column names (QuickBooks exports vary)
+                entry = {
+                    'check_number': row.get('Num') or row.get('Check Number') or row.get('Number') or '',
+                    'date': row.get('Date') or '',
+                    'amount': row.get('Amount') or '',
+                    'payee': row.get('Name') or row.get('Payee') or '',
+                    'account': row.get('Account') or 'Checking',
+                    'memo': row.get('Memo') or row.get('Description') or '',
+                }
+                if entry['check_number']:  # Only add if has check number
+                    entries.append(entry)
+        
+        # Store in Supabase
+        if entries:
+            # Clear existing entries (or implement merge logic)
+            _requests.delete(
+                f"{_sb_url}/rest/v1/quickbooks_entries?id=gt.0",
+                headers=_sb_headers(),
+                timeout=10,
+            )
+            
+            # Insert new entries
+            resp = _requests.post(
+                f"{_sb_url}/rest/v1/quickbooks_entries",
+                headers=_sb_headers(),
+                json=entries,
+                timeout=30,
+            )
+            
+            if resp.status_code >= 400:
+                raise HTTPException(500, f"Failed to store entries: {resp.text[:200]}")
+        
+        return {
+            "message": "QuickBooks data uploaded successfully",
+            "entries_count": len(entries),
+            "entries": entries[:10]  # Return first 10 as preview
+        }
+        
+    except Exception as e:
+        raise HTTPException(500, f"Failed to process file: {str(e)}")
+
+
+def _parse_iif_format(lines):
+    """Parse QuickBooks IIF format"""
+    entries = []
+    current_entry = {}
+    
+    for line in lines:
+        if line.startswith('!'):
+            continue  # Skip header lines
+        
+        parts = line.split('\t')
+        if len(parts) < 2:
+            continue
+        
+        record_type = parts[0]
+        
+        if record_type == 'TRNS':
+            # Transaction line
+            if current_entry and current_entry.get('check_number'):
+                entries.append(current_entry)
+            
+            current_entry = {
+                'check_number': parts[6] if len(parts) > 6 else '',
+                'date': parts[2] if len(parts) > 2 else '',
+                'payee': parts[4] if len(parts) > 4 else '',
+                'amount': parts[5].replace('-', '') if len(parts) > 5 else '',
+                'account': parts[3] if len(parts) > 3 else '',
+                'memo': parts[7] if len(parts) > 7 else '',
+            }
+        elif record_type == 'ENDTRNS':
+            if current_entry and current_entry.get('check_number'):
+                entries.append(current_entry)
+                current_entry = {}
+    
+    return entries
+
+
+@app.delete("/api/quickbooks/entries")
+def clear_quickbooks_entries(_auth=Depends(_verify_token)):
+    """Clear all QuickBooks entries from database"""
+    if not _supabase_ok:
+        raise HTTPException(503, "Database not configured")
+    
+    try:
+        _requests.delete(
+            f"{_sb_url}/rest/v1/quickbooks_entries?id=gt.0",
+            headers=_sb_headers(),
+            timeout=10,
+        )
+        return {"message": "QuickBooks entries cleared"}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to clear entries: {str(e)}")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Settings & Integrations Management
+# ══════════════════════════════════════════════════════════════════════════════
+
+class IntegrationSettings(BaseModel):
+    """Integration settings model"""
+    gemini_api_key: Optional[str] = None
+
+
+@app.get("/api/settings/integrations")
+def get_integration_settings(_auth=Depends(_verify_token)):
+    """
+    Get integration settings and status.
+    Returns masked API keys for security.
+    """
+    if not _supabase_ok:
+        # Return local environment status if no DB
+        return {
+            "geminiApiKey": bool(os.environ.get("GEMINI_API_KEY")),
+            "qboConnected": False,
+            "storageType": "local",
+        }
+    
+    try:
+        # Fetch from Supabase settings table
+        settings = _supabase_select("app_settings", limit=1)
+        
+        if settings and len(settings) > 0:
+            setting = settings[0]
+            return {
+                "geminiApiKey": bool(setting.get("gemini_api_key")),
+                "qboConnected": bool(setting.get("qbo_connected")),
+                "qboCompanyId": setting.get("qbo_company_id"),
+                "storageType": "supabase",
+            }
+        
+        # No settings found, return defaults
+        return {
+            "geminiApiKey": bool(os.environ.get("GEMINI_API_KEY")),
+            "qboConnected": False,
+            "storageType": "supabase",
+        }
+    except Exception as e:
+        print(f"Error fetching integration settings: {e}")
+        return {
+            "geminiApiKey": bool(os.environ.get("GEMINI_API_KEY")),
+            "qboConnected": False,
+            "storageType": "error",
+        }
+
+
+@app.patch("/api/settings/integrations")
+async def update_integration_settings(settings: IntegrationSettings, _auth=Depends(_verify_token)):
+    """
+    Update integration settings.
+    Stores API keys securely in Supabase.
+    """
+    if not _supabase_ok:
+        raise HTTPException(503, "Database not configured. API keys cannot be stored securely.")
+    
+    try:
+        # Check if settings record exists
+        existing = _supabase_select("app_settings", limit=1)
+        
+        update_data = {}
+        if settings.gemini_api_key:
+            update_data["gemini_api_key"] = settings.gemini_api_key
+            # Also update environment variable for current session
+            os.environ["GEMINI_API_KEY"] = settings.gemini_api_key
+        
+        update_data["updated_at"] = datetime.utcnow().isoformat()
+        
+        if existing and len(existing) > 0:
+            # Update existing record
+            setting_id = existing[0].get("id")
+            resp = _requests.patch(
+                f"{_sb_url}/rest/v1/app_settings?id=eq.{setting_id}",
+                headers=_sb_headers(),
+                json=update_data,
+                timeout=10,
+            )
+        else:
+            # Create new record
+            update_data["id"] = 1  # Single settings record
+            update_data["created_at"] = datetime.utcnow().isoformat()
+            resp = _requests.post(
+                f"{_sb_url}/rest/v1/app_settings",
+                headers=_sb_headers(),
+                json=update_data,
+                timeout=10,
+            )
+        
+        if resp.status_code >= 400:
+            raise HTTPException(500, f"Failed to save settings: {resp.text[:200]}")
+        
+        return {
+            "message": "Settings updated successfully",
+            "geminiApiKey": bool(settings.gemini_api_key),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Failed to update settings: {str(e)}")
+
+
+@app.get("/api/settings/api-keys/status")
+def get_api_keys_status(_auth=Depends(_verify_token)):
+    """
+    Check which API keys are configured (without exposing the actual keys).
+    """
+    return {
+        "gemini": bool(os.environ.get("GEMINI_API_KEY")),
+        "supabase": _supabase_ok,
+        "storage": "supabase" if _supabase_ok else "local",
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# QuickBooks OAuth Integration
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/qbo/auth")
+def initiate_qbo_auth(_auth=Depends(_verify_token)):
+    """
+    Initiate QuickBooks OAuth flow.
+    Returns the authorization URL to redirect the user to.
+    """
+    client_id = os.environ.get("INTUIT_CLIENT_ID")
+    redirect_uri = os.environ.get("INTUIT_REDIRECT_URI")
+    
+    if not client_id or not redirect_uri:
+        raise HTTPException(503, "QuickBooks OAuth not configured. Set INTUIT_CLIENT_ID and INTUIT_REDIRECT_URI environment variables.")
+    
+    # QuickBooks OAuth 2.0 authorization endpoint
+    auth_url = "https://appcenter.intuit.com/connect/oauth2"
+    
+    # Generate state parameter for CSRF protection
+    import secrets
+    state = secrets.token_urlsafe(32)
+    
+    # Store state in session or database for verification
+    # For now, we'll include it in the URL
+    
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": "com.intuit.quickbooks.accounting",
+        "state": state,
+    }
+    
+    from urllib.parse import urlencode
+    auth_url_with_params = f"{auth_url}?{urlencode(params)}"
+    
+    return {
+        "authUrl": auth_url_with_params,
+        "state": state,
+    }
+
+
+@app.get("/api/qbo/callback")
+async def qbo_oauth_callback(code: str, state: str, realmId: str):
+    """
+    QuickBooks OAuth callback endpoint.
+    Exchanges authorization code for access token.
+    """
+    client_id = os.environ.get("INTUIT_CLIENT_ID")
+    client_secret = os.environ.get("INTUIT_CLIENT_SECRET")
+    redirect_uri = os.environ.get("INTUIT_REDIRECT_URI")
+    
+    if not all([client_id, client_secret, redirect_uri]):
+        raise HTTPException(503, "QuickBooks OAuth not configured")
+    
+    # Exchange code for tokens
+    token_url = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
+    
+    import base64
+    auth_header = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+    
+    try:
+        response = _requests.post(
+            token_url,
+            headers={
+                "Authorization": f"Basic {auth_header}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+            },
+            timeout=30,
+        )
+        
+        if response.status_code != 200:
+            raise HTTPException(500, f"Failed to exchange code for token: {response.text}")
+        
+        tokens = response.json()
+        
+        # Store tokens in Supabase
+        if _supabase_ok:
+            update_data = {
+                "qbo_connected": True,
+                "qbo_company_id": realmId,
+                "qbo_access_token": tokens.get("access_token"),
+                "qbo_refresh_token": tokens.get("refresh_token"),
+                "qbo_token_expires_at": datetime.utcnow().isoformat(),
+                "updated_at": datetime.utcnow().isoformat(),
+            }
+            
+            # Update or create settings
+            existing = _supabase_select("app_settings", limit=1)
+            if existing and len(existing) > 0:
+                setting_id = existing[0].get("id")
+                _requests.patch(
+                    f"{_sb_url}/rest/v1/app_settings?id=eq.{setting_id}",
+                    headers=_sb_headers(),
+                    json=update_data,
+                    timeout=10,
+                )
+            else:
+                update_data["id"] = 1
+                update_data["created_at"] = datetime.utcnow().isoformat()
+                _requests.post(
+                    f"{_sb_url}/rest/v1/app_settings",
+                    headers=_sb_headers(),
+                    json=update_data,
+                    timeout=10,
+                )
+        
+        # Redirect back to settings page
+        frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3080")
+        return RedirectResponse(url=f"{frontend_url}/settings/integrations?qbo=connected")
+        
+    except Exception as e:
+        print(f"OAuth callback error: {e}")
+        raise HTTPException(500, f"OAuth callback failed: {str(e)}")
+
+
+@app.post("/api/qbo/disconnect")
+def disconnect_qbo(_auth=Depends(_verify_token)):
+    """
+    Disconnect QuickBooks integration.
+    Revokes tokens and clears stored credentials.
+    """
+    if not _supabase_ok:
+        raise HTTPException(503, "Database not configured")
+    
+    try:
+        # Get current tokens
+        settings = _supabase_select("app_settings", limit=1)
+        
+        if settings and len(settings) > 0:
+            setting = settings[0]
+            access_token = setting.get("qbo_access_token")
+            
+            # Revoke token with Intuit
+            if access_token:
+                client_id = os.environ.get("INTUIT_CLIENT_ID")
+                client_secret = os.environ.get("INTUIT_CLIENT_SECRET")
+                
+                if client_id and client_secret:
+                    import base64
+                    auth_header = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+                    
+                    try:
+                        _requests.post(
+                            "https://developer.api.intuit.com/v2/oauth2/tokens/revoke",
+                            headers={
+                                "Authorization": f"Basic {auth_header}",
+                                "Content-Type": "application/json",
+                            },
+                            json={"token": access_token},
+                            timeout=10,
+                        )
+                    except Exception as e:
+                        print(f"Token revocation error: {e}")
+            
+            # Clear tokens from database
+            setting_id = setting.get("id")
+            _requests.patch(
+                f"{_sb_url}/rest/v1/app_settings?id=eq.{setting_id}",
+                headers=_sb_headers(),
+                json={
+                    "qbo_connected": False,
+                    "qbo_company_id": None,
+                    "qbo_access_token": None,
+                    "qbo_refresh_token": None,
+                    "qbo_token_expires_at": None,
+                    "updated_at": datetime.utcnow().isoformat(),
+                },
+                timeout=10,
+            )
+        
+        return {"message": "QuickBooks disconnected successfully"}
+        
+    except Exception as e:
+        raise HTTPException(500, f"Failed to disconnect: {str(e)}")
+
+
+@app.get("/api/qbo/status")
+def get_qbo_status(_auth=Depends(_verify_token)):
+    """
+    Get QuickBooks connection status.
+    """
+    if not _supabase_ok:
+        return {"connected": False, "companyId": None}
+    
+    try:
+        settings = _supabase_select("app_settings", limit=1)
+        if settings and len(settings) > 0:
+            setting = settings[0]
+            return {
+                "connected": bool(setting.get("qbo_connected")),
+                "companyId": setting.get("qbo_company_id"),
+            }
+        return {"connected": False, "companyId": None}
+    except Exception as e:
+        print(f"Error getting QB status: {e}")
+        return {"connected": False, "companyId": None}
 
 
 if __name__ == "__main__":

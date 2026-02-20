@@ -2,9 +2,19 @@
 const nextConfig = {
   output: 'standalone',
   images: {
-    domains: [
-      'oqtprhptsjzpxtvbuhbv.supabase.co',
-      'localhost',
+    remotePatterns: [
+      {
+        protocol: 'https',
+        hostname: 'oqtprhptsjzpxtvbuhbv.supabase.co',
+        port: '',
+        pathname: '/**',
+      },
+      {
+        protocol: 'http',
+        hostname: 'localhost',
+        port: '',
+        pathname: '/**',
+      },
     ],
   },
 };
