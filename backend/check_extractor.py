@@ -992,7 +992,8 @@ class CheckExtractorApp:
                 "engines": engine_names,
             })
 
-        for idx, (cid, img_path, page_num) in enumerate(manifest):
+        def process_single_check(idx, cid, img_path, page_num):
+            """Process a single check with all selected OCR engines in parallel."""
             check_dir = os.path.join(results_dir, cid)
             os.makedirs(check_dir, exist_ok=True)
 
@@ -1008,7 +1009,7 @@ class CheckExtractorApp:
                     "total": total,
                 })
 
-            # Submit only selected engines
+            # Submit only selected engines - run them in parallel
             workers = sum([run_tess, run_numd, run_gemi])
             tess_result = {"source": "tesseract", "fields": _empty_fields(), "processing_time_ms": 0}
             numd_result = {"source": "numarkdown", "fields": _empty_fields(), "processing_time_ms": 0}
@@ -1088,6 +1089,25 @@ class CheckExtractorApp:
                         tess_result.get("error") or numd_result.get("error") or gemi_result.get("error")
                     ),
                 })
+            
+            return (idx, cid, page_num)
+
+        # Process ALL checks in parallel (Promise.all equivalent)
+        max_concurrent_checks = min(4, total)  # Process up to 4 checks simultaneously
+        with ThreadPoolExecutor(max_workers=max_concurrent_checks) as executor:
+            futures = [
+                executor.submit(process_single_check, idx, cid, img_path, page_num)
+                for idx, (cid, img_path, page_num) in enumerate(manifest)
+            ]
+            
+            # Wait for all to complete (as_completed gives results as they finish)
+            for future in as_completed(futures):
+                try:
+                    future.result()  # This will raise any exceptions that occurred
+                except Exception as e:
+                    print(f"\n  Error processing check: {e}")
+                    import traceback
+                    traceback.print_exc()
 
         print(f"\nPhase 2 complete: results in {results_dir}/")
 

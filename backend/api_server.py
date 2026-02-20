@@ -1757,7 +1757,9 @@ async def update_integration_settings(settings: IntegrationSettings, _auth=Depen
     
     try:
         # Check if settings record exists
+        print(f"🔍 Checking for existing app_settings record...")
         existing = _supabase_select("app_settings", limit=1)
+        print(f"✓ Existing records found: {len(existing) if existing else 0}")
         
         update_data = {}
         if settings.gemini_api_key:
@@ -1770,6 +1772,9 @@ async def update_integration_settings(settings: IntegrationSettings, _auth=Depen
         if existing and len(existing) > 0:
             # Update existing record
             setting_id = existing[0].get("id")
+            print(f"📝 Updating existing record with id={setting_id}")
+            print(f"   URL: {_sb_url}/rest/v1/app_settings?id=eq.{setting_id}")
+            print(f"   Data: {update_data}")
             resp = _requests.patch(
                 f"{_sb_url}/rest/v1/app_settings?id=eq.{setting_id}",
                 headers=_sb_headers(),
@@ -1780,6 +1785,9 @@ async def update_integration_settings(settings: IntegrationSettings, _auth=Depen
             # Create new record
             update_data["id"] = 1  # Single settings record
             update_data["created_at"] = datetime.utcnow().isoformat()
+            print(f"➕ Creating new record")
+            print(f"   URL: {_sb_url}/rest/v1/app_settings")
+            print(f"   Data: {update_data}")
             resp = _requests.post(
                 f"{_sb_url}/rest/v1/app_settings",
                 headers=_sb_headers(),
@@ -1787,9 +1795,14 @@ async def update_integration_settings(settings: IntegrationSettings, _auth=Depen
                 timeout=10,
             )
         
+        print(f"📡 Response status: {resp.status_code}")
+        print(f"📡 Response body: {resp.text[:500]}")
+        
         if resp.status_code >= 400:
+            print(f"❌ ERROR: {resp.text}")
             raise HTTPException(500, f"Failed to save settings: {resp.text[:200]}")
         
+        print(f"✅ Settings saved successfully!")
         return {
             "message": "Settings updated successfully",
             "geminiApiKey": bool(settings.gemini_api_key),
@@ -1797,6 +1810,9 @@ async def update_integration_settings(settings: IntegrationSettings, _auth=Depen
     except HTTPException:
         raise
     except Exception as e:
+        print(f"❌ EXCEPTION: {type(e).__name__}: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(500, f"Failed to update settings: {str(e)}")
 
 
