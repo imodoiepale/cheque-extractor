@@ -32,10 +32,18 @@ from datetime import datetime
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pdf2image import convert_from_path
-from PIL import Image, ImageTk
+from PIL import Image
 import pytesseract
-import tkinter as tk
-from tkinter import ttk, messagebox
+
+# Optional GUI imports (only needed for desktop preview mode)
+try:
+    from PIL import ImageTk
+    import tkinter as tk
+    from tkinter import ttk, messagebox
+    GUI_AVAILABLE = True
+except ImportError:
+    GUI_AVAILABLE = False
+    # Headless mode - no GUI available (e.g., Docker, Railway)
 
 # Set Tesseract path explicitly for Windows
 pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
@@ -1123,6 +1131,8 @@ class CheckExtractorApp:
     # ── GUI Preview ──────────────────────────────────────────────────
     def run_preview(self):
         """Show Tkinter GUI to preview detected boxes, then extract."""
+        if not GUI_AVAILABLE:
+            raise RuntimeError("GUI not available in headless mode. Use run_headless() instead.")
         self.root = tk.Tk()
         self.root.title(f"Check Extractor – {os.path.basename(self.pdf_path)}")
         self.root.state("zoomed")
