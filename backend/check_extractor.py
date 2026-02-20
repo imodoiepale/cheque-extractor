@@ -1041,6 +1041,11 @@ class CheckExtractorApp:
             if run_gemi:
                 with open(os.path.join(check_dir, "gemini.json"), "w") as f:
                     json.dump(gemi_result, f, indent=2)
+                # Log Gemini extraction details
+                g_fields = gemi_result.get("fields", {})
+                print(f"\n    Gemini extracted: payee={g_fields.get('payee')}, amount={g_fields.get('amount')}, date={g_fields.get('checkDate')}, check#={g_fields.get('checkNumber')}")
+                if gemi_result.get("error"):
+                    print(f"    Gemini error: {gemi_result.get('error')}")
 
             # Merge (works even if some engines returned empty fields)
             hybrid = merge_all(tess_result, numd_result, gemi_result)
