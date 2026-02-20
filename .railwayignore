@@ -23,3 +23,5 @@ docker/docker-compose.yml
 .gitignore
 .vscode/
 .idea/
+package.json
+package-lock.json
