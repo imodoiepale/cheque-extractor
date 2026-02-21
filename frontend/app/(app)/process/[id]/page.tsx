@@ -57,26 +57,56 @@ export default function ProcessingPage() {
       console.log('Total checks:', jobData.checks.length);
       console.log('Selected methods:', selectedMethods);
       jobData.checks.forEach((check: any, idx: number) => {
-        console.log(`\nCheck ${idx + 1} (${check.check_id}):`);
-        console.log('  Image URL:', check.image_url || check.storage_url || 'MISSING');
-        console.log('  Methods used:', check.methods_used || 'NONE');
-        console.log('  Has extraction:', !!check.extraction);
+        console.log(`\n━━━ Check ${idx + 1} (${check.check_id}) ━━━`);
+        console.log('📷 Image URL:', check.image_url || check.storage_url || 'MISSING');
+        console.log('🔧 Methods used:', check.methods_used || 'NONE');
+        console.log('⏱️  Processing times:', check.engine_times_ms || {});
+        
+        // Show hybrid/merged extraction
         if (check.extraction) {
-          console.log('  Extraction data:', {
-            payee: check.extraction.payee?.value || check.extraction.payee,
-            amount: check.extraction.amount?.value || check.extraction.amount,
-            date: check.extraction.checkDate?.value || check.extraction.checkDate,
-            checkNumber: check.extraction.checkNumber?.value || check.extraction.checkNumber,
-          });
+          console.log('\n🔀 HYBRID (Merged) Extraction:');
+          console.log('  Payee:', check.extraction.payee?.value || check.extraction.payee, `(${check.extraction.payee?.source || 'unknown'})`);
+          console.log('  Amount:', check.extraction.amount?.value || check.extraction.amount, `(${check.extraction.amount?.source || 'unknown'})`);
+          console.log('  Date:', check.extraction.checkDate?.value || check.extraction.checkDate, `(${check.extraction.checkDate?.source || 'unknown'})`);
+          console.log('  Check #:', check.extraction.checkNumber?.value || check.extraction.checkNumber, `(${check.extraction.checkNumber?.source || 'unknown'})`);
         }
-        if (check.engine_results) {
-          console.log('  Engine results:', Object.keys(check.engine_results));
-        }
-        if (check.engine_times_ms) {
-          console.log('  Processing times:', check.engine_times_ms);
+        
+        // Show individual engine extractions separately
+        if (check.engine_extractions) {
+          console.log('\n📊 INDIVIDUAL ENGINE EXTRACTIONS:');
+          
+          if (check.engine_extractions.tesseract) {
+            console.log('\n  🔤 TESSERACT:');
+            const t = check.engine_extractions.tesseract;
+            console.log('    Payee:', t.payee?.value || 'N/A');
+            console.log('    Amount:', t.amount?.value || 'N/A');
+            console.log('    Date:', t.checkDate?.value || 'N/A');
+            console.log('    Check #:', t.checkNumber?.value || 'N/A');
+          }
+          
+          if (check.engine_extractions.numarkdown) {
+            console.log('\n  📝 NUMARKDOWN:');
+            const n = check.engine_extractions.numarkdown;
+            console.log('    Payee:', n.payee?.value || 'N/A');
+            console.log('    Amount:', n.amount?.value || 'N/A');
+            console.log('    Date:', n.checkDate?.value || 'N/A');
+            console.log('    Check #:', n.checkNumber?.value || 'N/A');
+          }
+          
+          if (check.engine_extractions.gemini) {
+            console.log('\n  🤖 GEMINI:');
+            const g = check.engine_extractions.gemini;
+            console.log('    Payee:', g.payee?.value || 'N/A');
+            console.log('    Amount:', g.amount?.value || 'N/A');
+            console.log('    Date:', g.checkDate?.value || 'N/A');
+            console.log('    Check #:', g.checkNumber?.value || 'N/A');
+          }
+        } else if (check.engine_results) {
+          console.log('\n📊 RAW ENGINE RESULTS (Legacy format):');
+          console.log('  Available engines:', Object.keys(check.engine_results));
         }
       });
-      console.log('=== END JOB DATA ===\n');
+      console.log('\n=== END JOB DATA ===\n');
     }
   }, [jobData, jobId, selectedMethods]);
 

@@ -6,6 +6,10 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
+-- ══════════════════════════════════════════════════════════════════════════════
+-- Tables (all use IF NOT EXISTS for safe re-runs)
+-- ══════════════════════════════════════════════════════════════════════════════
+
 -- ── Tenants ─────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS tenants (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -221,9 +225,9 @@ CREATE TABLE IF NOT EXISTS team_invitations (
     created_at  TIMESTAMPTZ DEFAULT now()
 );
 
--- ═══════════════════════════════════════════════════════════
--- Functions
--- ═══════════════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════════════════════════════
+-- Functions (all use CREATE OR REPLACE for safe re-runs)
+-- ══════════════════════════════════════════════════════════════════════════════
 
 -- Auto-create profile + tenant on signup
 CREATE OR REPLACE FUNCTION handle_new_user()
@@ -402,9 +406,9 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
--- ═══════════════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════════════════════════════
 -- RLS Policies (service role bypass for backend)
--- ═══════════════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════════════════════════════
 ALTER TABLE tenants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tenant_settings ENABLE ROW LEVEL SECURITY;
@@ -425,13 +429,20 @@ CREATE POLICY "service_all" ON audit_logs FOR ALL USING (true) WITH CHECK (true)
 CREATE POLICY "service_all" ON accounting_connections FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "service_all" ON team_invitations FOR ALL USING (true) WITH CHECK (true);
 
--- ═══════════════════════════════════════════════════════════
--- Storage
--- ═══════════════════════════════════════════════════════════
+-- ══════════════════════════════════════════════════════════════════════════════
+-- Storage Bucket (uses ON CONFLICT for safe re-runs)
+-- ══════════════════════════════════════════════════════════════════════════════
 INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
 VALUES ('checks', 'checks', true, 52428800, ARRAY['image/jpeg','image/png','image/jpg','image/webp','application/pdf'])
 ON CONFLICT (id) DO NOTHING;
 
+-- Storage policies (drop and recreate to ensure correct configuration)
+DROP POLICY IF EXISTS "public_read_checks" ON storage.objects;
+DROP POLICY IF EXISTS "public_write_checks" ON storage.objects;
+DROP POLICY IF EXISTS "public_update_checks" ON storage.objects;
+DROP POLICY IF EXISTS "public_delete_checks" ON storage.objects;
+
 CREATE POLICY "public_read_checks" ON storage.objects FOR SELECT USING (bucket_id = 'checks');
 CREATE POLICY "public_write_checks" ON storage.objects FOR INSERT WITH CHECK (bucket_id = 'checks');
 CREATE POLICY "public_update_checks" ON storage.objects FOR UPDATE USING (bucket_id = 'checks');
+CREATE POLICY "public_delete_checks" ON storage.objects FOR DELETE USING (bucket_id = 'checks');
