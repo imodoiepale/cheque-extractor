@@ -902,6 +902,9 @@ def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
             checks = job["checks"]
 
             if not app_ext or not manifest:
+                manifest = []
+                pdf_path = job.get("pdf_path", str(UPLOAD_DIR / f"{req.job_id}.pdf"))
+                
                 # Check if we have existing check images - if so, we can re-extract without PDF
                 images_dir = Path(out_dir) / "images"
                 has_images = images_dir.exists() and any(images_dir.glob("check_*.png"))
@@ -909,46 +912,67 @@ def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
                 if has_images:
                     # Build manifest from existing check images
                     print(f"  ✓ Using existing check images for re-extraction (PDF not needed)")
-                    manifest = []
                     for check in checks:
                         cid = check["check_id"]
                         img_path = str(images_dir / f"{cid}.png")
                         if os.path.exists(img_path):
                             manifest.append((cid, img_path, check["page"]))
-                    
-                    if not manifest:
-                        raise HTTPException(404, "No check images found. Please re-upload the PDF.")
-                    
                     print(f"  ✓ Found {len(manifest)} existing check images")
-                else:
-                    # Need to extract from PDF
-                    pdf_path = job.get("pdf_path", str(UPLOAD_DIR / f"{req.job_id}.pdf"))
-                    
-                    # If local PDF doesn't exist, try to download from Supabase Storage
+                
+                # If no local images, try to download from Supabase Storage
+                if not manifest:
+                    print(f"  → No local check images found, checking Supabase Storage...")
+                    if _supabase_ok:
+                        try:
+                            # Try to download check images from storage
+                            for check in checks:
+                                cid = check.get("check_id")
+                                if not cid:
+                                    continue
+                                
+                                # Try to get image from storage
+                                storage_img_url = f"{_sb_url}/storage/v1/object/public/checks/jobs/{req.job_id}/checks/{cid}.png"
+                                resp = _requests.get(storage_img_url, timeout=10)
+                                if resp.status_code == 200:
+                                    img_path = Path(out_dir) / "checks" / f"{cid}.png"
+                                    img_path.parent.mkdir(parents=True, exist_ok=True)
+                                    with open(img_path, "wb") as f:
+                                        f.write(resp.content)
+                                    manifest.append((cid, str(img_path), check["page"]))
+                                    print(f"  ✓ Downloaded check image {cid} from Storage")
+                            
+                            if manifest:
+                                print(f"  ✓ Downloaded {len(manifest)} check images from Storage")
+                        except Exception as e:
+                            print(f"  ✗ Failed to download check images from Storage: {e}")
+                
+                # If still no images, try to get/download PDF and extract
+                if not manifest:
                     if not os.path.exists(pdf_path):
-                        pdf_url = job.get("pdf_url") or jobs[req.job_id].get("pdf_url")
-                        if pdf_url and _supabase_ok:
+                        # PDF not found locally, try to download from Supabase Storage
+                        if _supabase_ok and job.get("pdf_name"):
+                            storage_url = f"{_sb_url}/storage/v1/object/public/checks/jobs/{req.job_id}/{job['pdf_name']}"
                             try:
-                                print(f"  Local PDF missing, downloading from Storage: {pdf_url}")
-                                resp = _requests.get(pdf_url, timeout=30)
+                                print(f"  → Downloading PDF from Storage: {storage_url}")
+                                resp = _requests.get(storage_url, timeout=30)
                                 if resp.status_code == 200:
                                     UPLOAD_DIR.mkdir(exist_ok=True)
                                     with open(pdf_path, "wb") as f:
                                         f.write(resp.content)
                                     print(f"  ✓ Downloaded PDF ({len(resp.content)} bytes)")
                                 else:
-                                    raise HTTPException(404, f"PDF not found locally or in Storage (HTTP {resp.status_code})")
+                                    raise HTTPException(404, f"No check images or PDF found. Please re-upload the PDF.")
+                            except HTTPException:
+                                raise
                             except Exception as e:
-                                raise HTTPException(500, f"Failed to download PDF from Storage: {e}")
+                                raise HTTPException(500, f"Failed to download PDF: {e}")
                         else:
-                            raise HTTPException(
-                                404, 
-                                f"PDF file not found. The original PDF for job {req.job_id} was not uploaded to Storage. "
-                                f"Please delete this job and re-upload the PDF to extract it again."
-                            )
+                            raise HTTPException(404, "No check images or PDF found. Please re-upload the PDF.")
                     
+                    # Extract images from PDF
                     app_ext = CheckExtractorApp(pdf_path, output_dir=out_dir)
                     manifest = app_ext.extract_all_images()
+                    print(f"  ✓ Extracted {len(manifest)} check images from PDF")
 
             # ── Filter manifest by range ──────────────────────────
             filtered_manifest = list(manifest)
