@@ -177,10 +177,11 @@ def _load_jobs_from_supabase():
                 "page": cd.get("page", 0),
                 "width": cd.get("width", 0),
                 "height": cd.get("height", 0),
-                "extraction": cd.get("extraction"),
+                "extraction": cd.get("extraction"),  # Hybrid merged result
                 "methods_used": cd.get("methods_used", []),
                 "storage_url": cd.get("image_url", ""),
-                "engine_results": cd.get("engine_results", {}),
+                "engine_results": cd.get("engine_results", {}),  # Raw fields per engine
+                "engine_extractions": cd.get("engine_extractions", {}),  # Full extraction per engine
                 "engine_times_ms": cd.get("engine_times_ms", {}),
             })
         jobs[jid] = {
@@ -262,13 +263,15 @@ def _cleanup_local_files(job_id: str, pdf_path: str = None, keep_images: bool = 
 
 def _load_engine_results(results_dir: str, check: dict):
     """Load per-engine OCR results + hybrid into a check dict.
-    Populates check['extraction'], check['methods_used'], and check['engine_results'].
+    Populates check['extraction'] (hybrid), check['methods_used'], check['engine_results'] (raw fields),
+    and check['engine_extractions'] (full extraction objects with confidence for each engine).
     """
     cid = check["check_id"]
     check_dir = os.path.join(results_dir, cid)
     if not os.path.isdir(check_dir):
         return
-    # Load hybrid
+    
+    # Load hybrid merged result
     hybrid_path = os.path.join(check_dir, "hybrid.json")
     if os.path.exists(hybrid_path):
         with open(hybrid_path) as f:
@@ -276,19 +279,50 @@ def _load_engine_results(results_dir: str, check: dict):
         check["extraction"] = hybrid.get("extraction", {})
         check["methods_used"] = hybrid.get("methods_used", [])
         check["engine_times_ms"] = hybrid.get("engine_times_ms", {})
-    # Load individual engine results
+    
+    # Load individual engine results (raw fields only)
     engine_results = {}
+    # Load individual engine extractions (full extraction format for each engine separately)
+    engine_extractions = {}
+    
     for engine in ("tesseract", "numarkdown", "gemini"):
         eng_path = os.path.join(check_dir, f"{engine}.json")
         if os.path.exists(eng_path):
             try:
                 with open(eng_path) as f:
                     data = json.load(f)
+                # Store raw fields for backward compatibility
                 engine_results[engine] = data.get("fields", {})
+                # Store full extraction with confidence scores for each engine
+                engine_extractions[engine] = _convert_fields_to_extraction(data.get("fields", {}), engine)
             except Exception:
                 pass
+    
     if engine_results:
         check["engine_results"] = engine_results
+    if engine_extractions:
+        check["engine_extractions"] = engine_extractions
+
+
+def _convert_fields_to_extraction(fields: dict, source: str) -> dict:
+    """Convert raw engine fields to extraction format with confidence scores.
+    This creates a consistent extraction format for individual engines.
+    """
+    extraction = {
+        "payee": {"value": fields.get("payee"), "confidence": 0.85 if fields.get("payee") else 0, "source": source},
+        "amount": {"value": fields.get("amount"), "confidence": 0.85 if fields.get("amount") else 0, "source": source},
+        "amountWritten": {"value": fields.get("amountWritten"), "confidence": 0.85 if fields.get("amountWritten") else 0, "source": source},
+        "checkDate": {"value": fields.get("checkDate"), "confidence": 0.85 if fields.get("checkDate") else 0, "source": source},
+        "checkNumber": {"value": fields.get("checkNumber"), "confidence": 0.85 if fields.get("checkNumber") else 0, "source": source},
+        "bankName": {"value": fields.get("bankName"), "confidence": 0.85 if fields.get("bankName") else 0, "source": source},
+        "memo": {"value": fields.get("memo"), "confidence": 0.85 if fields.get("memo") else 0, "source": source},
+        "micr": {
+            "routing": {"value": fields.get("micr", {}).get("routing"), "confidence": 0.85 if fields.get("micr", {}).get("routing") else 0, "source": source},
+            "account": {"value": fields.get("micr", {}).get("account"), "confidence": 0.85 if fields.get("micr", {}).get("account") else 0, "source": source},
+            "serial": {"value": fields.get("micr", {}).get("serial"), "confidence": 0.85 if fields.get("micr", {}).get("serial") else 0, "source": source},
+        },
+    }
+    return extraction
 
 
 # ── Optional JWT auth ────────────────────────────────────────
@@ -512,13 +546,14 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
                 "width": c["width"],
                 "height": c["height"],
                 "image_url": c.get("storage_url", f"/api/checks/{job_id}/{c['check_id']}/image"),
-                "extraction": c.get("extraction"),
+                "extraction": c.get("extraction"),  # Hybrid merged result
                 "methods_used": c.get("methods_used", []),
-                "engine_results": c.get("engine_results", {}),
+                "engine_results": c.get("engine_results", {}),  # Raw fields per engine
+                "engine_extractions": c.get("engine_extractions", {}),  # Full extraction per engine
                 "engine_times_ms": c.get("engine_times_ms", {}),
             }
             checks_data.append(check_data)
-            print(f"  Saving {c['check_id']}: image_url={check_data['image_url'][:60]}..., methods={check_data['methods_used']}, has_extraction={bool(check_data['extraction'])}")
+            print(f"  Saving {c['check_id']}: image_url={check_data['image_url'][:60]}..., methods={check_data['methods_used']}, has_extraction={bool(check_data['extraction'])}, engines={list(check_data.get('engine_extractions', {}).keys())}")
 
         print(f"  Updating database with {len(checks_data)} checks...")
         _supabase_update("check_jobs", {"job_id": job_id}, {
@@ -1071,9 +1106,10 @@ def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
                     "width": c["width"],
                     "height": c["height"],
                     "image_url": c.get("storage_url", f"/api/checks/{req.job_id}/{c['check_id']}/image"),
-                    "extraction": c.get("extraction"),
+                    "extraction": c.get("extraction"),  # Hybrid merged result
                     "methods_used": c.get("methods_used", []),
-                    "engine_results": c.get("engine_results", {}),
+                    "engine_results": c.get("engine_results", {}),  # Raw fields per engine
+                    "engine_extractions": c.get("engine_extractions", {}),  # Full extraction per engine
                     "engine_times_ms": c.get("engine_times_ms", {}),
                 })
 
