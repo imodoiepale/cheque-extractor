@@ -711,6 +711,8 @@ def extract_with_gemini(img_path):
             data = resp.json()
 
             text = data["candidates"][0]["content"]["parts"][0]["text"]
+            print(f"    Gemini raw response (first 500 chars): {text[:500]}")
+            
             json_str = text
             if "```json" in json_str:
                 json_str = json_str.split("```json")[1].split("```")[0]
@@ -718,6 +720,7 @@ def extract_with_gemini(img_path):
                 json_str = json_str.split("```")[1].split("```")[0]
 
             parsed = json.loads(json_str.strip())
+            print(f"    Gemini parsed JSON: {json.dumps(parsed, indent=2)[:500]}")
 
             fields = _empty_fields()
             fields["payee"] = parsed.get("payee")
@@ -730,6 +733,8 @@ def extract_with_gemini(img_path):
             fields["micr"]["routing"] = parsed.get("micr_routing")
             fields["micr"]["account"] = parsed.get("micr_account")
             fields["micr"]["serial"] = parsed.get("micr_serial")
+            
+            print(f"    Gemini extracted fields: payee={fields.get('payee')}, amount={fields.get('amount')}, date={fields.get('checkDate')}, check#={fields.get('checkNumber')}")
 
             return {"source": "gemini", "raw_text": text.strip(), "raw_json": parsed,
                     "fields": fields, "processing_time_ms": int((time.time() - t0) * 1000)}
