@@ -114,6 +114,54 @@ def _supabase_upload_file(bucket: str, path: str, file_bytes: bytes, content_typ
     return f"{_sb_url}/storage/v1/object/public/{bucket}/{path}"
 
 
+def _supabase_delete_folder(bucket: str, folder_path: str):
+    """Delete all files in a folder from Supabase Storage."""
+    if not _supabase_ok:
+        return
+    try:
+        # List all files in the folder
+        list_resp = _requests.post(
+            f"{_sb_url}/storage/v1/object/list/{bucket}",
+            headers={
+                "apikey": _sb_key,
+                "Authorization": f"Bearer {_sb_key}",
+                "Content-Type": "application/json",
+            },
+            json={"prefix": folder_path, "limit": 1000},
+            timeout=15,
+        )
+        
+        if list_resp.status_code >= 400:
+            print(f"  Storage list error ({list_resp.status_code}): {list_resp.text[:200]}")
+            return
+        
+        files = list_resp.json()
+        if not files:
+            return
+        
+        # Delete all files in batch
+        file_paths = [f"{folder_path}/{f['name']}" if not f['name'].startswith(folder_path) else f['name'] for f in files]
+        
+        if file_paths:
+            delete_resp = _requests.delete(
+                f"{_sb_url}/storage/v1/object/{bucket}",
+                headers={
+                    "apikey": _sb_key,
+                    "Authorization": f"Bearer {_sb_key}",
+                    "Content-Type": "application/json",
+                },
+                json={"prefixes": [folder_path]},
+                timeout=30,
+            )
+            
+            if delete_resp.status_code >= 400:
+                print(f"  Storage delete error ({delete_resp.status_code}): {delete_resp.text[:200]}")
+            else:
+                print(f"  ✓ Deleted {len(file_paths)} files from Storage: {folder_path}")
+    except Exception as e:
+        print(f"  Storage folder delete error: {e}")
+
+
 def _supabase_select(table: str, columns: str = "*", filters: dict = None, limit: int = 200):
     """Select rows from a Supabase table. Returns list of dicts or empty list."""
     if not _supabase_ok:
@@ -1584,33 +1632,58 @@ def retry_failed(job_id: str, _auth=Depends(_verify_token)):
 
 @app.delete("/api/jobs/{job_id}")
 def delete_job(job_id: str, _auth=Depends(_verify_token)):
-    """Delete a job and its local files + Supabase data."""
+    """Delete a job and cascade delete all associated files and data.
+    
+    Deletes:
+    - Local files (PDF, check images, OCR results)
+    - Supabase database row (check_jobs table with checks_data)
+    - Supabase Storage files (PDF, check images, page images, OCR JSONs, summaries)
+    """
     # Allow deleting jobs that exist in DB but not in memory
     in_memory = job_id in jobs
     if not in_memory and not _supabase_ok:
         raise HTTPException(404, "Job not found")
 
+    print(f"Deleting job {job_id}...")
+    
+    # Delete local files
     out_path = OUTPUT_DIR / job_id
     if out_path.exists():
         shutil.rmtree(out_path)
+        print(f"  ✓ Deleted local output directory")
+    
     pdf_path = UPLOAD_DIR / f"{job_id}.pdf"
     if pdf_path.exists():
         pdf_path.unlink()
+        print(f"  ✓ Deleted local PDF")
 
-    # Delete from Supabase DB
+    # Delete from Supabase Storage (cascade delete all job files)
+    if _supabase_ok:
+        print(f"  Deleting files from Supabase Storage...")
+        _supabase_delete_folder("checks", f"jobs/{job_id}")
+    
+    # Delete from Supabase DB (this removes the job row with all checks_data)
     if _supabase_ok:
         try:
-            _requests.delete(
+            resp = _requests.delete(
                 f"{_sb_url}/rest/v1/check_jobs?job_id=eq.{job_id}",
                 headers=_sb_headers(),
                 timeout=10,
             )
+            if resp.status_code >= 400:
+                print(f"  Database delete error ({resp.status_code}): {resp.text[:200]}")
+            else:
+                print(f"  ✓ Deleted from database")
         except Exception as e:
-            print(f"  Supabase delete error: {e}")
+            print(f"  Database delete error: {e}")
 
+    # Remove from in-memory cache
     if in_memory:
         del jobs[job_id]
-    return {"message": "Job deleted"}
+        print(f"  ✓ Removed from memory")
+    
+    print(f"✓ Job {job_id} deleted successfully")
+    return {"message": "Job and all associated data deleted successfully"}
 
 
 # ══════════════════════════════════════════════════════════════════════════════
