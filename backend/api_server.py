@@ -406,6 +406,8 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
             print(f"  PDF upload to storage failed: {e}")
 
         # ── Upload check images to Supabase Storage ──────────────
+        print(f"  Uploading {len(checks)} check images to Supabase Storage...")
+        uploaded_count = 0
         for check in checks:
             try:
                 img_p = check["image_path"]
@@ -418,8 +420,13 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
                     )
                 if url:
                     check["storage_url"] = url
+                    uploaded_count += 1
+                    print(f"    ✓ {check['check_id']}: {url}")
+                else:
+                    print(f"    ✗ {check['check_id']}: Upload returned None")
             except Exception as e:
-                print(f"  Image upload failed for {check['check_id']}: {e}")
+                print(f"    ✗ {check['check_id']}: {e}")
+        print(f"  Uploaded {uploaded_count}/{len(checks)} check images to Storage")
 
         # ── Phase 2: Run OCR (Tesseract + Gemini) ────────────────
         jobs[job_id]["status"] = "ocr_running"
@@ -499,7 +506,7 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
         # Build clean checks_data JSON (no local paths)
         checks_data = []
         for c in checks:
-            checks_data.append({
+            check_data = {
                 "check_id": c["check_id"],
                 "page": c["page"],
                 "width": c["width"],
@@ -509,14 +516,18 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
                 "methods_used": c.get("methods_used", []),
                 "engine_results": c.get("engine_results", {}),
                 "engine_times_ms": c.get("engine_times_ms", {}),
-            })
+            }
+            checks_data.append(check_data)
+            print(f"  Saving {c['check_id']}: image_url={check_data['image_url'][:60]}..., methods={check_data['methods_used']}, has_extraction={bool(check_data['extraction'])}")
 
+        print(f"  Updating database with {len(checks_data)} checks...")
         _supabase_update("check_jobs", {"job_id": job_id}, {
             "status": "complete",
             "checks_data": json.dumps(checks_data),
             "pdf_url": pdf_storage_url,
             "completed_at": datetime.now().isoformat(),
         })
+        print(f"  ✓ Database updated successfully")
 
         # Remove local paths from in-memory job
         for c in checks:

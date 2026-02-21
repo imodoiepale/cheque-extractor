@@ -49,6 +49,37 @@ export default function ProcessingPage() {
   const { currentStage, progress, isComplete, error, jobData, methodsProgress } =
     useCheckProcessing(jobId, selectedMethods);
 
+  // Debug logging for extraction data
+  useEffect(() => {
+    if (jobData?.checks) {
+      console.log('=== JOB DATA ===');
+      console.log('Job ID:', jobId);
+      console.log('Total checks:', jobData.checks.length);
+      console.log('Selected methods:', selectedMethods);
+      jobData.checks.forEach((check: any, idx: number) => {
+        console.log(`\nCheck ${idx + 1} (${check.check_id}):`);
+        console.log('  Image URL:', check.image_url || check.storage_url || 'MISSING');
+        console.log('  Methods used:', check.methods_used || 'NONE');
+        console.log('  Has extraction:', !!check.extraction);
+        if (check.extraction) {
+          console.log('  Extraction data:', {
+            payee: check.extraction.payee?.value || check.extraction.payee,
+            amount: check.extraction.amount?.value || check.extraction.amount,
+            date: check.extraction.checkDate?.value || check.extraction.checkDate,
+            checkNumber: check.extraction.checkNumber?.value || check.extraction.checkNumber,
+          });
+        }
+        if (check.engine_results) {
+          console.log('  Engine results:', Object.keys(check.engine_results));
+        }
+        if (check.engine_times_ms) {
+          console.log('  Processing times:', check.engine_times_ms);
+        }
+      });
+      console.log('=== END JOB DATA ===\n');
+    }
+  }, [jobData, jobId, selectedMethods]);
+
   const [viewMode, setViewMode] = useState<ViewMode>('card');
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
