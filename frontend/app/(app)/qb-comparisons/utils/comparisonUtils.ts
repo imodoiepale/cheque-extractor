@@ -14,6 +14,7 @@ export interface CheckExtraction {
   };
   image_file?: string;
   image_url?: string;
+  storage_url?: string;
 }
 
 export interface QuickBooksEntry {

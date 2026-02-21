@@ -36,6 +36,9 @@ yarn-error.log*
 .env.test.local
 .env.production.local
 
+# Security alerts (may contain sensitive info)
+SECURITY_ALERT.md
+
 # Vercel
 .vercel
 

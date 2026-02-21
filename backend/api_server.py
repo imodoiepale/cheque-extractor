@@ -918,6 +918,11 @@ def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
                         if os.path.exists(img_path):
                             manifest.append((cid, img_path, check["page"]))
                     print(f"  ✓ Found {len(manifest)} existing check images")
+                    
+                    # Create a minimal CheckExtractorApp instance for OCR operations
+                    # We don't need PDF, just the output directory for OCR results
+                    app_ext = CheckExtractorApp(None, output_dir=out_dir)
+                    app_ext.pages = []  # No pages needed for re-extraction
                 
                 # If no local images, try to download from Supabase Storage
                 if not manifest:
@@ -943,6 +948,9 @@ def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
                             
                             if manifest:
                                 print(f"  ✓ Downloaded {len(manifest)} check images from Storage")
+                                # Create a minimal CheckExtractorApp instance for OCR operations
+                                app_ext = CheckExtractorApp(None, output_dir=out_dir)
+                                app_ext.pages = []
                         except Exception as e:
                             print(f"  ✗ Failed to download check images from Storage: {e}")
                 

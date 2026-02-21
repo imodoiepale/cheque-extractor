@@ -53,16 +53,37 @@ export const DetailModal: React.FC<DetailModalProps> = ({ row, onClose }) => {
 
         <div className="p-6 space-y-6">
           {/* Check Image at Top */}
-          {(row.extractionData?.image_file || row.extractionData?.image_url) && (
+          {(row.extractionData?.image_file || row.extractionData?.image_url || row.extractionData?.storage_url) && (
             <div>
               <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Check Image</h4>
               <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
                 <img
-                  src={row.extractionData.image_url || row.extractionData.image_file || `/api/check-images/${row.extractionData.check_id}`}
+                  src={(() => {
+                    // Priority 1: storage_url (Supabase Storage direct URL)
+                    if (row.extractionData.storage_url) return row.extractionData.storage_url;
+                    
+                    // Priority 2: image_url (full URL)
+                    if (row.extractionData.image_url) return row.extractionData.image_url;
+                    
+                    // Priority 3: image_file if it's a full URL
+                    if (row.extractionData.image_file?.startsWith('http')) return row.extractionData.image_file;
+                    
+                    // Priority 4: Backend API endpoint (works even if local files are cleaned up)
+                    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090';
+                    return `${backendUrl}/api/checks/${row.extractionData.job_id}/${row.extractionData.check_id}/image`;
+                  })()}
                   alt="Check"
                   className="w-full h-auto rounded-lg shadow-md max-h-96 object-contain"
                   onError={(e) => {
-                    console.error('Image failed to load:', row.extractionData?.image_file);
+                    console.error('Image failed to load:', {
+                      storage_url: row.extractionData?.storage_url,
+                      image_url: row.extractionData?.image_url,
+                      image_file: row.extractionData?.image_file,
+                      check_id: row.extractionData?.check_id,
+                      job_id: row.extractionData?.job_id,
+                      backend_url: process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090',
+                      constructed_url: `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090'}/api/checks/${row.extractionData?.job_id}/${row.extractionData?.check_id}/image`
+                    });
                     const target = e.currentTarget;
                     target.parentElement!.innerHTML = '<div class="text-center text-gray-400 py-8">Image not available</div>';
                   }}

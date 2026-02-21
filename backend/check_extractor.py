@@ -880,8 +880,10 @@ class CheckExtractorApp:
 
         os.makedirs(f"{output_dir}/images", exist_ok=True)
 
-        self.convert_pdf_to_images()
-        self.auto_detect_all()
+        # Only convert PDF if path is provided (for re-extraction, we skip this)
+        if pdf_path:
+            self.convert_pdf_to_images()
+            self.auto_detect_all()
 
     def convert_pdf_to_images(self, dpi=300):
         print(f"Converting PDF to images at {dpi} DPI...")
