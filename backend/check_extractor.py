@@ -705,6 +705,13 @@ def extract_with_gemini(img_path):
             resp = requests.post(url, json=payload, timeout=30)
             if resp.status_code in (403, 429):
                 last_err = f"{resp.status_code} for key ...{key[-6:]}"
+                print(f"    Gemini API {resp.status_code} Error for key ...{key[-6:]}:")
+                print(f"    Full response: {resp.text[:500]}")
+                try:
+                    error_data = resp.json()
+                    print(f"    Error details: {json.dumps(error_data, indent=2)}")
+                except:
+                    pass
                 time.sleep(1)
                 continue
             resp.raise_for_status()
@@ -741,9 +748,13 @@ def extract_with_gemini(img_path):
 
         except Exception as e:
             last_err = str(e)
+            print(f"    Gemini extraction error: {e}")
+            import traceback
+            traceback.print_exc()
             time.sleep(0.5)
             continue
 
+    print(f"    Gemini failed after all attempts. Last error: {last_err}")
     return {"source": "gemini", "error": f"All keys failed. Last: {last_err}",
             "fields": _empty_fields(), "processing_time_ms": int((time.time() - t0) * 1000)}
 
