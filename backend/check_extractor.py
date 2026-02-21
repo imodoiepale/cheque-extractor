@@ -869,17 +869,36 @@ class CheckExtractorApp:
 
     def convert_pdf_to_images(self, dpi=300):
         print(f"Converting PDF to images at {dpi} DPI...")
+        
+        # Determine poppler path based on environment
+        poppler_path = None
         _script_dir = os.path.dirname(os.path.abspath(__file__))
-        poppler_path = os.path.join(
+        
+        # Try local Windows poppler installation first
+        local_poppler = os.path.join(
             _script_dir, "poppler", "poppler-23.11.0", "Library", "bin"
         )
-        if not os.path.isdir(poppler_path):
-            # Fallback: try cwd-based path
-            poppler_path = os.path.join(
+        if os.path.isdir(local_poppler):
+            poppler_path = local_poppler
+            print(f"  Using local Poppler: {poppler_path}")
+        else:
+            # Fallback: try cwd-based path (for Windows)
+            cwd_poppler = os.path.join(
                 os.getcwd(), "poppler", "poppler-23.11.0", "Library", "bin"
             )
-        print(f"  Poppler path: {poppler_path} (exists={os.path.isdir(poppler_path)})")
-        self.pages = convert_from_path(self.pdf_path, dpi=dpi, poppler_path=poppler_path)
+            if os.path.isdir(cwd_poppler):
+                poppler_path = cwd_poppler
+                print(f"  Using local Poppler: {poppler_path}")
+            else:
+                # In Docker/Linux, poppler-utils is in system PATH, so don't specify path
+                print(f"  Using system Poppler (from PATH)")
+        
+        # Only pass poppler_path if we found a local installation
+        if poppler_path:
+            self.pages = convert_from_path(self.pdf_path, dpi=dpi, poppler_path=poppler_path)
+        else:
+            self.pages = convert_from_path(self.pdf_path, dpi=dpi)
+        
         print(f"Converted {len(self.pages)} pages")
 
     def auto_detect_all(self):
