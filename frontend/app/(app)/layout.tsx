@@ -5,7 +5,7 @@ const NAV_ITEMS = [
   { href: '/firm-dashboard', icon: LayoutDashboard, label: 'Firm Dashboard' },
   { href: '/upload', icon: Upload, label: 'Upload' },
   { href: '/dashboard', icon: List, label: 'Documents' },
-  // { href: '/reconciliation', icon: Scale, label: 'Reconciliation' },
+  // { href: '/reconciliation', icon: Scale, label: 'Reconciliation' }, 
   { href: '/qb-comparisons', icon: GitCompare, label: 'QB Comparisons' },
   { href: '/export', icon: Download, label: 'Export' },
   { href: '/analytics', icon: BarChart3, label: 'Analytics' },

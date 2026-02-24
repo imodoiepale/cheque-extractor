@@ -89,6 +89,33 @@ export default function QBComparisonsPage() {
     checkQBConfig();
   }, [qbEntries.length, autoSyncAttempted]);
 
+  const handleSaveCheck = async (checkId: string, updates: any) => {
+    try {
+      console.log('💾 Saving check edits:', checkId, updates);
+      const res = await fetch(`/api/checks/${checkId}/update`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || 'Failed to save check');
+      }
+
+      const data = await res.json();
+      console.log('✅ Check saved successfully:', data);
+      
+      // Refresh data to show updated values
+      await refreshData();
+      
+      return data;
+    } catch (error: any) {
+      console.error('❌ Failed to save check:', error);
+      throw error;
+    }
+  };
+
   const handleAutoSync = async () => {
     setSyncing(true);
     try {
@@ -356,7 +383,11 @@ export default function QBComparisonsPage() {
         </div>
       </div>
 
-      <DetailModal row={selectedRow} onClose={() => setSelectedRow(null)} />
+      <DetailModal 
+        row={selectedRow} 
+        onClose={() => setSelectedRow(null)} 
+        onSave={handleSaveCheck}
+      />
       
       <ColumnSettings
         isOpen={showColumnSettings}

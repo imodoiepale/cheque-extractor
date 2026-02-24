@@ -1,14 +1,53 @@
-import React from 'react';
-import { X, AlertCircle, FileCheck, DollarSign } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, AlertCircle, FileCheck, DollarSign, Edit2, Save, XCircle } from 'lucide-react';
 import { ComparisonRow, formatCurrency, formatDate, parseAmount } from '../utils/comparisonUtils';
 
 interface DetailModalProps {
   row: ComparisonRow | null;
   onClose: () => void;
+  onSave?: (checkId: string, updates: any) => Promise<void>;
 }
 
-export const DetailModal: React.FC<DetailModalProps> = ({ row, onClose }) => {
+export const DetailModal: React.FC<DetailModalProps> = ({ row, onClose, onSave }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [editedData, setEditedData] = useState({
+    checkNumber: row?.checkNumber || '',
+    date: row?.date || '',
+    amount: row?.amount || '',
+    payee: row?.payee || '',
+    bankAccount: row?.bankAccount || '',
+    memo: row?.memo || '',
+  });
+
   if (!row) return null;
+
+  const handleSave = async () => {
+    if (!onSave || !row.extractionData) return;
+    
+    setIsSaving(true);
+    try {
+      await onSave(row.extractionData.check_id, editedData);
+      setIsEditing(false);
+    } catch (error) {
+      console.error('Failed to save changes:', error);
+      alert('Failed to save changes. Please try again.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCancel = () => {
+    setEditedData({
+      checkNumber: row?.checkNumber || '',
+      date: row?.date || '',
+      amount: row?.amount || '',
+      payee: row?.payee || '',
+      bankAccount: row?.bankAccount || '',
+      memo: row?.memo || '',
+    });
+    setIsEditing(false);
+  };
 
   const getStatusBadge = (status: string) => {
     const statusConfig = {
@@ -41,14 +80,44 @@ export const DetailModal: React.FC<DetailModalProps> = ({ row, onClose }) => {
             <h3 className="text-xl font-bold">
               Check #{row.checkNumber || 'N/A'}
             </h3>
-            <p className="text-sm text-blue-100 mt-1">Detailed Comparison View</p>
+            <p className="text-sm text-blue-100 mt-1">{isEditing ? 'Edit Mode - Correct Extraction Data' : 'Detailed Comparison View'}</p>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-white/20 rounded-lg transition"
-          >
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-2">
+            {!isEditing ? (
+              <button
+                onClick={() => setIsEditing(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg transition text-sm font-medium"
+              >
+                <Edit2 size={16} />
+                Edit
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={handleSave}
+                  disabled={isSaving}
+                  className="flex items-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 rounded-lg transition text-sm font-medium disabled:opacity-50"
+                >
+                  <Save size={16} />
+                  {isSaving ? 'Saving...' : 'Save'}
+                </button>
+                <button
+                  onClick={handleCancel}
+                  disabled={isSaving}
+                  className="flex items-center gap-2 px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg transition text-sm font-medium disabled:opacity-50"
+                >
+                  <XCircle size={16} />
+                  Cancel
+                </button>
+              </>
+            )}
+            <button
+              onClick={onClose}
+              className="p-2 hover:bg-white/20 rounded-lg transition"
+            >
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         <div className="p-6 space-y-6">
@@ -289,27 +358,82 @@ export const DetailModal: React.FC<DetailModalProps> = ({ row, onClose }) => {
                   </div>
                   <div>
                     <span className="text-xs text-gray-500 font-medium">Check Number:</span>
-                    <p className="text-sm font-semibold text-gray-900 mt-1">{row.checkNumber || '—'}</p>
+                    {isEditing ? (
+                      <input
+                        type="text"
+                        value={editedData.checkNumber}
+                        onChange={(e) => setEditedData({ ...editedData, checkNumber: e.target.value })}
+                        className="w-full mt-1 px-3 py-1.5 text-sm border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
+                      />
+                    ) : (
+                      <p className="text-sm font-semibold text-gray-900 mt-1">{row.checkNumber || '—'}</p>
+                    )}
                   </div>
                   <div>
                     <span className="text-xs text-gray-500 font-medium">Date:</span>
-                    <p className="text-sm font-semibold text-gray-900 mt-1">{row.date ? formatDate(row.date) : '—'}</p>
+                    {isEditing ? (
+                      <input
+                        type="date"
+                        value={editedData.date}
+                        onChange={(e) => setEditedData({ ...editedData, date: e.target.value })}
+                        className="w-full mt-1 px-3 py-1.5 text-sm border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
+                      />
+                    ) : (
+                      <p className="text-sm font-semibold text-gray-900 mt-1">{row.date ? formatDate(row.date) : '—'}</p>
+                    )}
                   </div>
                   <div>
                     <span className="text-xs text-gray-500 font-medium">Amount:</span>
-                    <p className="text-sm font-bold text-emerald-700 mt-1">{row.amount ? formatCurrency(row.amount) : '—'}</p>
+                    {isEditing ? (
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={editedData.amount}
+                        onChange={(e) => setEditedData({ ...editedData, amount: e.target.value })}
+                        className="w-full mt-1 px-3 py-1.5 text-sm border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 font-bold"
+                      />
+                    ) : (
+                      <p className="text-sm font-bold text-emerald-700 mt-1">{row.amount ? formatCurrency(row.amount) : '—'}</p>
+                    )}
                   </div>
                   <div>
                     <span className="text-xs text-gray-500 font-medium">Payee:</span>
-                    <p className="text-sm font-semibold text-gray-900 mt-1">{row.payee || '—'}</p>
+                    {isEditing ? (
+                      <input
+                        type="text"
+                        value={editedData.payee}
+                        onChange={(e) => setEditedData({ ...editedData, payee: e.target.value })}
+                        className="w-full mt-1 px-3 py-1.5 text-sm border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
+                      />
+                    ) : (
+                      <p className="text-sm font-semibold text-gray-900 mt-1">{row.payee || '—'}</p>
+                    )}
                   </div>
                   <div>
                     <span className="text-xs text-gray-500 font-medium">Bank:</span>
-                    <p className="text-sm font-semibold text-gray-900 mt-1">{row.bankAccount || '—'}</p>
+                    {isEditing ? (
+                      <input
+                        type="text"
+                        value={editedData.bankAccount}
+                        onChange={(e) => setEditedData({ ...editedData, bankAccount: e.target.value })}
+                        className="w-full mt-1 px-3 py-1.5 text-sm border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
+                      />
+                    ) : (
+                      <p className="text-sm font-semibold text-gray-900 mt-1">{row.bankAccount || '—'}</p>
+                    )}
                   </div>
                   <div>
                     <span className="text-xs text-gray-500 font-medium">Memo:</span>
-                    <p className="text-sm text-gray-700 mt-1">{row.memo || '—'}</p>
+                    {isEditing ? (
+                      <textarea
+                        value={editedData.memo}
+                        onChange={(e) => setEditedData({ ...editedData, memo: e.target.value })}
+                        rows={2}
+                        className="w-full mt-1 px-3 py-1.5 text-sm border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 resize-none"
+                      />
+                    ) : (
+                      <p className="text-sm text-gray-700 mt-1">{row.memo || '—'}</p>
+                    )}
                   </div>
                 </div>
               ) : (
