@@ -110,6 +110,10 @@ export function calculateMatchConfidence(ext: CheckExtraction, qb: QuickBooksEnt
 }
 
 export function intelligentMatch(extractions: CheckExtraction[], qbEntries: QuickBooksEntry[]): ComparisonRow[] {
+  console.log('🔄 Starting intelligent match...');
+  console.log('📄 Extractions:', extractions.length);
+  console.log('💼 QB Entries:', qbEntries.length);
+  
   const rows: ComparisonRow[] = [];
   const matchedQbIds = new Set<string>();
   const matchedExtIds = new Set<string>();
@@ -193,6 +197,12 @@ export function intelligentMatch(extractions: CheckExtraction[], qbEntries: Quic
       qbData: qb,
     });
   });
+
+  console.log('✅ Match complete - Total rows:', rows.length);
+  console.log('   - Matched:', rows.filter(r => r.matchStatus === 'matched').length);
+  console.log('   - Mismatched:', rows.filter(r => r.matchStatus === 'mismatch').length);
+  console.log('   - Missing in QB:', rows.filter(r => r.matchStatus === 'missing-in-qb').length);
+  console.log('   - Missing in Extraction:', rows.filter(r => r.matchStatus === 'missing-in-extraction').length);
 
   return rows;
 }

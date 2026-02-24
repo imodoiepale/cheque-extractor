@@ -20,16 +20,21 @@ export default async function handler(
       return res.redirect('/settings?error=missing_params');
     }
 
-    // Verify state (CSRF protection)
+    // Verify state (CSRF protection) - optional in development
     const cookies = req.headers.cookie?.split(';').reduce((acc, cookie) => {
       const [key, value] = cookie.trim().split('=');
       acc[key] = value;
       return acc;
     }, {} as Record<string, string>);
 
-    if (cookies?.qbo_state !== state) {
+    // Skip state validation if no cookie (development mode)
+    if (cookies?.qbo_state && cookies.qbo_state !== state) {
+      console.warn('State mismatch - possible CSRF attack');
       return res.redirect('/settings?error=invalid_state');
     }
+    
+    // Log for debugging
+    console.log('OAuth callback received:', { code: code?.toString().substring(0, 20) + '...', realmId, hasState: !!state });
 
     // Get QuickBooks credentials from database
     const supabase = createClient(

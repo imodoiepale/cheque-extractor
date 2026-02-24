@@ -1028,14 +1028,31 @@ def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
                     existing_extraction = c.get("extraction")
                     existing_methods = set(c.get("methods_used", []))
 
-                    if not existing_extraction:
-                        # No results at all — must extract
+                    # Check if extraction has actual data (not just empty object)
+                    has_data = False
+                    if existing_extraction and isinstance(existing_extraction, dict):
+                        # Check if any field has a non-null value
+                        for field in ["payee", "amount", "checkDate", "checkNumber"]:
+                            field_data = existing_extraction.get(field)
+                            if field_data and isinstance(field_data, dict):
+                                if field_data.get("value"):
+                                    has_data = True
+                                    break
+                            elif field_data:  # Simple value
+                                has_data = True
+                                break
+
+                    if not has_data:
+                        # No valid results — must extract
                         keep.append(item)
+                        print(f"    → {cid}: No valid data, will extract")
                     elif not requested_engines.issubset(existing_methods):
                         # New methods requested that weren't run before
                         keep.append(item)
+                        print(f"    → {cid}: New methods requested, will extract")
                     else:
                         # Already extracted with same or superset of methods — skip
+                        print(f"    → {cid}: Already has data, skipping")
                         pass
 
                 filtered_manifest = keep

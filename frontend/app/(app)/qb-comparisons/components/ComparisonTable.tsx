@@ -72,8 +72,8 @@ export const ComparisonTable: React.FC<ComparisonTableProps> = ({
   const shadeB = { section: '#2a5498', column: '#3a70b8', hover: '#4880c5' };
 
   const getMatchStatusColor = (row: ComparisonRow) => {
-    if (row.matchStatus === 'matched') return 'bg-emerald-50';
-    if (row.matchStatus === 'mismatch') return 'bg-amber-50';
+    if (row.matchStatus === 'matched') return 'bg-green-50 border-l-4 border-green-500';
+    if (row.matchStatus === 'mismatch') return 'bg-amber-50 border-l-4 border-amber-500';
     if (row.matchStatus === 'missing-in-qb') return 'bg-blue-50';
     if (row.matchStatus === 'missing-in-extraction') return 'bg-red-50';
     return 'bg-white';
@@ -110,7 +110,7 @@ export const ComparisonTable: React.FC<ComparisonTableProps> = ({
               <th 
                 className="px-1 py-0.5 text-center font-semibold text-[9px] uppercase tracking-wider"
                 style={{ backgroundColor: shadeB.section, borderRight: '2px solid #0d1f3c' }}
-                colSpan={5}
+                colSpan={6}
               >
                 QuickBooks Data
               </th>
@@ -206,9 +206,15 @@ export const ComparisonTable: React.FC<ComparisonTableProps> = ({
               </th>
               <th
                 className="px-1 py-0.5 text-left text-[9px] font-medium uppercase"
-                style={{ backgroundColor: shadeB.column, borderRight: '2px solid #0d1f3c' }}
+                style={{ backgroundColor: shadeB.column, borderRight: '1px solid rgba(255,255,255,0.15)' }}
               >
                 Account
+              </th>
+              <th
+                className="px-1 py-0.5 text-left text-[9px] font-medium uppercase"
+                style={{ backgroundColor: shadeB.column, borderRight: '2px solid #0d1f3c' }}
+              >
+                Source
               </th>
 
               {/* Comparison Columns */}
@@ -251,36 +257,51 @@ export const ComparisonTable: React.FC<ComparisonTableProps> = ({
                   </td>
                   {/* Check Extraction Data */}
                   <td className="px-1 py-0.5 font-semibold text-gray-900 border-r border-gray-200">
-                    {row.extractionData ? row.checkNumber || '—' : '—'}
+                    {row.extractionData || row.source === 'matched' ? row.checkNumber || '—' : '—'}
                   </td>
                   <td className="px-1 py-0.5 text-gray-600 border-r border-gray-200">
-                    {row.extractionData && row.date ? formatDate(row.date) : '—'}
+                    {(row.extractionData || row.source === 'matched') && row.date ? formatDate(row.date) : '—'}
                   </td>
                   <td className="px-1 py-0.5 text-right font-semibold text-emerald-700 border-r border-gray-200">
-                    {row.extractionData && row.amount ? formatCurrency(row.amount) : '—'}
+                    {(row.extractionData || row.source === 'matched') && row.amount ? formatCurrency(row.amount) : '—'}
                   </td>
                   <td className="px-1 py-0.5 text-gray-900 border-r border-gray-200 max-w-[120px] truncate">
-                    {row.extractionData ? row.payee || '—' : '—'}
+                    {row.extractionData || row.source === 'matched' ? row.payee || '—' : '—'}
                   </td>
                   <td className="px-1 py-0.5 text-gray-600 border-r-2 border-gray-300 max-w-[100px] truncate">
-                    {row.extractionData ? row.bankAccount || '—' : '—'}
+                    {row.extractionData || row.source === 'matched' ? row.bankAccount || '—' : '—'}
                   </td>
 
                   {/* QuickBooks Data */}
                   <td className="px-1 py-0.5 font-semibold text-gray-900 border-r border-gray-200">
-                    {row.qbData ? row.qbData.checkNumber || '—' : '—'}
+                    {row.qbData || row.source === 'matched' ? (row.qbData?.checkNumber || row.checkNumber || '—') : '—'}
                   </td>
                   <td className="px-1 py-0.5 text-gray-600 border-r border-gray-200">
-                    {row.qbData && row.qbData.date ? formatDate(row.qbData.date) : '—'}
+                    {(row.qbData || row.source === 'matched') && (row.qbData?.date || row.date) ? formatDate(row.qbData?.date || row.date) : '—'}
                   </td>
                   <td className="px-1 py-0.5 text-right font-semibold text-emerald-700 border-r border-gray-200">
-                    {row.qbData && row.qbData.amount ? formatCurrency(row.qbData.amount) : '—'}
+                    {(row.qbData || row.source === 'matched') && (row.qbData?.amount || row.amount) ? formatCurrency(row.qbData?.amount || row.amount) : '—'}
                   </td>
                   <td className="px-1 py-0.5 text-gray-900 border-r border-gray-200 max-w-[120px] truncate">
-                    {row.qbData ? row.qbData.payee || '—' : '—'}
+                    {row.qbData || row.source === 'matched' ? (row.qbData?.payee || row.payee || '—') : '—'}
                   </td>
-                  <td className="px-1 py-0.5 text-gray-600 border-r-2 border-gray-300 max-w-[100px] truncate">
-                    {row.qbData ? row.qbData.account || '—' : '—'}
+                  <td className="px-1 py-0.5 text-gray-600 border-r border-gray-200 max-w-[100px] truncate">
+                    {row.qbData || row.source === 'matched' ? (row.qbData?.account || row.bankAccount || '—') : '—'}
+                  </td>
+                  <td className="px-1 py-0.5 text-center border-r-2 border-gray-300">
+                    {row.qbData ? (
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
+                        row.qbData.qbSource === 'qbo_file_upload' 
+                          ? 'bg-blue-100 text-blue-700' 
+                          : row.qbData.qbSource?.includes('cheque') 
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-purple-100 text-purple-700'
+                      }`}>
+                        {row.qbData.qbSource === 'qbo_file_upload' ? 'File' : 
+                         row.qbData.qbSource?.includes('cheque') ? 'QB API' : 
+                         row.qbData.qbSource || 'Unknown'}
+                      </span>
+                    ) : '—'}
                   </td>
 
                   {/* Comparison */}

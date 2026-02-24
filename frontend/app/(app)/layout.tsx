@@ -1,9 +1,11 @@
 import Link from 'next/link';
-import { CheckSquare, Upload, Settings, List, BarChart3, Download, Receipt, GitCompare } from 'lucide-react';
+import { CheckSquare, Upload, Settings, List, BarChart3, Download, Receipt, GitCompare, LayoutDashboard, Scale } from 'lucide-react';
 
 const NAV_ITEMS = [
+  { href: '/firm-dashboard', icon: LayoutDashboard, label: 'Firm Dashboard' },
   { href: '/upload', icon: Upload, label: 'Upload' },
   { href: '/dashboard', icon: List, label: 'Documents' },
+  { href: '/reconciliation', icon: Scale, label: 'Reconciliation' },
   { href: '/qb-comparisons', icon: GitCompare, label: 'QB Comparisons' },
   { href: '/export', icon: Download, label: 'Export' },
   { href: '/analytics', icon: BarChart3, label: 'Analytics' },

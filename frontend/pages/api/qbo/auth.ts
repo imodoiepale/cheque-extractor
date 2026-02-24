@@ -27,14 +27,29 @@ export default async function handler(
       .eq('provider', 'quickbooks')
       .single();
 
+    console.log('🔍 QB OAuth - Integration data:', {
+      hasIntegration: !!integration,
+      hasClientId: !!integration?.qb_client_id,
+      hasRedirectUri: !!integration?.qb_redirect_uri,
+      dbError: dbError?.message
+    });
+
     // Fallback to env vars if not in database
     const clientId = integration?.qb_client_id || process.env.QUICKBOOKS_CLIENT_ID;
-    const redirectUri = integration?.qb_redirect_uri || process.env.QUICKBOOKS_REDIRECT_URI || `${process.env.NEXT_PUBLIC_APP_URL}/api/qbo/callback`;
+    const redirectUri = integration?.qb_redirect_uri || process.env.QUICKBOOKS_REDIRECT_URI || 'http://localhost:3080/api/qbo/callback';
+    
+    console.log('🔑 QB OAuth - Using credentials:', {
+      clientId: clientId ? `${clientId.substring(0, 10)}...` : 'MISSING',
+      redirectUri,
+      source: integration?.qb_client_id ? 'database' : 'env'
+    });
     
     if (!clientId) {
-      return res.status(500).json({ 
-        error: 'QuickBooks not configured',
-        message: 'Please configure QuickBooks credentials in Settings → Integrations'
+      console.error('❌ QB OAuth - No client ID found in database or environment');
+      return res.status(400).json({ 
+        error: 'QuickBooks OAuth not configured',
+        detail: 'QuickBooks Client ID is missing. Please save your credentials in Settings → Integrations → Configure Credentials',
+        configured: false
       });
     }
 

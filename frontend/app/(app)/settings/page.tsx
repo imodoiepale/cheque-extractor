@@ -1,17 +1,45 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Save, AlertCircle, Key, ExternalLink, CheckCircle, XCircle, Users, Settings as SettingsIcon, Plug } from 'lucide-react'
+import { Save, AlertCircle, Key, ExternalLink, CheckCircle, XCircle, Users, Settings as SettingsIcon, Plug, Upload, FileText, Loader2 } from 'lucide-react'
 
 export default function SettingsPage() {
     const [activeTab, setActiveTab] = useState('general')
     const [qboConnected, setQboConnected] = useState(false)
+    const [qbConfigured, setQbConfigured] = useState(false)
+    const [companyId, setCompanyId] = useState<string | null>(null)
     const [geminiApiKey, setGeminiApiKey] = useState('')
     const [saving, setSaving] = useState(false)
     const [showQBCredentialsDialog, setShowQBCredentialsDialog] = useState(false)
     const [qbClientId, setQbClientId] = useState('')
     const [qbClientSecret, setQbClientSecret] = useState('')
-    const [qbRedirectUri, setQbRedirectUri] = useState('http://localhost:3000/api/qbo/callback')
+    const [qbRedirectUri, setQbRedirectUri] = useState('http://localhost:3080/api/qbo/callback')
+    const [testingConnection, setTestingConnection] = useState(false)
+    const [uploadingQBO, setUploadingQBO] = useState(false)
+    const [qboUploadResult, setQboUploadResult] = useState<{ success: boolean; message: string } | null>(null)
+
+    const handleQBOFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+        setUploadingQBO(true)
+        setQboUploadResult(null)
+        try {
+            const formData = new FormData()
+            formData.append('file', file)
+            const res = await fetch('/api/qbo/upload-file', { method: 'POST', body: formData })
+            const data = await res.json()
+            if (!res.ok) throw new Error(data.error || 'Upload failed')
+            setQboUploadResult({
+                success: true,
+                message: `Imported ${data.imported} cheque entries from ${data.fileName}${data.totalTransactions ? ` (${data.totalTransactions} total transactions)` : ''}`,
+            })
+        } catch (err: any) {
+            setQboUploadResult({ success: false, message: err.message })
+        } finally {
+            setUploadingQBO(false)
+            e.target.value = ''
+        }
+    }
 
     useEffect(() => {
         fetchIntegrationStatus()
@@ -23,28 +51,57 @@ export default function SettingsPage() {
             if (response.ok) {
                 const data = await response.json()
                 setQboConnected(data.qboConnected || false)
+                setQbConfigured(data.qbConfigured || false)
+                setCompanyId(data.companyId || data.realmId || null)
                 setGeminiApiKey(data.geminiApiKey ? '••••••••••••' : '')
-                setQbClientId(data.qbClientId ? '••••••••••••' : '')
-                setQbClientSecret(data.qbClientSecret ? '••••••••••••' : '')
-                setQbRedirectUri(data.qbRedirectUri || 'http://localhost:3000/api/qbo/callback')
+                setQbClientId(data.qbClientId || '')
+                setQbClientSecret(data.qbClientSecret || '')
+                setQbRedirectUri(data.qbRedirectUri || 'http://localhost:3080/api/qbo/callback')
             }
         } catch (error) {
             console.error('Failed to fetch integration status:', error)
         }
     }
 
+    const handleTestConnection = async () => {
+        setTestingConnection(true)
+        try {
+            const response = await fetch('/api/qbo/pull-checks?test=true', { method: 'POST' })
+            const data = await response.json()
+            if (response.ok) {
+                alert(`✅ Connection successful!\n\nCompany: ${data.companyName || 'Unknown'}\nEntries available: ${data.count || 0}`)
+            } else {
+                alert(`❌ Connection failed: ${data.error || 'Unknown error'}`)
+            }
+        } catch (error: any) {
+            alert(`❌ Connection test failed: ${error.message}`)
+        } finally {
+            setTestingConnection(false)
+        }
+    }
+
     const handleQBOConnect = async () => {
+        if (!qbConfigured) {
+            alert('⚠️ QuickBooks credentials not configured.\n\nYour credentials are in .env.local but need to be saved to the database.\n\nClick "Configure Credentials" to save them.')
+            setShowQBCredentialsDialog(true)
+            return
+        }
+        
         try {
             const response = await fetch('/api/qbo/auth')
             if (response.ok) {
                 const { authUrl } = await response.json()
+                console.log('🔗 Redirecting to QuickBooks OAuth:', authUrl)
                 window.location.href = authUrl
             } else {
                 const error = await response.json()
-                if (error.error === 'QuickBooks not configured') {
+                console.error('❌ QB OAuth error:', error)
+                
+                if (error.error === 'QuickBooks OAuth not configured' || error.error === 'QuickBooks not configured') {
+                    alert('⚠️ QuickBooks OAuth not configured\n\n' + (error.detail || 'Please configure your QuickBooks credentials first.'))
                     setShowQBCredentialsDialog(true)
                 } else {
-                    alert('Failed to connect: ' + error.message)
+                    alert('Failed to connect: ' + (error.detail || error.message || 'Unknown error'))
                 }
             }
         } catch (error) {
@@ -196,34 +253,56 @@ export default function SettingsPage() {
 
                         <div className="bg-gray-50 rounded-lg p-4 mb-4">
                             <div className="flex items-center justify-between">
-                                <div>
+                                <div className="flex-1">
                                     <p className="font-medium text-gray-900">Connection Status</p>
-                                    <p className="text-sm text-gray-600 mt-1">
-                                        {qboConnected ? (
-                                            <span className="flex items-center gap-2 text-green-600">
-                                                <CheckCircle size={16} />
-                                                Connected
-                                            </span>
+                                    <div className="mt-2 space-y-1">
+                                        {qbConfigured ? (
+                                            <div className="flex items-center gap-2 text-blue-600 text-sm">
+                                                <Key size={14} />
+                                                <span>Credentials configured (from .env.local)</span>
+                                            </div>
                                         ) : (
-                                            <span className="flex items-center gap-2 text-gray-500">
-                                                <XCircle size={16} />
-                                                Not connected
-                                            </span>
+                                            <div className="flex items-center gap-2 text-amber-600 text-sm">
+                                                <AlertCircle size={14} />
+                                                <span>Credentials not configured</span>
+                                            </div>
                                         )}
-                                    </p>
+                                        {qboConnected ? (
+                                            <div className="flex items-center gap-2 text-green-600 text-sm">
+                                                <CheckCircle size={14} />
+                                                <span>Connected to QuickBooks{companyId ? ` (${companyId})` : ''}</span>
+                                            </div>
+                                        ) : (
+                                            <div className="flex items-center gap-2 text-gray-500 text-sm">
+                                                <XCircle size={14} />
+                                                <span>Not connected - OAuth required</span>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
-                                {qboConnected ? (
-                                    <button
-                                        onClick={handleQBODisconnect}
-                                        className="px-4 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50"
-                                    >
-                                        Disconnect
-                                    </button>
-                                ) : (
-                                    <div className="flex gap-2">
+                                <div className="flex gap-2">
+                                    {qbConfigured && !qboConnected && (
                                         <button
-                                            onClick={() => setShowQBCredentialsDialog(true)}
-                                            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
+                                            onClick={handleTestConnection}
+                                            disabled={testingConnection}
+                                            className="px-4 py-2 border border-blue-300 text-blue-700 rounded-lg hover:bg-blue-50 flex items-center gap-2 disabled:opacity-50"
+                                        >
+                                            {testingConnection ? <Loader2 size={16} className="animate-spin" /> : <Plug size={16} />}
+                                            Test Connection
+                                        </button>
+                                    )}
+                                    {qboConnected ? (
+                                        <button
+                                            onClick={handleQBODisconnect}
+                                            className="px-4 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50"
+                                        >
+                                            Disconnect
+                                        </button>
+                                    ) : (
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => setShowQBCredentialsDialog(true)}
+                                                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
                                         >
                                             <Key size={16} />
                                             Configure Credentials
@@ -235,8 +314,9 @@ export default function SettingsPage() {
                                             <ExternalLink size={16} />
                                             Connect to QuickBooks
                                         </button>
-                                    </div>
-                                )}
+                                        </div>
+                                    )}
+                                </div>
                             </div>
                         </div>
 
@@ -249,6 +329,69 @@ export default function SettingsPage() {
                                     <li>Export checks as Expenses or Check transactions</li>
                                     <li>Automatic duplicate detection</li>
                                     <li>Map payees to QuickBooks vendors</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Import from File */}
+                    <div className="bg-white rounded-lg shadow p-6">
+                        <div className="flex items-start justify-between mb-4">
+                            <div>
+                                <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
+                                    <FileText size={20} />
+                                    Import from File
+                                </h2>
+                                <p className="text-gray-600 text-sm mt-1">
+                                    Upload a .qbo, .ofx, or .qfx file exported from your bank — no QuickBooks account needed
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-400 transition cursor-pointer relative">
+                            <input
+                                type="file"
+                                accept=".qbo,.ofx,.qfx"
+                                onChange={handleQBOFileUpload}
+                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                                disabled={uploadingQBO}
+                            />
+                            {uploadingQBO ? (
+                                <Loader2 size={32} className="mx-auto mb-3 text-blue-500 animate-spin" />
+                            ) : (
+                                <Upload size={32} className="mx-auto mb-3 text-gray-400" />
+                            )}
+                            <p className="text-sm font-medium text-gray-700">
+                                {uploadingQBO ? 'Parsing file...' : 'Drop a .qbo / .ofx / .qfx file here or click to browse'}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-1">
+                                Download these files from your bank&apos;s online banking portal
+                            </p>
+                        </div>
+
+                        {qboUploadResult && (
+                            <div className={`mt-4 rounded-lg p-4 flex items-start gap-3 ${
+                                qboUploadResult.success
+                                    ? 'bg-emerald-50 border border-emerald-200'
+                                    : 'bg-red-50 border border-red-200'
+                            }`}>
+                                {qboUploadResult.success
+                                    ? <CheckCircle className="text-emerald-600 flex-shrink-0 mt-0.5" size={18} />
+                                    : <AlertCircle className="text-red-600 flex-shrink-0 mt-0.5" size={18} />
+                                }
+                                <p className={`text-sm ${qboUploadResult.success ? 'text-emerald-800' : 'text-red-800'}`}>
+                                    {qboUploadResult.message}
+                                </p>
+                            </div>
+                        )}
+
+                        <div className="mt-4 bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
+                            <AlertCircle className="text-amber-600 flex-shrink-0 mt-0.5" size={18} />
+                            <div className="text-sm text-amber-900">
+                                <p className="font-medium mb-1">Two ways to get cheque data:</p>
+                                <ul className="list-disc list-inside space-y-1 text-amber-800 text-xs">
+                                    <li><strong>Path A (this section):</strong> Upload .qbo file from your bank — free, no accounts needed</li>
+                                    <li><strong>Path B (above):</strong> Connect to QuickBooks Online via API — requires QBO subscription + Intuit Developer account</li>
                                 </ul>
                             </div>
                         </div>

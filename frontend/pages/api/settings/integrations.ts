@@ -19,12 +19,20 @@ export default async function handler(
         .eq('provider', 'quickbooks')
         .single();
 
+      // Fallback to env vars if not in database
+      const qbClientId = integration?.qb_client_id || process.env.QUICKBOOKS_CLIENT_ID || '';
+      const qbClientSecret = integration?.qb_client_secret || process.env.QUICKBOOKS_CLIENT_SECRET || '';
+      const qbRedirectUri = integration?.qb_redirect_uri || process.env.QUICKBOOKS_REDIRECT_URI || 'http://localhost:3080/api/qbo/callback';
+      
       return res.status(200).json({
         qboConnected: !!integration?.access_token,
-        qbClientId: integration?.qb_client_id || '',
-        qbClientSecret: integration?.qb_client_secret || '',
-        qbRedirectUri: integration?.qb_redirect_uri || '',
+        qbConfigured: !!(qbClientId && qbClientSecret),
+        qbClientId: qbClientId ? '••••••••' + qbClientId.slice(-6) : '',
+        qbClientSecret: qbClientSecret ? '••••••••' : '',
+        qbRedirectUri: qbRedirectUri,
         geminiApiKey: integration?.gemini_api_key || '',
+        companyId: integration?.company_id || null,
+        realmId: integration?.realm_id || null,
       });
     }
 
