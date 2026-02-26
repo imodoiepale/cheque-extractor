@@ -88,7 +88,7 @@ export default function UploadPage() {
   const [zoom, setZoom] = useState(1);
 
   // ── Extraction config ────────────────────────────────────
-  const [selectedMethods, setSelectedMethods] = useState<string[]>(['hybrid']);
+  const [selectedMethods, setSelectedMethods] = useState<string[]>(['ai']);
   const [rangeType, setRangeType] = useState<RangeType>('all');
   const [pageFrom, setPageFrom] = useState(1);
   const [pageTo, setPageTo] = useState(1);
@@ -112,9 +112,11 @@ export default function UploadPage() {
     const formData = new FormData();
     formData.append('file', file);
 
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090';
+
     let data: any;
     try {
-      const response = await fetch('/api/upload-analyze', {
+      const response = await fetch(`${backendUrl}/api/upload-analyze`, {
         method: 'POST',
         body: formData,
       });
@@ -126,7 +128,7 @@ export default function UploadPage() {
     } catch {
       const formData2 = new FormData();
       formData2.append('file', file);
-      const response = await fetch('/api/upload', {
+      const response = await fetch(`${backendUrl}/api/upload-pdf`, {
         method: 'POST',
         body: formData2,
       });

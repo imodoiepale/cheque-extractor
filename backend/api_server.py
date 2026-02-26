@@ -869,7 +869,7 @@ async def upload_analyze(file: UploadFile = File(...), _auth=Depends(_verify_tok
 
 class StartExtractionRequest(BaseModel):
     job_id: str
-    methods: list[str] = ["hybrid"]
+    methods: list[str] = ["gemini"]
     page_range: Optional[dict] = None
     cheque_range: Optional[dict] = None
     force: bool = False  # Force re-extraction even if results exist
@@ -1673,7 +1673,7 @@ def retry_failed(job_id: str, _auth=Depends(_verify_token)):
     # checks without existing results
     req = StartExtractionRequest(
         job_id=job_id,
-        methods=job.get("selected_methods", ["hybrid"]),
+        methods=job.get("selected_methods", ["gemini"]),
         force=False,
     )
     return start_extraction(req, _auth=None)

@@ -35,6 +35,14 @@ from pdf2image import convert_from_path
 from PIL import Image
 import pytesseract
 
+# OpenAI for backup
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    print("WARNING: openai library not installed. OpenAI backup disabled.")
+
 # Optional GUI imports (only needed for desktop preview mode)
 try:
     from PIL import ImageTk
@@ -63,6 +71,13 @@ GEMINI_KEYS = list(dict.fromkeys([k.strip() for k in _env_gemini.split(",") if k
 if not GEMINI_KEYS:
     print("WARNING: No GEMINI_API_KEY(S) set in environment. Gemini OCR will be disabled.")
 _gemini_key_idx = 0
+
+# OpenAI API key (backup for Gemini)
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+if OPENAI_API_KEY and OPENAI_AVAILABLE:
+    print("OpenAI backup enabled for Gemini failures.")
+elif OPENAI_API_KEY and not OPENAI_AVAILABLE:
+    print("WARNING: OPENAI_API_KEY set but openai library not installed.")
 
 
 # ═════════════════════════════════════════════════════════════════════
@@ -681,8 +696,81 @@ def _next_gemini_key():
     return key
 
 
+def extract_with_openai(img_path):
+    """Call OpenAI GPT-4 Vision API with image as backup to Gemini."""
+    t0 = time.time()
+    if not OPENAI_AVAILABLE or not OPENAI_API_KEY:
+        return {"source": "openai", "error": "OpenAI not available or API key not set",
+                "fields": _empty_fields(), "processing_time_ms": 0}
+    
+    try:
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        
+        with open(img_path, "rb") as f:
+            img_b64 = base64.b64encode(f.read()).decode("utf-8")
+        
+        response = client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": GEMINI_PROMPT
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{img_b64}"
+                            }
+                        }
+                    ]
+                }
+            ],
+            max_tokens=1024,
+            temperature=0.1
+        )
+        
+        text = response.choices[0].message.content
+        print(f"    OpenAI raw response (first 500 chars): {text[:500]}")
+        
+        json_str = text
+        if "```json" in json_str:
+            json_str = json_str.split("```json")[1].split("```")[0]
+        elif "```" in json_str:
+            json_str = json_str.split("```")[1].split("```")[0]
+        
+        parsed = json.loads(json_str.strip())
+        print(f"    OpenAI parsed JSON: {json.dumps(parsed, indent=2)[:500]}")
+        
+        fields = _empty_fields()
+        fields["payee"] = parsed.get("payee")
+        fields["amount"] = str(parsed.get("amount", "")).replace(",", "") or None
+        fields["amountWritten"] = parsed.get("amountWritten")
+        fields["checkDate"] = parsed.get("checkDate")
+        fields["checkNumber"] = str(parsed.get("checkNumber", "")) or None
+        fields["bankName"] = parsed.get("bankName")
+        fields["memo"] = parsed.get("memo")
+        fields["micr"]["routing"] = parsed.get("micr_routing")
+        fields["micr"]["account"] = parsed.get("micr_account")
+        fields["micr"]["serial"] = parsed.get("micr_serial")
+        
+        print(f"    OpenAI extracted fields: payee={fields.get('payee')}, amount={fields.get('amount')}, date={fields.get('checkDate')}, check#={fields.get('checkNumber')}")
+        
+        return {"source": "openai", "raw_text": text.strip(), "raw_json": parsed,
+                "fields": fields, "processing_time_ms": int((time.time() - t0) * 1000)}
+    
+    except Exception as e:
+        print(f"    OpenAI extraction error: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"source": "openai", "error": str(e),
+                "fields": _empty_fields(), "processing_time_ms": int((time.time() - t0) * 1000)}
+
+
 def extract_with_gemini(img_path):
-    """Call Gemini Flash 2.0 API with image. Tries all keys before giving up."""
+    """Call Gemini Flash 2.0 API with image. Tries all keys, then falls back to OpenAI."""
     t0 = time.time()
     with open(img_path, "rb") as f:
         img_b64 = base64.b64encode(f.read()).decode("utf-8")
@@ -755,6 +843,18 @@ def extract_with_gemini(img_path):
             continue
 
     print(f"    Gemini failed after all attempts. Last error: {last_err}")
+    
+    # Fall back to OpenAI if Gemini fails
+    if OPENAI_API_KEY and OPENAI_AVAILABLE:
+        print("    Falling back to OpenAI...")
+        openai_result = extract_with_openai(img_path)
+        if not openai_result.get("error"):
+            # Mark as gemini source but note it was OpenAI backup
+            openai_result["source"] = "gemini-openai-backup"
+            return openai_result
+        else:
+            print(f"    OpenAI backup also failed: {openai_result.get('error')}")
+    
     return {"source": "gemini", "error": f"All keys failed. Last: {last_err}",
             "fields": _empty_fields(), "processing_time_ms": int((time.time() - t0) * 1000)}
 
