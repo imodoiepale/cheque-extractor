@@ -452,6 +452,7 @@ app.add_middleware(
 )
 
 
+
 if _require_auth:
     print("✓ Backend auth enabled — JWT verification required on API calls")
 
