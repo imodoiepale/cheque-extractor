@@ -3,6 +3,10 @@
 Check Extractor API Server
 FastAPI wrapper around check_extractor.py for the frontend to call.
 
+Production Deployment:
+  Railway: https://check-extractor-production-2026.up.railway.app
+  Frontend: https://check-extractor-frontend.vercel.app
+
 Endpoints:
   POST /api/upload-pdf          Upload a PDF, detect & extract checks
   GET  /api/jobs/{job_id}       Get job status and results
