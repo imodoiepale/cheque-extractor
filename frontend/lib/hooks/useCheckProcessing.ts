@@ -101,12 +101,30 @@ export function useCheckProcessing(jobId: string, selectedMethods?: string[]) {
 
     const poll = useCallback(async () => {
         try {
-            const res = await fetch(`/api/jobs/${jobId}`)
+            // For active jobs, only fetch status from memory (lightweight)
+            // For complete jobs, fetch full data from Supabase (one-time)
+            const source = 'memory' // Use in-memory for status checks during processing
+            const res = await fetch(`/api/jobs/${jobId}?source=${source}`)
             if (!res.ok) {
                 setError('Failed to fetch job status')
                 return true // stop polling
             }
             const data = await res.json() as JobData
+            
+            // If job just completed, fetch full data from Supabase
+            if (data.status === 'complete' && !isComplete) {
+                console.log(' Job complete - fetching final data from Supabase...')
+                const finalRes = await fetch(`/api/jobs/${jobId}?source=db`)
+                if (finalRes.ok) {
+                    const finalData = await finalRes.json() as JobData
+                    setJobData(finalData)
+                    setProgress(100)
+                    setIsComplete(true)
+                    setCurrentStage('complete')
+                    return true // stop polling
+                }
+            }
+            
             setJobData(data)
 
             const mappedStage = STAGE_MAP[data.status] || data.status

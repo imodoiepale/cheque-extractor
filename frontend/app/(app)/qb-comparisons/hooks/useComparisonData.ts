@@ -13,7 +13,8 @@ export function useComparisonData() {
       setLoading(true);
       setError(null);
       
-      const jobsRes = await fetch('/api/jobs');
+      // Fetch jobs from Supabase (source=auto fetches from DB + memory)
+      const jobsRes = await fetch('/api/jobs?source=auto');
       if (!jobsRes.ok) throw new Error('Failed to fetch jobs');
       const jobsData = await jobsRes.json();
       

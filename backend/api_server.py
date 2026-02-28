@@ -1319,12 +1319,62 @@ def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
 
 
 @app.get("/api/jobs/{job_id}")
-def get_job(job_id: str):
-    """Get job status and results."""
+def get_job(job_id: str, source: str = "auto"):
+    """Get job status and results.
+    
+    Args:
+        job_id: The job ID to fetch
+        source: 'auto' (default), 'memory', or 'db'
+            - auto: Use DB if job is complete, otherwise memory
+            - memory: Always use in-memory data (for active jobs)
+            - db: Always fetch from Supabase (for completed jobs)
+    """
     if not job_id or not job_id.strip():
         raise HTTPException(400, "Invalid job_id")
+    
+    # Check if we should fetch from Supabase
+    use_db = False
+    if source == "db":
+        use_db = True
+    elif source == "auto" and job_id in jobs:
+        # If job is complete, fetch from DB for fresh data
+        if jobs[job_id].get("status") == "complete":
+            use_db = True
+    
+    # Fetch from Supabase if requested or job is complete
+    if use_db and _supabase_ok:
+        try:
+            db_job = _supabase_select("check_jobs", {"job_id": job_id})
+            if db_job:
+                # Parse checks_data JSON
+                checks_data = []
+                if db_job.get("checks_data"):
+                    try:
+                        checks_data = json.loads(db_job["checks_data"])
+                    except:
+                        pass
+                
+                return {
+                    "job_id": db_job["job_id"],
+                    "status": db_job["status"],
+                    "pdf_name": db_job.get("pdf_name", ""),
+                    "doc_format": db_job.get("doc_format"),
+                    "total_pages": db_job.get("total_pages", 0),
+                    "total_checks": db_job.get("total_checks", 0),
+                    "checks": checks_data,
+                    "error": db_job.get("error_message"),
+                    "created_at": db_job.get("created_at", ""),
+                    "completed_at": db_job.get("completed_at"),
+                    "pdf_url": db_job.get("pdf_url"),
+                }
+        except Exception as e:
+            print(f"Failed to fetch job from DB: {e}")
+            # Fall through to in-memory
+    
+    # Fall back to in-memory data
     if job_id not in jobs:
         raise HTTPException(404, "Job not found")
+    
     # Return a clean copy without internal fields
     try:
         job = {k: v for k, v in jobs[job_id].items() if not k.startswith("_")}
@@ -1334,27 +1384,79 @@ def get_job(job_id: str):
 
 
 @app.get("/api/jobs")
-def list_jobs(limit: int = 50, offset: int = 0, status: str = None):
-    """List jobs with optional pagination and status filter."""
+def list_jobs(limit: int = 50, offset: int = 0, status: str = None, source: str = "auto"):
+    """List jobs with optional pagination and status filter.
+    
+    Args:
+        limit: Max number of jobs to return (1-1000)
+        offset: Number of jobs to skip
+        status: Filter by status (pending, complete, error, etc.)
+        source: 'auto' (default), 'memory', or 'db'
+            - auto: Merge in-memory and DB jobs
+            - memory: Only in-memory jobs
+            - db: Only Supabase jobs
+    """
     # Validate parameters
     if limit < 1 or limit > 1000:
         raise HTTPException(400, "Limit must be between 1 and 1000")
     if offset < 0:
         raise HTTPException(400, "Offset must be non-negative")
     
-    all_jobs = list(jobs.values())
+    all_jobs = []
+    
+    # Fetch from Supabase if requested
+    if (source == "auto" or source == "db") and _supabase_ok:
+        try:
+            # Fetch all jobs from DB (they're already sorted by created_at desc in DB)
+            db_jobs_raw = _supabase_select_all("check_jobs", order_by="created_at.desc")
+            for db_job in db_jobs_raw:
+                # Parse checks_data JSON
+                checks_data = []
+                if db_job.get("checks_data"):
+                    try:
+                        checks_data = json.loads(db_job["checks_data"])
+                    except:
+                        pass
+                
+                job_dict = {
+                    "job_id": db_job["job_id"],
+                    "status": db_job["status"],
+                    "pdf_name": db_job.get("pdf_name", ""),
+                    "doc_format": db_job.get("doc_format"),
+                    "total_pages": db_job.get("total_pages", 0),
+                    "total_checks": db_job.get("total_checks", 0),
+                    "checks": checks_data,
+                    "error": db_job.get("error_message"),
+                    "created_at": db_job.get("created_at", ""),
+                    "completed_at": db_job.get("completed_at"),
+                    "pdf_url": db_job.get("pdf_url"),
+                }
+                all_jobs.append(job_dict)
+        except Exception as e:
+            print(f"Failed to fetch jobs from DB: {e}")
+    
+    # Add in-memory jobs if requested (and deduplicate)
+    if source == "auto" or source == "memory":
+        memory_jobs = list(jobs.values())
+        # Add memory jobs that aren't already in the list from DB
+        existing_ids = {j["job_id"] for j in all_jobs}
+        for mem_job in memory_jobs:
+            if mem_job.get("job_id") not in existing_ids:
+                clean_job = {k: v for k, v in mem_job.items() if not k.startswith("_")}
+                all_jobs.append(clean_job)
+    
     # Sort by created_at descending
     all_jobs.sort(key=lambda j: j.get("created_at", ""), reverse=True)
+    
     # Filter by status if provided
     if status:
         all_jobs = [j for j in all_jobs if j.get("status") == status]
+    
     total = len(all_jobs)
     # Paginate
     page = all_jobs[offset:offset + limit]
-    clean = []
-    for j in page:
-        clean.append({k: v for k, v in j.items() if not k.startswith("_")})
-    return {"jobs": clean, "total": total, "limit": limit, "offset": offset}
+    
+    return {"jobs": page, "total": total, "limit": limit, "offset": offset}
 
 
 @app.get("/api/jobs/{job_id}/pdf")
