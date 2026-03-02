@@ -1,14 +1,12 @@
-import { type NextRequest } from 'next/server';
-import { updateSession } from '@/lib/supabase/server';
+import { type NextRequest, NextResponse } from 'next/server';
+import { createServerClient } from '@supabase/ssr';
 
 export async function middleware(request: NextRequest) {
-  // Update session and get response
-  const response = await updateSession(request);
-  
   const { pathname } = request.nextUrl;
 
   // Public routes that don't require authentication
   const publicRoutes = [
+    '/',
     '/login',
     '/signup',
     '/forgot-password',
@@ -16,7 +14,6 @@ export async function middleware(request: NextRequest) {
     '/legal/privacy',
     '/legal/terms',
     '/legal/eula',
-    '/api/qbo/callback', // OAuth callback needs to be public
   ];
 
   // API routes that should be public
@@ -26,13 +23,8 @@ export async function middleware(request: NextRequest) {
   ];
 
   // Check if current path is public
-  const isPublicRoute = publicRoutes.some(route => pathname.startsWith(route));
+  const isPublicRoute = publicRoutes.some(route => pathname === route || pathname.startsWith(route + '/'));
   const isPublicApiRoute = publicApiRoutes.some(route => pathname.startsWith(route));
-
-  // Allow public routes and API routes
-  if (isPublicRoute || isPublicApiRoute) {
-    return response;
-  }
 
   // Allow static files and Next.js internals
   if (
@@ -41,13 +33,78 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith('/static') ||
     pathname.includes('.') // files with extensions (images, fonts, etc.)
   ) {
-    return response;
+    return NextResponse.next();
   }
 
-  // For all other routes, check authentication
-  // The session is already updated by updateSession()
-  // If user is not authenticated, they'll be redirected by the layout or page
-  
+  // Allow public routes
+  if (isPublicRoute || isPublicApiRoute) {
+    return NextResponse.next();
+  }
+
+  // For protected routes, check authentication
+  let response = NextResponse.next({
+    request: {
+      headers: request.headers,
+    },
+  });
+
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        get(name: string) {
+          return request.cookies.get(name)?.value;
+        },
+        set(name: string, value: string, options: any) {
+          request.cookies.set({
+            name,
+            value,
+            ...options,
+          });
+          response = NextResponse.next({
+            request: {
+              headers: request.headers,
+            },
+          });
+          response.cookies.set({
+            name,
+            value,
+            ...options,
+          });
+        },
+        remove(name: string, options: any) {
+          request.cookies.set({
+            name,
+            value: '',
+            ...options,
+          });
+          response = NextResponse.next({
+            request: {
+              headers: request.headers,
+            },
+          });
+          response.cookies.set({
+            name,
+            value: '',
+            ...options,
+          });
+        },
+      },
+    }
+  );
+
+  // Check if user is authenticated
+  const { data: { user } } = await supabase.auth.getUser();
+
+  // If not authenticated and trying to access protected route, redirect to login
+  if (!user) {
+    const redirectUrl = request.nextUrl.clone();
+    redirectUrl.pathname = '/login';
+    redirectUrl.searchParams.set('redirectTo', pathname);
+    return NextResponse.redirect(redirectUrl);
+  }
+
   return response;
 }
 

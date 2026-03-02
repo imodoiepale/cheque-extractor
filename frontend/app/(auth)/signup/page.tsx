@@ -36,9 +36,8 @@ export default function SignupPage() {
 
       if (authData.user) {
         // Tenant and profile are created automatically by database trigger
-        // Just redirect to dashboard
-        router.push('/dashboard');
-        router.refresh();
+        // Use window.location for full page reload to ensure session is set
+        window.location.href = '/dashboard';
       }
     } catch (err: any) {
       setError(err.message);

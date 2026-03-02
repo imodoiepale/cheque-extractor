@@ -1,16 +1,25 @@
 'use client';
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { createClient } from '@/lib/supabase/client';
 
-export default function LoginPage() {
+function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [redirectTo, setRedirectTo] = useState('/dashboard');
+
+  useEffect(() => {
+    const redirect = searchParams?.get('redirectTo');
+    if (redirect) {
+      setRedirectTo(redirect);
+    }
+  }, [searchParams]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,8 +35,8 @@ export default function LoginPage() {
 
       if (error) throw error;
 
-      router.push('/dashboard');
-      router.refresh();
+      // Use window.location for full page reload to ensure session is set
+      window.location.href = redirectTo;
     } catch (err: any) {
       setError(err.message);
     } finally {
@@ -98,5 +107,24 @@ export default function LoginPage() {
         </Link>
       </p>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="bg-white rounded-lg shadow-xl p-8">
+          <div className="text-center">
+            <div className="animate-pulse">
+              <div className="h-8 bg-gray-200 rounded w-48 mx-auto mb-4"></div>
+              <div className="h-4 bg-gray-200 rounded w-32 mx-auto"></div>
+            </div>
+          </div>
+        </div>
+      }
+    >
+      <LoginForm />
+    </Suspense>
   );
 }
