@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
+import { createClient } from '@/lib/supabase/client';
 import {
   Upload, FileText, Image as ImageIcon, CheckCircle, Clock,
   Loader2, Eye, X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut,
@@ -171,7 +172,22 @@ export default function DashboardPage() {
   // Fetch jobs
   const fetchJobs = useCallback(async () => {
     try {
-      const res = await fetch('/api/jobs');
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        console.error('No session found');
+        setJobs([]);
+        setLoading(false);
+        return;
+      }
+
+      const res = await fetch('/api/jobs', {
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+      });
+      
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
         throw new Error(errorData.error || 'Failed to fetch jobs');
