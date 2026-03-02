@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { createClient } from '@supabase/supabase-js';
+import { createAuthenticatedClient } from '@/lib/supabase/api';
 
 /**
  * QuickBooks Entries API
@@ -7,7 +7,7 @@ import { createClient } from '@supabase/supabase-js';
  * Returns stored QuickBooks cheque entries from the database.
  * These are populated by the /api/qbo/pull-checks endpoint.
  * 
- * If no stored entries exist, attempts a live pull from QBO.
+ * RLS enforced - users only see their own tenant's data.
  */
 export default async function handler(
   req: NextApiRequest,
@@ -23,22 +23,8 @@ export default async function handler(
   res.setHeader('Expires', '0');
 
   try {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-    if (!supabaseUrl || !supabaseKey) {
-      console.error('Missing Supabase credentials');
-      return res.status(500).json({ error: 'Supabase not configured', entries: [], count: 0 });
-    }
-
-    const supabase = createClient(supabaseUrl, supabaseKey, {
-      auth: { persistSession: false },
-      global: {
-        fetch: (url, options = {}) => {
-          return fetch(url, { ...options, signal: AbortSignal.timeout(15000) });
-        }
-      }
-    });
+    // Use authenticated client - enforces RLS and tenant isolation
+    const supabase = createAuthenticatedClient(req);
 
     // Try to fetch stored entries from qb_entries table
     const { data: entries, error: dbError } = await supabase
