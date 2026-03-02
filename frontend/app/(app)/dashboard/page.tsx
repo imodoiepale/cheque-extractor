@@ -176,11 +176,16 @@ export default function DashboardPage() {
       const { data: { session } } = await supabase.auth.getSession();
       
       if (!session) {
-        console.error('No session found');
+        console.error('❌ No session found');
         setJobs([]);
         setLoading(false);
         return;
       }
+
+      console.log('🔍 [Dashboard] Fetching jobs for user:', {
+        user_id: session.user.id,
+        email: session.user.email,
+      });
 
       const res = await fetch('/api/jobs', {
         headers: {
@@ -188,18 +193,31 @@ export default function DashboardPage() {
         },
       });
       
+      console.log('📡 [Dashboard] API response status:', res.status);
+      
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({}));
+        console.error('❌ [Dashboard] API error:', errorData);
         throw new Error(errorData.error || 'Failed to fetch jobs');
       }
       const data = await res.json();
+      
+      console.log('📊 [Dashboard] Received data:', {
+        jobs_count: data.jobs?.length || 0,
+        total: data.total,
+        job_ids: data.jobs?.map((j: any) => j.job_id).slice(0, 5) || [],
+      });
+
       const jobsList = (data.jobs || []).sort((a: Job, b: Job) =>
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       );
+      
+      console.log('✅ [Dashboard] Setting', jobsList.length, 'jobs in state');
+      
       setJobs(jobsList);
       setError(null);
     } catch (e: any) {
-      console.error('Error fetching jobs:', e);
+      console.error('❌ [Dashboard] Error fetching jobs:', e);
       setJobs([]);
       setError(null); // Don't show error for empty results
     } finally {
