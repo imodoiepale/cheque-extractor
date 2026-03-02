@@ -39,20 +39,35 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
 
         // Transform to match expected format
-        const transformedJobs = (jobs || []).map(job => ({
-            job_id: job.job_id,
-            status: job.status,
-            pdf_name: job.pdf_name,
-            pdf_url: job.pdf_url,
-            file_size: job.file_size,
-            doc_format: job.doc_format,
-            total_pages: job.total_pages,
-            total_checks: job.total_checks,
-            checks: job.checks_data || [],
-            error: job.error_message,
-            created_at: job.created_at,
-            completed_at: job.completed_at,
-        }))
+        const transformedJobs = (jobs || []).map(job => {
+            // Parse checks_data if it's a JSON string
+            let checks = [];
+            if (job.checks_data) {
+                try {
+                    checks = typeof job.checks_data === 'string' 
+                        ? JSON.parse(job.checks_data) 
+                        : job.checks_data;
+                } catch (e) {
+                    console.error('Failed to parse checks_data for job', job.job_id, e);
+                    checks = [];
+                }
+            }
+
+            return {
+                job_id: job.job_id,
+                status: job.status,
+                pdf_name: job.pdf_name,
+                pdf_url: job.pdf_url,
+                file_size: job.file_size,
+                doc_format: job.doc_format,
+                total_pages: job.total_pages,
+                total_checks: job.total_checks,
+                checks: checks,
+                error: job.error_message,
+                created_at: job.created_at,
+                completed_at: job.completed_at,
+            };
+        })
 
         return res.status(200).json({ jobs: transformedJobs })
     } catch (error: any) {
