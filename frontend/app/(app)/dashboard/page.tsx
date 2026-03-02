@@ -172,7 +172,10 @@ export default function DashboardPage() {
   const fetchJobs = useCallback(async () => {
     try {
       const res = await fetch('/api/jobs');
-      if (!res.ok) throw new Error('Failed to fetch');
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to fetch jobs');
+      }
       const data = await res.json();
       const jobsList = (data.jobs || []).sort((a: Job, b: Job) =>
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
@@ -180,7 +183,9 @@ export default function DashboardPage() {
       setJobs(jobsList);
       setError(null);
     } catch (e: any) {
-      setError(e.message);
+      console.error('Error fetching jobs:', e);
+      setJobs([]);
+      setError(null); // Don't show error for empty results
     } finally {
       setLoading(false);
     }

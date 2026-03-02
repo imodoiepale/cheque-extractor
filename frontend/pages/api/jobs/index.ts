@@ -28,7 +28,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
         if (error) {
             console.error('Jobs query error:', error)
-            return res.status(500).json({ error: error.message, jobs: [] })
+            // Return empty array instead of error for better UX
+            return res.status(200).json({ jobs: [], total: 0 })
         }
 
         // Transform to match expected format

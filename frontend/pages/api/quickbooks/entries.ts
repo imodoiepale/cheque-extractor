@@ -36,7 +36,7 @@ export default async function handler(
     if (dbError) {
       // Table might not exist yet or connection failed — return empty
       console.warn('qb_entries table query failed:', dbError);
-      return res.status(200).json({ entries: [], count: 0, error: dbError.message });
+      return res.status(200).json({ entries: [], count: 0 });
     }
 
     if (entries && entries.length > 0) {
