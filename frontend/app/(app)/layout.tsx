@@ -21,16 +21,16 @@ export default function AppLayout({
   // Route protection is handled by proxy.ts
   return (
     <div className="min-h-screen bg-[#f5f5f7] flex">
-      {/* Sidebar */}
-      <aside className="w-[220px] bg-white/80 backdrop-blur-xl border-r border-gray-200/60 hidden md:flex flex-col">
-        <div className="px-5 py-5 border-b border-gray-100/80">
+      {/* Sidebar - Fixed */}
+      <aside className="w-[220px] bg-white/80 backdrop-blur-xl border-r border-gray-200/60 hidden md:flex flex-col fixed left-0 top-0 h-screen">
+        <div className="px-5 py-5 border-b border-gray-100/80 flex-shrink-0">
           <Link href="/dashboard" className="flex items-center gap-2 font-semibold text-[15px] text-gray-900">
             <CheckSquare className="w-5 h-5 text-blue-600" />
             <span>CheckPro</span>
           </Link>
         </div>
 
-        <nav className="flex-1 px-3 py-3 space-y-0.5">
+        <nav className="flex-1 px-3 py-3 space-y-0.5 overflow-y-auto">
           {NAV_ITEMS.map(item => (
             <Link
               key={item.href}
@@ -53,7 +53,7 @@ export default function AppLayout({
           </Link>
         </nav>
 
-        <div className="border-t border-gray-100/80">
+        <div className="border-t border-gray-100/80 flex-shrink-0">
           <div className="px-2 py-3">
             <UserProfile />
           </div>
@@ -63,8 +63,8 @@ export default function AppLayout({
         </div>
       </aside>
 
-      {/* Main Content */}
-      <main className="flex-1 overflow-auto">
+      {/* Main Content - Add left margin to account for fixed sidebar */}
+      <main className="flex-1 overflow-auto md:ml-[220px]">
         {/* Mobile Header */}
         <div className="md:hidden px-4 py-3 bg-white/80 backdrop-blur-xl border-b border-gray-200/60 flex justify-between items-center">
           <Link href="/dashboard" className="font-semibold text-[15px] text-gray-900 flex items-center gap-2">
