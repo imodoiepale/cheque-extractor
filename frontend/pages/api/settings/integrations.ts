@@ -41,6 +41,22 @@ export default async function handler(
       // Update API keys and QB credentials
       const { geminiApiKey, qbClientId, qbClientSecret, qbRedirectUri } = req.body;
 
+      // Get user's tenant_id
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('tenant_id')
+        .eq('id', user.id)
+        .single();
+
+      if (!profile?.tenant_id) {
+        return res.status(400).json({ error: 'User has no tenant assigned' });
+      }
+
       const updates: any = {};
       if (geminiApiKey !== undefined) updates.gemini_api_key = geminiApiKey;
       if (qbClientId !== undefined) updates.qb_client_id = qbClientId;
@@ -48,11 +64,12 @@ export default async function handler(
       if (qbRedirectUri !== undefined) updates.qb_redirect_uri = qbRedirectUri;
       updates.updated_at = new Date().toISOString();
 
-      // Upsert integration record
+      // Upsert integration record with tenant_id
       const { error } = await supabase
         .from('integrations')
         .upsert({
           provider: 'quickbooks',
+          tenant_id: profile.tenant_id,
           ...updates,
         }, {
           onConflict: 'provider'

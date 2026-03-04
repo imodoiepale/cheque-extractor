@@ -33,7 +33,7 @@ export default async function handler(
 
     // Fallback to env vars if not in database
     const clientId = integration?.qb_client_id || process.env.QUICKBOOKS_CLIENT_ID;
-    const redirectUri = integration?.qb_redirect_uri || process.env.QUICKBOOKS_REDIRECT_URI || 'http://localhost:3080/api/qbo/callback';
+    const redirectUri = integration?.qb_redirect_uri || process.env.QUICKBOOKS_REDIRECT_URI || '';
     
     console.log('🔑 QB OAuth - Using credentials:', {
       clientId: clientId ? `${clientId.substring(0, 10)}...` : 'MISSING',
