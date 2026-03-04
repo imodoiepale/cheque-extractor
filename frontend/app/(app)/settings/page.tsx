@@ -21,6 +21,18 @@ export default function SettingsPage() {
     const [qboUploadResult, setQboUploadResult] = useState<{ success: boolean; message: string } | null>(null)
     const [pullingData, setPullingData] = useState(false)
     const [pullResult, setPullResult] = useState<any>(null)
+    const [loadingSettings, setLoadingSettings] = useState(true)
+    const [mounted, setMounted] = useState(false)
+
+    useEffect(() => {
+        setMounted(true)
+    }, [])
+
+    useEffect(() => {
+        if (mounted) {
+            fetchIntegrationStatus()
+        }
+    }, [mounted])
 
     const handleQBOFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0]
@@ -45,10 +57,6 @@ export default function SettingsPage() {
         }
     }
 
-    useEffect(() => {
-        fetchIntegrationStatus()
-    }, [])
-
     const fetchIntegrationStatus = async () => {
         try {
             const supabase = createClient()
@@ -56,6 +64,7 @@ export default function SettingsPage() {
             
             if (!session) {
                 console.error('No session found')
+                setLoadingSettings(false)
                 return
             }
 
@@ -77,6 +86,8 @@ export default function SettingsPage() {
             }
         } catch (error) {
             console.error('Failed to fetch integration status:', error)
+        } finally {
+            setLoadingSettings(false)
         }
     }
 
