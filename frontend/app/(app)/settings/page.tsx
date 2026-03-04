@@ -161,7 +161,22 @@ export default function SettingsPage() {
         }
         
         try {
-            const response = await fetch('/api/qbo/auth')
+            const supabase = createClient()
+            const { data: { session } } = await supabase.auth.getSession()
+            
+            if (!session) {
+                toast.error('Session expired. Please refresh the page.', {
+                    duration: 5000,
+                    icon: '⚠️'
+                })
+                return
+            }
+
+            const response = await fetch('/api/qbo/auth', {
+                headers: {
+                    'Authorization': `Bearer ${session.access_token}`,
+                },
+            })
             if (response.ok) {
                 const { authUrl } = await response.json()
                 console.log('🔗 Redirecting to QuickBooks OAuth:', authUrl)
