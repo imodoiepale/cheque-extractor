@@ -75,16 +75,36 @@ export default async function handler(
 
     const tokens = await tokenResponse.json();
 
-    // Store tokens in Supabase
+    // Get user's tenant_id
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      return res.redirect('/settings?error=unauthorized');
+    }
+
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('tenant_id')
+      .eq('id', user.id)
+      .single();
+
+    if (!profile?.tenant_id) {
+      console.error('User has no tenant_id:', user.id);
+      return res.redirect('/settings?error=no_tenant');
+    }
+
+    // Store tokens in Supabase with tenant_id
     const { error } = await supabase
       .from('integrations')
       .upsert({
         provider: 'quickbooks',
+        tenant_id: profile.tenant_id,
         realm_id: realmId,
         access_token: tokens.access_token,
         refresh_token: tokens.refresh_token,
         expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
         updated_at: new Date().toISOString(),
+      }, {
+        onConflict: 'tenant_id,provider'
       });
 
     if (error) {
