@@ -81,7 +81,7 @@ export default async function handler(
           tenant_id: profile.tenant_id,
           ...updates,
         }, {
-          onConflict: 'provider'
+          onConflict: 'tenant_id,provider'
         });
 
       if (error) {

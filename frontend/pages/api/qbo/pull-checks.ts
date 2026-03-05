@@ -295,28 +295,43 @@ export default async function handler(
     // Optionally store in Supabase for the comparison page
     if (req.method === 'POST' && params?.store === true) {
       try {
-        // Upsert entries into a qb_entries table
-        const { error: storeError } = await supabase
-          .from('qb_entries')
-          .upsert(
-            filteredEntries.map(e => ({
-              id: e.id,
-              qb_type: e.qb_type,
-              qb_source: e.qb_source,
-              check_number: e.check_number,
-              date: e.date,
-              amount: e.amount,
-              payee: e.payee,
-              account: e.account,
-              memo: e.memo,
-              raw_data: e.raw,
-              synced_at: new Date().toISOString(),
-            })),
-            { onConflict: 'id' }
-          );
+        // Get user's tenant_id for RLS
+        const { data: { user } } = await supabase.auth.getUser();
+        const { data: profile } = await supabase
+          .from('user_profiles')
+          .select('tenant_id')
+          .eq('id', user!.id)
+          .single();
 
-        if (storeError) {
-          errors.push(`Storage failed: ${storeError.message}`);
+        const tenantId = profile?.tenant_id;
+
+        if (!tenantId) {
+          errors.push('Storage failed: User has no tenant_id');
+        } else {
+          // Upsert entries into a qb_entries table with tenant_id
+          const { error: storeError } = await supabase
+            .from('qb_entries')
+            .upsert(
+              filteredEntries.map(e => ({
+                id: e.id,
+                tenant_id: tenantId,
+                qb_type: e.qb_type,
+                qb_source: e.qb_source,
+                check_number: e.check_number,
+                date: e.date,
+                amount: e.amount,
+                payee: e.payee,
+                account: e.account,
+                memo: e.memo,
+                raw_data: e.raw,
+                synced_at: new Date().toISOString(),
+              })),
+              { onConflict: 'id' }
+            );
+
+          if (storeError) {
+            errors.push(`Storage failed: ${storeError.message}`);
+          }
         }
       } catch (e: any) {
         errors.push(`Storage error: ${e.message}`);

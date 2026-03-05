@@ -210,9 +210,15 @@ export default function SettingsPage() {
             const response = await fetch('/api/qbo/disconnect', { method: 'POST' })
             if (response.ok) {
                 setQboConnected(false)
+                toast.success('Disconnected from QuickBooks. Credentials preserved.', {
+                    duration: 3000,
+                    icon: '✅'
+                })
+                await fetchIntegrationStatus()
             }
         } catch (error) {
             console.error('Failed to disconnect QBO:', error)
+            toast.error('Failed to disconnect', { duration: 4000 })
         }
     }
 

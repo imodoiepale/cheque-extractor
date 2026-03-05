@@ -2190,184 +2190,187 @@ def get_api_keys_status(_auth=Depends(_verify_token)):
 # ══════════════════════════════════════════════════════════════════════════════
 # QuickBooks OAuth Integration
 # ══════════════════════════════════════════════════════════════════════════════
+# NOTE: QB OAuth is handled by frontend Next.js API routes (pages/api/qbo/*)
+# These backend endpoints are DISABLED — they were single-tenant (env vars only)
+# The frontend routes are multi-tenant and read from the integrations table per tenant
 
-@app.get("/api/qbo/auth")
-def initiate_qbo_auth(_auth=Depends(_verify_token)):
-    """
-    Initiate QuickBooks OAuth flow.
-    Returns the authorization URL to redirect the user to.
-    """
-    client_id = os.environ.get("INTUIT_CLIENT_ID")
-    redirect_uri = os.environ.get("INTUIT_REDIRECT_URI")
-    
-    if not client_id or not redirect_uri:
-        raise HTTPException(503, "QuickBooks OAuth not configured. Set INTUIT_CLIENT_ID and INTUIT_REDIRECT_URI environment variables.")
-    
-    # QuickBooks OAuth 2.0 authorization endpoint
-    auth_url = "https://appcenter.intuit.com/connect/oauth2"
-    
-    # Generate state parameter for CSRF protection
-    import secrets
-    state = secrets.token_urlsafe(32)
-    
-    # Store state in session or database for verification
-    # For now, we'll include it in the URL
-    
-    params = {
-        "client_id": client_id,
-        "redirect_uri": redirect_uri,
-        "response_type": "code",
-        "scope": "com.intuit.quickbooks.accounting",
-        "state": state,
-    }
-    
-    from urllib.parse import urlencode
-    auth_url_with_params = f"{auth_url}?{urlencode(params)}"
-    
-    return {
-        "authUrl": auth_url_with_params,
-        "state": state,
-    }
-
-
-@app.get("/api/qbo/callback")
-async def qbo_oauth_callback(code: str, state: str, realmId: str):
-    """
-    QuickBooks OAuth callback endpoint.
-    Exchanges authorization code for access token.
-    """
-    client_id = os.environ.get("INTUIT_CLIENT_ID")
-    client_secret = os.environ.get("INTUIT_CLIENT_SECRET")
-    redirect_uri = os.environ.get("INTUIT_REDIRECT_URI")
-    
-    if not all([client_id, client_secret, redirect_uri]):
-        raise HTTPException(503, "QuickBooks OAuth not configured")
-    
-    # Exchange code for tokens
-    token_url = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
-    
-    import base64
-    auth_header = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
-    
-    try:
-        response = _requests.post(
-            token_url,
-            headers={
-                "Authorization": f"Basic {auth_header}",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": redirect_uri,
-            },
-            timeout=30,
-        )
-        
-        if response.status_code != 200:
-            raise HTTPException(500, f"Failed to exchange code for token: {response.text}")
-        
-        tokens = response.json()
-        
-        # Store tokens in Supabase
-        if _supabase_ok:
-            update_data = {
-                "qbo_connected": True,
-                "qbo_company_id": realmId,
-                "qbo_access_token": tokens.get("access_token"),
-                "qbo_refresh_token": tokens.get("refresh_token"),
-                "qbo_token_expires_at": datetime.utcnow().isoformat(),
-                "updated_at": datetime.utcnow().isoformat(),
-            }
-            
-            # Update or create settings
-            existing = _supabase_select("app_settings", limit=1)
-            if existing and len(existing) > 0:
-                setting_id = existing[0].get("id")
-                _requests.patch(
-                    f"{_sb_url}/rest/v1/app_settings?id=eq.{setting_id}",
-                    headers=_sb_headers(),
-                    json=update_data,
-                    timeout=10,
-                )
-            else:
-                update_data["id"] = 1
-                update_data["created_at"] = datetime.utcnow().isoformat()
-                _requests.post(
-                    f"{_sb_url}/rest/v1/app_settings",
-                    headers=_sb_headers(),
-                    json=update_data,
-                    timeout=10,
-                )
-        
-        # Redirect back to settings page
-        frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3080")
-        return RedirectResponse(url=f"{frontend_url}/settings/integrations?qbo=connected")
-        
-    except Exception as e:
-        print(f"OAuth callback error: {e}")
-        raise HTTPException(500, f"OAuth callback failed: {str(e)}")
+# @app.get("/api/qbo/auth")
+# def initiate_qbo_auth(_auth=Depends(_verify_token)):
+#     """
+#     Initiate QuickBooks OAuth flow.
+#     Returns the authorization URL to redirect the user to.
+#     """
+#     client_id = os.environ.get("INTUIT_CLIENT_ID")
+#     redirect_uri = os.environ.get("INTUIT_REDIRECT_URI")
+#     
+#     if not client_id or not redirect_uri:
+#         raise HTTPException(503, "QuickBooks OAuth not configured. Set INTUIT_CLIENT_ID and INTUIT_REDIRECT_URI environment variables.")
+#     
+#     # QuickBooks OAuth 2.0 authorization endpoint
+#     auth_url = "https://appcenter.intuit.com/connect/oauth2"
+#     
+#     # Generate state parameter for CSRF protection
+#     import secrets
+#     state = secrets.token_urlsafe(32)
+#     
+#     # Store state in session or database for verification
+#     # For now, we'll include it in the URL
+#     
+#     params = {
+#         "client_id": client_id,
+#         "redirect_uri": redirect_uri,
+#         "response_type": "code",
+#         "scope": "com.intuit.quickbooks.accounting",
+#         "state": state,
+#     }
+#     
+#     from urllib.parse import urlencode
+#     auth_url_with_params = f"{auth_url}?{urlencode(params)}"
+#     
+#     return {
+#         "authUrl": auth_url_with_params,
+#         "state": state,
+#     }
 
 
-@app.post("/api/qbo/disconnect")
-def disconnect_qbo(_auth=Depends(_verify_token)):
-    """
-    Disconnect QuickBooks integration.
-    Revokes tokens and clears stored credentials.
-    """
-    if not _supabase_ok:
-        raise HTTPException(503, "Database not configured")
-    
-    try:
-        # Get current tokens
-        settings = _supabase_select("app_settings", limit=1)
-        
-        if settings and len(settings) > 0:
-            setting = settings[0]
-            access_token = setting.get("qbo_access_token")
-            
-            # Revoke token with Intuit
-            if access_token:
-                client_id = os.environ.get("INTUIT_CLIENT_ID")
-                client_secret = os.environ.get("INTUIT_CLIENT_SECRET")
-                
-                if client_id and client_secret:
-                    import base64
-                    auth_header = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
-                    
-                    try:
-                        _requests.post(
-                            "https://developer.api.intuit.com/v2/oauth2/tokens/revoke",
-                            headers={
-                                "Authorization": f"Basic {auth_header}",
-                                "Content-Type": "application/json",
-                            },
-                            json={"token": access_token},
-                            timeout=10,
-                        )
-                    except Exception as e:
-                        print(f"Token revocation error: {e}")
-            
-            # Clear tokens from database
-            setting_id = setting.get("id")
-            _requests.patch(
-                f"{_sb_url}/rest/v1/app_settings?id=eq.{setting_id}",
-                headers=_sb_headers(),
-                json={
-                    "qbo_connected": False,
-                    "qbo_company_id": None,
-                    "qbo_access_token": None,
-                    "qbo_refresh_token": None,
-                    "qbo_token_expires_at": None,
-                    "updated_at": datetime.utcnow().isoformat(),
-                },
-                timeout=10,
-            )
-        
-        return {"message": "QuickBooks disconnected successfully"}
-        
-    except Exception as e:
-        raise HTTPException(500, f"Failed to disconnect: {str(e)}")
+# @app.get("/api/qbo/callback")
+# async def qbo_oauth_callback(code: str, state: str, realmId: str):
+#     """
+#     QuickBooks OAuth callback endpoint.
+#     Exchanges authorization code for access token.
+#     """
+#     client_id = os.environ.get("INTUIT_CLIENT_ID")
+#     client_secret = os.environ.get("INTUIT_CLIENT_SECRET")
+#     redirect_uri = os.environ.get("INTUIT_REDIRECT_URI")
+#     
+#     if not all([client_id, client_secret, redirect_uri]):
+#         raise HTTPException(503, "QuickBooks OAuth not configured")
+#     
+#     # Exchange code for tokens
+#     token_url = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
+#     
+#     import base64
+#     auth_header = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+#     
+#     try:
+#         response = _requests.post(
+#             token_url,
+#             headers={
+#                 "Authorization": f"Basic {auth_header}",
+#                 "Content-Type": "application/x-www-form-urlencoded",
+#             },
+#             data={
+#                 "grant_type": "authorization_code",
+#                 "code": code,
+#                 "redirect_uri": redirect_uri,
+#             },
+#             timeout=30,
+#         )
+#         
+#         if response.status_code != 200:
+#             raise HTTPException(500, f"Failed to exchange code for token: {response.text}")
+#         
+#         tokens = response.json()
+#         
+#         # Store tokens in Supabase
+#         if _supabase_ok:
+#             update_data = {
+#                 "qbo_connected": True,
+#                 "qbo_company_id": realmId,
+#                 "qbo_access_token": tokens.get("access_token"),
+#                 "qbo_refresh_token": tokens.get("refresh_token"),
+#                 "qbo_token_expires_at": datetime.utcnow().isoformat(),
+#                 "updated_at": datetime.utcnow().isoformat(),
+#             }
+#             
+#             # Update or create settings
+#             existing = _supabase_select("app_settings", limit=1)
+#             if existing and len(existing) > 0:
+#                 setting_id = existing[0].get("id")
+#                 _requests.patch(
+#                     f"{_sb_url}/rest/v1/app_settings?id=eq.{setting_id}",
+#                     headers=_sb_headers(),
+#                     json=update_data,
+#                     timeout=10,
+#                 )
+#             else:
+#                 update_data["id"] = 1
+#                 update_data["created_at"] = datetime.utcnow().isoformat()
+#                 _requests.post(
+#                     f"{_sb_url}/rest/v1/app_settings",
+#                     headers=_sb_headers(),
+#                     json=update_data,
+#                     timeout=10,
+#                 )
+#         
+#         # Redirect back to settings page
+#         frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:3080")
+#         return RedirectResponse(url=f"{frontend_url}/settings/integrations?qbo=connected")
+#         
+#     except Exception as e:
+#         print(f"OAuth callback error: {e}")
+#         raise HTTPException(500, f"OAuth callback failed: {str(e)}")
+
+
+# @app.post("/api/qbo/disconnect")
+# def disconnect_qbo(_auth=Depends(_verify_token)):
+#     """
+#     Disconnect QuickBooks integration.
+#     Revokes tokens and clears stored credentials.
+#     """
+#     if not _supabase_ok:
+#         raise HTTPException(503, "Database not configured")
+#     
+#     try:
+#         # Get current tokens
+#         settings = _supabase_select("app_settings", limit=1)
+#         
+#         if settings and len(settings) > 0:
+#             setting = settings[0]
+#             access_token = setting.get("qbo_access_token")
+#             
+#             # Revoke token with Intuit
+#             if access_token:
+#                 client_id = os.environ.get("INTUIT_CLIENT_ID")
+#                 client_secret = os.environ.get("INTUIT_CLIENT_SECRET")
+#                 
+#                 if client_id and client_secret:
+#                     import base64
+#                     auth_header = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
+#                     
+#                     try:
+#                         _requests.post(
+#                             "https://developer.api.intuit.com/v2/oauth2/tokens/revoke",
+#                             headers={
+#                                 "Authorization": f"Basic {auth_header}",
+#                                 "Content-Type": "application/json",
+#                             },
+#                             json={"token": access_token},
+#                             timeout=10,
+#                         )
+#                     except Exception as e:
+#                         print(f"Token revocation error: {e}")
+#             
+#             # Clear tokens from database
+#             setting_id = setting.get("id")
+#             _requests.patch(
+#                 f"{_sb_url}/rest/v1/app_settings?id=eq.{setting_id}",
+#                 headers=_sb_headers(),
+#                 json={
+#                     "qbo_connected": False,
+#                     "qbo_company_id": None,
+#                     "qbo_access_token": None,
+#                     "qbo_refresh_token": None,
+#                     "qbo_token_expires_at": None,
+#                     "updated_at": datetime.utcnow().isoformat(),
+#                 },
+#                 timeout=10,
+#             )
+#         
+#         return {"message": "QuickBooks disconnected successfully"}
+#         
+#     except Exception as e:
+#         raise HTTPException(500, f"Failed to disconnect: {str(e)}")
 
 
 @app.get("/api/qbo/status")
