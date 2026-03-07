@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { CheckExtraction, QuickBooksEntry } from '../utils/comparisonUtils';
+import { createClient } from '@/lib/supabase/client';
 
 export function useComparisonData() {
   const [loading, setLoading] = useState(true);
@@ -13,8 +14,20 @@ export function useComparisonData() {
       setLoading(true);
       setError(null);
       
+      // Get auth token for RLS enforcement
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (!session) {
+        throw new Error('Not authenticated');
+      }
+
+      const headers = {
+        'Authorization': `Bearer ${session.access_token}`,
+      };
+      
       // Fetch jobs from Supabase (source=auto fetches from DB + memory)
-      const jobsRes = await fetch('/api/jobs?source=auto');
+      const jobsRes = await fetch('/api/jobs?source=auto', { headers });
       if (!jobsRes.ok) throw new Error('Failed to fetch jobs');
       const jobsData = await jobsRes.json();
       
@@ -36,7 +49,7 @@ export function useComparisonData() {
       
       try {
         console.log('🔍 Fetching QuickBooks entries from qb_entries table...');
-        const qbRes = await fetch('/api/quickbooks/entries?t=' + Date.now());
+        const qbRes = await fetch('/api/quickbooks/entries?t=' + Date.now(), { headers });
         console.log('📡 QB API Response status:', qbRes.status);
         
         if (qbRes.ok) {
