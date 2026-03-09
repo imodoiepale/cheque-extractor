@@ -48,20 +48,35 @@ export function createClientFromCookies(req: NextApiRequest) {
     return acc;
   }, {} as Record<string, string>);
 
-  // Look for Supabase auth token in cookies
-  const authToken = cookies?.['sb-oqtprhptsjzpxtvbuhbv-auth-token'] || 
-                    cookies?.['sb-yqbmzerdagqevjdwhlwh-auth-token'];
-
-  if (!authToken) {
-    throw new Error('No auth token found in cookies');
+  if (!cookies) {
+    throw new Error('No cookies found in request');
   }
+
+  // Find Supabase auth token cookie (format: sb-{project-ref}-auth-token)
+  const authCookieKey = Object.keys(cookies).find(key => 
+    key.startsWith('sb-') && key.endsWith('-auth-token')
+  );
+
+  if (!authCookieKey) {
+    console.error('Available cookies:', Object.keys(cookies));
+    throw new Error('No Supabase auth token found in cookies');
+  }
+
+  const authToken = cookies[authCookieKey];
 
   // Parse the token (it's base64 encoded JSON)
   let token: string;
   try {
     const decoded = JSON.parse(Buffer.from(authToken, 'base64').toString());
     token = decoded.access_token || decoded[0];
-  } catch {
+    
+    if (!token) {
+      console.error('Decoded token structure:', Object.keys(decoded));
+      throw new Error('No access_token in decoded cookie');
+    }
+  } catch (error) {
+    console.error('Failed to decode auth token:', error);
+    // Try using the raw token as fallback
     token = authToken;
   }
 
