@@ -144,7 +144,7 @@ export function intelligentMatch(extractions: CheckExtraction[], qbEntries: Quic
       }
       
       rows.push({
-        id: `matched-${ext.check_id}`,
+        id: `matched-${ext.job_id}-${ext.check_id}`,
         checkNumber: extCheckNum,
         date: extVal(ext.extraction, 'checkDate') || qbMatch.date,
         amount: extVal(ext.extraction, 'amount') || qbMatch.amount,
@@ -168,7 +168,7 @@ export function intelligentMatch(extractions: CheckExtraction[], qbEntries: Quic
     if (matchedExtIds.has(ext.check_id)) return;
     
     rows.push({
-      id: `ext-${ext.check_id}`,
+      id: `ext-${ext.job_id}-${ext.check_id}`,
       checkNumber: extVal(ext.extraction, 'checkNumber'),
       date: extVal(ext.extraction, 'checkDate'),
       amount: extVal(ext.extraction, 'amount'),
@@ -216,10 +216,32 @@ export function filterByDateRange(
   
   return rows.filter(row => {
     if (!row.date) return false;
-    const rowDate = new Date(row.date);
     
-    if (startDate && rowDate < new Date(startDate)) return false;
-    if (endDate && rowDate > new Date(endDate)) return false;
+    // Parse row date (handle both YYYY-MM-DD and MM/DD/YYYY formats)
+    let rowDate: Date;
+    if (row.date.includes('/')) {
+      // MM/DD/YYYY format
+      const [month, day, year] = row.date.split('/');
+      rowDate = new Date(parseInt(year), parseInt(month) - 1, parseInt(day));
+    } else {
+      // YYYY-MM-DD format
+      rowDate = new Date(row.date);
+    }
+    
+    // Set time to midnight for accurate date comparison
+    rowDate.setHours(0, 0, 0, 0);
+    
+    if (startDate) {
+      const start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      if (rowDate < start) return false;
+    }
+    
+    if (endDate) {
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      if (rowDate > end) return false;
+    }
     
     return true;
   });
