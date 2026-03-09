@@ -78,19 +78,53 @@ export default async function handler(
     // Get user's tenant_id
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
+      console.error('❌ QB Callback: No user found in session');
       return res.redirect('/settings?error=unauthorized');
     }
 
-    const { data: profile } = await supabase
+    console.log('✅ QB Callback: User authenticated:', user.email);
+
+    let { data: profile } = await supabase
       .from('user_profiles')
       .select('tenant_id')
       .eq('id', user.id)
       .single();
 
+    // If user has no tenant_id, create one
     if (!profile?.tenant_id) {
-      console.error('User has no tenant_id:', user.id);
+      console.warn('⚠️ User has no tenant_id, creating new tenant:', user.id);
+      
+      // Generate new tenant_id
+      const newTenantId = crypto.randomUUID();
+      
+      // Update user profile with new tenant_id
+      const { error: updateError } = await supabase
+        .from('user_profiles')
+        .update({ tenant_id: newTenantId })
+        .eq('id', user.id);
+      
+      if (updateError) {
+        console.error('❌ Failed to create tenant_id:', updateError);
+        return res.redirect('/settings?error=tenant_creation_failed');
+      }
+      
+      // Fetch updated profile
+      const { data: updatedProfile } = await supabase
+        .from('user_profiles')
+        .select('tenant_id')
+        .eq('id', user.id)
+        .single();
+      
+      profile = updatedProfile;
+      console.log('✅ Created new tenant_id:', newTenantId);
+    }
+
+    if (!profile?.tenant_id) {
+      console.error('❌ Still no tenant_id after creation attempt');
       return res.redirect('/settings?error=no_tenant');
     }
+
+    console.log('✅ Using tenant_id:', profile.tenant_id);
 
     // Store tokens in Supabase with tenant_id
     const { error } = await supabase
