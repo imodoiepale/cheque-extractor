@@ -2430,7 +2430,7 @@ if __name__ == "__main__":
                 incomplete_jobs = [jid for jid, job in jobs.items() if job.get("status") == "analyzed"]
                 
                 if incomplete_jobs:
-                    print(f"⚙️ Found {len(incomplete_jobs)} incomplete jobs, checking for extractable files...")
+                    print(f"⚙️ Found {len(incomplete_jobs)} incomplete jobs, auto-extracting...")
                     extractable_count = 0
                     for job_id in incomplete_jobs:
                         job = jobs[job_id]
@@ -2453,12 +2453,80 @@ if __name__ == "__main__":
                         # Trigger extraction in background thread
                         def _extract_job(jid):
                             try:
-                                # Use hybrid method for best quality
-                                app_ext = CheckExtractorApp(OUTPUT_DIR / jid)
-                                app_ext.extract_all(methods=["hybrid"])
+                                job_dir = str(OUTPUT_DIR / jid)
+                                
+                                # Initialize CheckExtractorApp without PDF (re-extraction mode)
+                                app_ext = CheckExtractorApp(None, output_dir=job_dir)
+                                
+                                # Build manifest from existing check images
+                                images_dir = Path(job_dir) / "images"
+                                manifest = []
+                                for img_file in sorted(images_dir.glob("check_*.png")):
+                                    # Extract check_id and page from filename (format: check_001_p1.png)
+                                    stem = img_file.stem  # e.g., "check_001_p1"
+                                    parts = stem.split('_')
+                                    if len(parts) >= 3:
+                                        check_id = f"{parts[1]}"  # "001"
+                                        page_num = int(parts[2][1:]) if parts[2].startswith('p') else 1
+                                        manifest.append((check_id, str(img_file), page_num))
+                                
+                                if not manifest:
+                                    print(f"  ⚠️  No check images found in {images_dir}")
+                                    return
+                                
+                                print(f"  Found {len(manifest)} check images to extract")
+                                
+                                # Run OCR on existing images
+                                jobs[jid]["status"] = "extracting"
+                                jobs[jid]["extraction_progress"] = 0
+                                
+                                def _on_progress(info):
+                                    evt = info.get("event")
+                                    total = info.get("total", 1)
+                                    if evt == "check_done":
+                                        done = info.get("index", 0) + 1
+                                        pct = int((done / max(total, 1)) * 100)
+                                        jobs[jid]["extraction_progress"] = pct
+                                
+                                app_ext.run_parallel_ocr(manifest, progress_callback=_on_progress)
+                                app_ext.save_summary(manifest)
+                                
+                                # Load results back into job
+                                results_dir = Path(job_dir) / "ocr_results"
+                                for check in jobs[jid].get("checks", []):
+                                    _load_engine_results(str(results_dir), check)
+                                
+                                # Update database
+                                checks_data = []
+                                for c in jobs[jid].get("checks", []):
+                                    checks_data.append({
+                                        "check_id": c["check_id"],
+                                        "page": c["page"],
+                                        "width": c.get("width", 0),
+                                        "height": c.get("height", 0),
+                                        "image_url": c.get("storage_url", f"/api/checks/{jid}/{c['check_id']}/image"),
+                                        "extraction": c.get("extraction"),
+                                        "methods_used": c.get("methods_used", []),
+                                        "engine_results": c.get("engine_results", {}),
+                                        "engine_extractions": c.get("engine_extractions", {}),
+                                        "engine_times_ms": c.get("engine_times_ms", {}),
+                                    })
+                                
+                                _supabase_update("check_jobs", {"job_id": jid}, {
+                                    "status": "complete",
+                                    "checks_data": json.dumps(checks_data),
+                                    "completed_at": datetime.now().isoformat(),
+                                })
+                                
+                                jobs[jid]["status"] = "complete"
+                                jobs[jid]["completed_at"] = datetime.now().isoformat()
+                                
                                 print(f"  ✅ Completed extraction for {jid}")
                             except Exception as e:
                                 print(f"  ❌ Auto-extraction failed for {jid}: {e}")
+                                traceback.print_exc()
+                                jobs[jid]["status"] = "error"
+                                jobs[jid]["error"] = str(e)
                         
                         extract_thread = threading.Thread(target=_extract_job, args=(job_id,), daemon=True)
                         extract_thread.start()
