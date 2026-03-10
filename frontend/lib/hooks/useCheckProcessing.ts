@@ -76,6 +76,7 @@ export function useCheckProcessing(jobId: string, selectedMethods?: string[]) {
     const [currentStage, setCurrentStage] = useState('upload')
     const [progress, setProgress] = useState(0)
     const [isComplete, setIsComplete] = useState(false)
+    const [lastDataHash, setLastDataHash] = useState('')
     const [error, setError] = useState<string | null>(null)
     const [jobData, setJobData] = useState<JobData | null>(null)
     const [methodsProgress, setMethodsProgress] = useState<MethodProgress[]>([])
@@ -110,6 +111,13 @@ export function useCheckProcessing(jobId: string, selectedMethods?: string[]) {
                 return true // stop polling
             }
             const data = await res.json() as JobData
+            
+            // Skip update if data hasn't changed (prevent unnecessary re-renders)
+            const dataHash = JSON.stringify({ status: data.status, progress: data.extraction_progress, checks: data.checks?.length })
+            if (dataHash === lastDataHash && data.status !== 'complete') {
+                return false // continue polling but don't update state
+            }
+            setLastDataHash(dataHash)
             
             // If job just completed, fetch full data from Supabase
             if (data.status === 'complete' && !isComplete) {
@@ -234,7 +242,7 @@ export function useCheckProcessing(jobId: string, selectedMethods?: string[]) {
             }
         }
         
-        const interval = setInterval(doPoll, 2000) // Poll every 2s to reduce server load
+        const interval = setInterval(doPoll, 3000) // Poll every 3s to reduce server load
 
         // Initial poll
         doPoll()

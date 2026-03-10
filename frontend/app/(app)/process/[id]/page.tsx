@@ -49,66 +49,17 @@ export default function ProcessingPage() {
   const { currentStage, progress, isComplete, error, jobData, methodsProgress } =
     useCheckProcessing(jobId, selectedMethods);
 
-  // Debug logging for extraction data
+  // Log extraction summary only when complete (not on every render)
   useEffect(() => {
-    if (jobData?.checks) {
-      console.log('=== JOB DATA ===');
-      console.log('Job ID:', jobId);
-      console.log('Total checks:', jobData.checks.length);
-      console.log('Selected methods:', selectedMethods);
-      jobData.checks.forEach((check: any, idx: number) => {
-        console.log(`\n━━━ Check ${idx + 1} (${check.check_id}) ━━━`);
-        console.log('📷 Image URL:', check.image_url || check.storage_url || 'MISSING');
-        console.log('🔧 Methods used:', check.methods_used || 'NONE');
-        console.log('⏱️  Processing times:', check.engine_times_ms || {});
-        
-        // Show hybrid/merged extraction
-        if (check.extraction) {
-          console.log('\n🔀 HYBRID (Merged) Extraction:');
-          console.log('  Payee:', check.extraction.payee?.value || check.extraction.payee, `(${check.extraction.payee?.source || 'unknown'})`);
-          console.log('  Amount:', check.extraction.amount?.value || check.extraction.amount, `(${check.extraction.amount?.source || 'unknown'})`);
-          console.log('  Date:', check.extraction.checkDate?.value || check.extraction.checkDate, `(${check.extraction.checkDate?.source || 'unknown'})`);
-          console.log('  Check #:', check.extraction.checkNumber?.value || check.extraction.checkNumber, `(${check.extraction.checkNumber?.source || 'unknown'})`);
-        }
-        
-        // Show individual engine extractions separately
-        if (check.engine_extractions) {
-          console.log('\n📊 INDIVIDUAL ENGINE EXTRACTIONS:');
-          
-          if (check.engine_extractions.tesseract) {
-            console.log('\n  🔤 TESSERACT:');
-            const t = check.engine_extractions.tesseract;
-            console.log('    Payee:', t.payee?.value || 'N/A');
-            console.log('    Amount:', t.amount?.value || 'N/A');
-            console.log('    Date:', t.checkDate?.value || 'N/A');
-            console.log('    Check #:', t.checkNumber?.value || 'N/A');
-          }
-          
-          if (check.engine_extractions.numarkdown) {
-            console.log('\n  📝 NUMARKDOWN:');
-            const n = check.engine_extractions.numarkdown;
-            console.log('    Payee:', n.payee?.value || 'N/A');
-            console.log('    Amount:', n.amount?.value || 'N/A');
-            console.log('    Date:', n.checkDate?.value || 'N/A');
-            console.log('    Check #:', n.checkNumber?.value || 'N/A');
-          }
-          
-          if (check.engine_extractions.gemini) {
-            console.log('\n  🤖 GEMINI:');
-            const g = check.engine_extractions.gemini;
-            console.log('    Payee:', g.payee?.value || 'N/A');
-            console.log('    Amount:', g.amount?.value || 'N/A');
-            console.log('    Date:', g.checkDate?.value || 'N/A');
-            console.log('    Check #:', g.checkNumber?.value || 'N/A');
-          }
-        } else if (check.engine_results) {
-          console.log('\n📊 RAW ENGINE RESULTS (Legacy format):');
-          console.log('  Available engines:', Object.keys(check.engine_results));
-        }
+    if (jobData?.checks && isComplete) {
+      console.log('✅ Extraction Complete:', {
+        jobId,
+        totalChecks: jobData.checks.length,
+        methods: selectedMethods,
+        status: jobData.status
       });
-      console.log('\n=== END JOB DATA ===\n');
     }
-  }, [jobData, jobId, selectedMethods]);
+  }, [isComplete]);
 
   const [viewMode, setViewMode] = useState<ViewMode>('card');
   const [selectedIdx, setSelectedIdx] = useState<number | null>(null);
