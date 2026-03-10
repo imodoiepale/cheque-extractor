@@ -2397,6 +2397,14 @@ def get_qbo_status(_auth=Depends(_verify_token)):
 
 if __name__ == "__main__":
     import uvicorn
+    
+    # Sync orphaned storage files to database on startup
+    try:
+        from storage_sync import sync_storage_to_database
+        sync_storage_to_database()
+    except Exception as e:
+        print(f"⚠️ Storage sync failed: {e}")
+    
     port = int(os.environ.get("PORT", 3090))
     print(f"\n{'='*60}")
     print(f"  Check Extractor API Server")
