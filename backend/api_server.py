@@ -2418,11 +2418,48 @@ if __name__ == "__main__":
             except Exception as e:
                 print(f"⚠️ Periodic storage sync failed: {e}")
     
-    # Start background thread
+    # Start periodic background task for auto-extraction
+    def _periodic_auto_extract():
+        """Check for incomplete extractions and auto-extract every 10 minutes"""
+        import time
+        while True:
+            time.sleep(600)  # 10 minutes
+            try:
+                print("🔄 Checking for incomplete extractions...")
+                # Find jobs with status 'analyzed' (uploaded but not extracted)
+                incomplete_jobs = [jid for jid, job in jobs.items() if job.get("status") == "analyzed"]
+                
+                if incomplete_jobs:
+                    print(f"⚙️ Found {len(incomplete_jobs)} incomplete jobs, auto-extracting...")
+                    for job_id in incomplete_jobs:
+                        job = jobs[job_id]
+                        print(f"  → Extracting {job_id} ({job.get('total_checks', 0)} checks)...")
+                        # Trigger extraction in background thread
+                        def _extract_job(jid):
+                            try:
+                                # Use hybrid method for best quality
+                                app_ext = CheckExtractorApp(OUTPUT_DIR / jid)
+                                app_ext.extract_all(methods=["hybrid"])
+                                print(f"  ✅ Completed extraction for {jid}")
+                            except Exception as e:
+                                print(f"  ❌ Auto-extraction failed for {jid}: {e}")
+                        
+                        extract_thread = threading.Thread(target=_extract_job, args=(job_id,), daemon=True)
+                        extract_thread.start()
+                else:
+                    print("✓ No incomplete extractions found")
+            except Exception as e:
+                print(f"⚠️ Periodic auto-extraction check failed: {e}")
+    
+    # Start background threads
     import threading
     sync_thread = threading.Thread(target=_periodic_storage_sync, daemon=True)
     sync_thread.start()
     print("✓ Periodic storage sync enabled (every 5 minutes)")
+    
+    extract_thread = threading.Thread(target=_periodic_auto_extract, daemon=True)
+    extract_thread.start()
+    print("✓ Periodic auto-extraction enabled (every 10 minutes)")
     
     port = int(os.environ.get("PORT", 3090))
     print(f"\n{'='*60}")
