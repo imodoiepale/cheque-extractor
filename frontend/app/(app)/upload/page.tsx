@@ -26,6 +26,7 @@ interface AnalyzeResult {
   total_checks: number;
   pages: PageInfo[];
   checks: CheckInfo[];
+  isDuplicate?: boolean;
 }
 
 interface PageInfo {
@@ -115,6 +116,7 @@ export default function UploadPage() {
     const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090';
 
     let data: any;
+    let isDuplicate = false;
     try {
       const response = await fetch(`${backendUrl}/api/upload-analyze`, {
         method: 'POST',
@@ -122,6 +124,7 @@ export default function UploadPage() {
       });
       if (response.ok) {
         data = await response.json();
+        isDuplicate = data.duplicate === true;
       } else {
         throw new Error('analyze endpoint unavailable');
       }
@@ -137,6 +140,7 @@ export default function UploadPage() {
         throw new Error(err.error || 'Upload failed');
       }
       data = await response.json();
+      isDuplicate = data.duplicate === true;
     }
 
     const result: AnalyzeResult = {
@@ -151,7 +155,16 @@ export default function UploadPage() {
         (_, i) => ({ page_number: i + 1, width: 0, height: 0, checks_on_page: 0 })
       ),
       checks: data.checks || [],
+      isDuplicate,
     };
+
+    // If duplicate and status is 'analyzed', auto-extract it
+    if (isDuplicate && data.status === 'analyzed') {
+      console.log(`🔄 Duplicate detected (${result.job_id}), auto-extracting...`);
+      setTimeout(() => {
+        handleStartExtraction(result.job_id);
+      }, 1000);
+    }
 
     return result;
   }, []);
@@ -461,6 +474,20 @@ export default function UploadPage() {
                   </button>
                 );
               })}
+            </div>
+          )}
+
+          {/* ── Duplicate Warning Banner ──────────────── */}
+          {analyzeResult.isDuplicate && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
+              <AlertCircle className="text-amber-600 flex-shrink-0 mt-0.5" size={20} />
+              <div className="flex-1">
+                <h3 className="text-sm font-semibold text-amber-900 mb-1">Duplicate Document Detected</h3>
+                <p className="text-sm text-amber-700">
+                  This file has already been uploaded. Using existing job <span className="font-mono font-medium">{analyzeResult.job_id}</span>.
+                  {' '}Auto-extracting checks in the background...
+                </p>
+              </div>
             </div>
           )}
 

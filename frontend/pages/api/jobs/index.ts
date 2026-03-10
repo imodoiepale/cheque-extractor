@@ -1,12 +1,43 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
 import { createAuthenticatedClient } from '@/lib/supabase/api'
 
+const PYTHON_API = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090'
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
     if (req.method !== 'GET') {
         return res.status(405).json({ error: 'Method not allowed' })
     }
 
     try {
+        const source = req.query.source as string || 'db'
+        
+        // If source=auto, fetch from Python backend which merges DB + memory
+        if (source === 'auto' || source === 'memory') {
+            try {
+                const limit = req.query.limit ? parseInt(String(req.query.limit)) : 100
+                const offset = req.query.offset ? parseInt(String(req.query.offset)) : 0
+                const status = req.query.status as string || undefined
+                
+                const params = new URLSearchParams({
+                    source,
+                    limit: String(limit),
+                    offset: String(offset),
+                })
+                if (status) params.set('status', status)
+                
+                const response = await fetch(`${PYTHON_API}/api/jobs?${params.toString()}`)
+                if (response.ok) {
+                    const data = await response.json()
+                    console.log('✅ [/api/jobs] Fetched from Python backend:', data.jobs?.length || 0, 'jobs')
+                    return res.status(200).json(data)
+                }
+                console.warn('⚠️ Python backend unavailable, falling back to DB')
+            } catch (backendError) {
+                console.warn('⚠️ Python backend error, falling back to DB:', backendError)
+            }
+        }
+
+        // Fallback to DB-only query
         // Use authenticated Supabase client - enforces RLS and tenant isolation
         let supabase;
         try {
