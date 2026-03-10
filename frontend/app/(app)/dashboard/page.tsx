@@ -187,7 +187,7 @@ export default function DashboardPage() {
         email: session.user.email,
       });
 
-      const res = await fetch('/api/jobs', {
+      const res = await fetch('/api/jobs?source=auto', {
         headers: {
           'Authorization': `Bearer ${session.access_token}`,
         },
@@ -225,7 +225,16 @@ export default function DashboardPage() {
     }
   }, []);
 
-  useEffect(() => { fetchJobs(); }, [fetchJobs]);
+  useEffect(() => { 
+    fetchJobs(); 
+    
+    // Auto-refresh every 10 seconds to show new uploads
+    const interval = setInterval(() => {
+      fetchJobs();
+    }, 10000);
+    
+    return () => clearInterval(interval);
+  }, [fetchJobs]);
 
   // Keyboard navigation for check detail
   useEffect(() => {
