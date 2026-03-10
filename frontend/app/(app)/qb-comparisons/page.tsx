@@ -5,6 +5,7 @@ import { Settings, Loader2, AlertCircle, RefreshCw, Upload } from 'lucide-react'
 import Link from 'next/link';
 import { useComparisonData } from './hooks/useComparisonData';
 import { useComparisonState } from './hooks/useComparisonState';
+import { useBackgroundExtraction } from './hooks/useBackgroundExtraction';
 import { ComparisonControlsBar } from './components/ComparisonControlsBar';
 import { StatisticsPanel } from './components/StatisticsPanel';
 import { ComparisonTable } from './components/ComparisonTable';
@@ -23,6 +24,9 @@ import { exportToCSV, exportToExcel } from './utils/exportUtils';
 
 export default function QBComparisonsPage() {
   const { loading, extractions, qbEntries, qbSources, error, refreshData } = useComparisonData();
+  
+  // Silently extract incomplete jobs in the background
+  useBackgroundExtraction();
   const [qbConfigured, setQbConfigured] = useState(false);
   const [qbConnected, setQbConnected] = useState(false);
   const [checkingConfig, setCheckingConfig] = useState(true);
