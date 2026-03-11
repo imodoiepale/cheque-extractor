@@ -222,6 +222,18 @@ export function intelligentMatch(extractions: CheckExtraction[], qbEntries: Quic
   console.log('   - Mismatched:', rows.filter(r => r.matchStatus === 'mismatch').length);
   console.log('   - Missing in QB:', rows.filter(r => r.matchStatus === 'missing-in-qb').length);
   console.log('   - Missing in Extraction:', rows.filter(r => r.matchStatus === 'missing-in-extraction').length);
+  
+  // Log PDF name distribution
+  const pdfCounts: Record<string, number> = {};
+  rows.forEach(row => {
+    if (row.extractionData?.pdf_name) {
+      pdfCounts[row.extractionData.pdf_name] = (pdfCounts[row.extractionData.pdf_name] || 0) + 1;
+    }
+  });
+  console.log('📄 Rows per PDF:');
+  Object.entries(pdfCounts).forEach(([pdf, count]) => {
+    console.log(`   - ${pdf}: ${count} rows`);
+  });
 
   return rows;
 }
