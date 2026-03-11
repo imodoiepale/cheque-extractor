@@ -35,6 +35,8 @@ export const Pagination: React.FC<PaginationProps> = ({
           className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
           <option value={25}>25 per page</option>
+          <option value={50}>50 per page</option>
+          <option value={100}>100 per page</option>
           <option value={500}>500 per page</option>
           <option value={1000}>1000 per page</option>
           <option value={2000}>2000 per page</option>

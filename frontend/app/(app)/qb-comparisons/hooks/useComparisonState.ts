@@ -26,7 +26,7 @@ export function useComparisonState() {
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
   const [currentPage, setCurrentPage] = useState(1);
-  const [itemsPerPage, setItemsPerPage] = useState(50);
+  const [itemsPerPage, setItemsPerPage] = useState(100);
   const [visibleColumns, setVisibleColumns] = useState<VisibleColumns>({
     checkNumber: true,
     date: true,

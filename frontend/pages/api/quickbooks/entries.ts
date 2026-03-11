@@ -31,7 +31,7 @@ export default async function handler(
       .from('qb_entries')
       .select('*')
       .order('date', { ascending: false })
-      .limit(1000);
+      .limit(5000);
 
     if (dbError) {
       // Table might not exist yet or connection failed — return empty
