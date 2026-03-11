@@ -66,14 +66,26 @@ export const useJobsStore = create<JobsStore>((set, get) => ({
 
       const data = await res.json();
       
+      const jobs = data.jobs || [];
+      
+      // Log detailed job information
+      console.log('✅ Jobs fetched and cached:', jobs.length);
+      
+      let totalChecks = 0;
+      jobs.forEach((job: any) => {
+        const checkCount = job.checks?.length || 0;
+        totalChecks += checkCount;
+        console.log(`  📄 ${job.pdf_name}: ${checkCount} checks (status: ${job.status})`);
+      });
+      
+      console.log(`📊 Total checks across all jobs: ${totalChecks}`);
+      
       set({ 
-        jobs: data.jobs || [], 
+        jobs, 
         loading: false, 
         lastFetch: now,
         error: null 
       });
-
-      console.log('✅ Jobs fetched and cached:', data.jobs?.length || 0);
     } catch (err) {
       const error = err instanceof Error ? err.message : 'Failed to fetch jobs';
       set({ error, loading: false });
