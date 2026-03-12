@@ -25,7 +25,7 @@ export default async function handler(
     }
 
     const { data: profile, error: profileError } = await supabase
-      .from('profiles')
+      .from('user_profiles')
       .select('tenant_id, email, full_name')
       .eq('id', user.id)
       .single();
@@ -62,7 +62,7 @@ export default async function handler(
 
       // Update profile with tenant_id
       const { error: updateError } = await supabase
-        .from('profiles')
+        .from('user_profiles')
         .update({ tenant_id: tenantId })
         .eq('id', user.id);
 
