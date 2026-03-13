@@ -1,5 +1,6 @@
-import React from 'react';
-import { Search, Upload, Download, ChevronDown, RefreshCw, X, Filter, AlertTriangle } from 'lucide-react';
+import React, { useState } from 'react';
+import { Search, Upload, Download, ChevronDown, RefreshCw, X, Filter, AlertTriangle, Calendar } from 'lucide-react';
+import { DateFormat, DATE_FORMAT_OPTIONS } from '../utils/comparisonUtils';
 
 interface ComparisonControlsBarProps {
   searchQuery: string;
@@ -30,6 +31,8 @@ interface ComparisonControlsBarProps {
   showIssuesOnly: boolean;
   setShowIssuesOnly: (show: boolean) => void;
   issueCount: number;
+  dateFormat: DateFormat;
+  setDateFormat: (fmt: DateFormat) => void;
 }
 
 export const ComparisonControlsBar: React.FC<ComparisonControlsBarProps> = ({
@@ -61,7 +64,10 @@ export const ComparisonControlsBar: React.FC<ComparisonControlsBarProps> = ({
   showIssuesOnly,
   setShowIssuesOnly,
   issueCount,
+  dateFormat,
+  setDateFormat,
 }) => {
+  const [showDateFormatMenu, setShowDateFormatMenu] = useState(false);
   return (
     <div className="px-3 py-2 bg-gray-100 border-b border-gray-300">
       <div className="grid grid-cols-12 gap-2 items-center">
@@ -231,6 +237,35 @@ export const ComparisonControlsBar: React.FC<ComparisonControlsBarProps> = ({
                   <Download size={14} />
                   Export Excel
                 </button>
+              </div>
+            )}
+          </div>
+
+          {/* Date Format Toggle */}
+          <div className="relative">
+            <button
+              onClick={() => setShowDateFormatMenu(!showDateFormatMenu)}
+              className="flex items-center gap-1 px-3 py-1 bg-white text-gray-700 border border-gray-300 rounded hover:bg-gray-50 text-xs font-medium transition shadow-sm"
+              title="Change date display format"
+            >
+              <Calendar size={12} />
+              {DATE_FORMAT_OPTIONS.find(o => o.value === dateFormat)?.example || dateFormat}
+              <ChevronDown size={10} />
+            </button>
+            {showDateFormatMenu && (
+              <div className="absolute top-full left-0 mt-1 w-48 bg-white border border-gray-200 rounded-lg shadow-lg z-50">
+                {DATE_FORMAT_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    onClick={() => { setDateFormat(opt.value); setShowDateFormatMenu(false); }}
+                    className={`w-full px-3 py-2 text-xs text-left hover:bg-gray-50 flex items-center justify-between ${
+                      dateFormat === opt.value ? 'bg-blue-50 text-blue-700 font-semibold' : 'text-gray-700'
+                    }${opt.value === DATE_FORMAT_OPTIONS[0].value ? ' rounded-t-lg' : ''}${opt.value === DATE_FORMAT_OPTIONS[DATE_FORMAT_OPTIONS.length - 1].value ? ' rounded-b-lg' : ''}`}
+                  >
+                    <span>{opt.label}</span>
+                    {dateFormat === opt.value && <span className="text-blue-500">✓</span>}
+                  </button>
+                ))}
               </div>
             )}
           </div>

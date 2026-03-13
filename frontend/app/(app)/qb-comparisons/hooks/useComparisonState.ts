@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { SortField, SortDirection, ComparisonRow } from '../utils/comparisonUtils';
+import { SortField, SortDirection, ComparisonRow, DateFormat } from '../utils/comparisonUtils';
 
 export interface VisibleColumns {
   checkNumber: boolean;
@@ -49,6 +49,7 @@ export function useComparisonState() {
     issues: true,
     actions: true,
   });
+  const [dateFormat, setDateFormat] = useState<DateFormat>('MMM D, YYYY');
   const [showColumnSettings, setShowColumnSettings] = useState(false);
   const [selectedRow, setSelectedRow] = useState<ComparisonRow | null>(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -101,6 +102,8 @@ export function useComparisonState() {
     setItemsPerPage,
     visibleColumns,
     setVisibleColumns,
+    dateFormat,
+    setDateFormat,
     showColumnSettings,
     setShowColumnSettings,
     selectedRow,

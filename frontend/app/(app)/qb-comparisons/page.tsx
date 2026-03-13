@@ -58,6 +58,8 @@ export default function QBComparisonsPage() {
     setItemsPerPage,
     visibleColumns,
     setVisibleColumns,
+    dateFormat,
+    setDateFormat,
     showColumnSettings,
     setShowColumnSettings,
     selectedRow,
@@ -674,6 +676,8 @@ export default function QBComparisonsPage() {
         showIssuesOnly={showIssuesOnly}
         setShowIssuesOnly={setShowIssuesOnly}
         issueCount={issueCount}
+        dateFormat={dateFormat}
+        setDateFormat={setDateFormat}
       />
 
       <div className="flex-1 flex flex-col overflow-hidden">
@@ -683,6 +687,7 @@ export default function QBComparisonsPage() {
             sortField={sortField}
             sortDirection={sortDirection}
             visibleColumns={visibleColumns}
+            dateFormat={dateFormat}
             onSort={handleSort}
             onRowClick={setSelectedRow}
             currentPage={currentPage}

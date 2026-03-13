@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { ChevronUp, ChevronDown, Eye, CheckCircle, XCircle, Loader2 } from 'lucide-react';
-import { ComparisonRow, SortField, SortDirection, formatCurrency, formatDate, parseAmount } from '../utils/comparisonUtils';
+import { ComparisonRow, SortField, SortDirection, formatCurrency, formatDate, parseAmount, DateFormat } from '../utils/comparisonUtils';
 import { VisibleColumns } from '../hooks/useComparisonState';
 
 interface ComparisonTableProps {
@@ -8,6 +8,7 @@ interface ComparisonTableProps {
   sortField: SortField;
   sortDirection: SortDirection;
   visibleColumns: VisibleColumns;
+  dateFormat: DateFormat;
   onSort: (field: SortField) => void;
   onRowClick: (row: ComparisonRow) => void;
   currentPage: number;
@@ -35,6 +36,7 @@ export const ComparisonTable: React.FC<ComparisonTableProps> = ({
   sortField,
   sortDirection,
   visibleColumns,
+  dateFormat,
   onSort,
   onRowClick,
   currentPage,
@@ -276,7 +278,7 @@ export const ComparisonTable: React.FC<ComparisonTableProps> = ({
                     {row.extractionData || row.source === 'matched' ? row.checkNumber || '—' : '—'}
                   </td>
                   <td className="px-1 py-0.5 text-gray-600 border-r border-gray-200">
-                    {(row.extractionData || row.source === 'matched') && row.date ? formatDate(row.date) : '—'}
+                    {(row.extractionData || row.source === 'matched') && row.date ? formatDate(row.date, dateFormat) : '—'}
                   </td>
                   <td className="px-1 py-0.5 text-right font-semibold text-emerald-700 border-r border-gray-200">
                     {(row.extractionData || row.source === 'matched') && row.amount ? formatCurrency(row.amount) : '—'}
@@ -293,7 +295,7 @@ export const ComparisonTable: React.FC<ComparisonTableProps> = ({
                     {row.qbData || row.source === 'matched' ? (row.qbData?.checkNumber || row.checkNumber || '—') : '—'}
                   </td>
                   <td className="px-1 py-0.5 text-gray-600 border-r border-gray-200">
-                    {(row.qbData || row.source === 'matched') && (row.qbData?.date || row.date) ? formatDate(row.qbData?.date || row.date) : '—'}
+                    {(row.qbData || row.source === 'matched') && (row.qbData?.date || row.date) ? formatDate(row.qbData?.date || row.date, dateFormat) : '—'}
                   </td>
                   <td className="px-1 py-0.5 text-right font-semibold text-emerald-700 border-r border-gray-200">
                     {(row.qbData || row.source === 'matched') && (row.qbData?.amount || row.amount) ? formatCurrency(row.qbData?.amount || row.amount) : '—'}

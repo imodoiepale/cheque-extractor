@@ -80,40 +80,66 @@ export function formatCurrency(amount: string | number): string {
   }).format(num);
 }
 
-export function formatDate(dateStr: string): string {
+export type DateFormat = 'MMM D, YYYY' | 'MM/DD/YYYY' | 'DD/MM/YYYY' | 'YYYY-MM-DD' | 'DD-MMM-YYYY';
+
+export const DATE_FORMAT_OPTIONS: { value: DateFormat; label: string; example: string }[] = [
+  { value: 'MMM D, YYYY', label: 'Jan 15, 2026', example: 'Jan 15, 2026' },
+  { value: 'MM/DD/YYYY', label: 'MM/DD/YYYY', example: '01/15/2026' },
+  { value: 'DD/MM/YYYY', label: 'DD/MM/YYYY', example: '15/01/2026' },
+  { value: 'YYYY-MM-DD', label: 'YYYY-MM-DD', example: '2026-01-15' },
+  { value: 'DD-MMM-YYYY', label: 'DD-MMM-YYYY', example: '15-Jan-2026' },
+];
+
+/**
+ * Parse any date string into { year, month, day } integers (UTC-safe).
+ */
+function parseDateParts(dateStr: string): { y: number; m: number; d: number } | null {
+  const s = dateStr.trim();
+
+  const ymd = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (ymd) return { y: parseInt(ymd[1]), m: parseInt(ymd[2]), d: parseInt(ymd[3]) };
+
+  const mdy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mdy) return { y: parseInt(mdy[3]), m: parseInt(mdy[1]), d: parseInt(mdy[2]) };
+
+  const dmy = s.match(/^(\d{2})[\-\/](\d{2})[\-\/](\d{4})$/);
+  if (dmy) {
+    const a = parseInt(dmy[1]), b = parseInt(dmy[2]);
+    if (a > 12) return { y: parseInt(dmy[3]), m: b, d: a };
+    return { y: parseInt(dmy[3]), m: a, d: b };
+  }
+
+  const dt = new Date(s);
+  if (!isNaN(dt.getTime())) {
+    return { y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate() };
+  }
+  return null;
+}
+
+const SHORT_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+export function formatDate(dateStr: string, fmt: DateFormat = 'MMM D, YYYY'): string {
   if (!dateStr) return '';
   try {
-    const s = dateStr.trim();
+    const parts = parseDateParts(dateStr);
+    if (!parts) return dateStr;
+    const { y, m, d } = parts;
+    const mm = String(m).padStart(2, '0');
+    const dd = String(d).padStart(2, '0');
 
-    // Parse YYYY-MM-DD directly to avoid timezone shift
-    const ymd = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-    if (ymd) {
-      const [, y, m, d] = ymd;
-      // Use UTC constructor to avoid shift, then format with UTC
-      const date = new Date(Date.UTC(parseInt(y), parseInt(m) - 1, parseInt(d)));
-      return date.toLocaleDateString('en-US', {
-        year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC',
-      });
+    switch (fmt) {
+      case 'MM/DD/YYYY':
+        return `${mm}/${dd}/${y}`;
+      case 'DD/MM/YYYY':
+        return `${dd}/${mm}/${y}`;
+      case 'YYYY-MM-DD':
+        return `${y}-${mm}-${dd}`;
+      case 'DD-MMM-YYYY':
+        return `${dd}-${SHORT_MONTHS[m - 1]}-${y}`;
+      case 'MMM D, YYYY':
+      default:
+        return `${SHORT_MONTHS[m - 1]} ${d}, ${y}`;
     }
-
-    // MM/DD/YYYY
-    const mdy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-    if (mdy) {
-      const [, m, d, y] = mdy;
-      const date = new Date(Date.UTC(parseInt(y), parseInt(m) - 1, parseInt(d)));
-      return date.toLocaleDateString('en-US', {
-        year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC',
-      });
-    }
-
-    // Fallback
-    const date = new Date(dateStr);
-    if (!isNaN(date.getTime())) {
-      return date.toLocaleDateString('en-US', {
-        year: 'numeric', month: 'short', day: 'numeric',
-      });
-    }
-    return dateStr;
   } catch {
     return dateStr;
   }
