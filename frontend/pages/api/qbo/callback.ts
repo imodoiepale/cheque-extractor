@@ -147,23 +147,66 @@ export default async function handler(
       return res.redirect('/settings?error=service_unavailable');
     }
 
-    const { error: saveError } = await serviceClient
-      .from('integrations')
-      .upsert({
-        provider: 'quickbooks',
-        tenant_id: tenantId,
-        realm_id: realmId,
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token,
-        expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
-        updated_at: new Date().toISOString(),
-      }, {
-        onConflict: 'tenant_id,provider'
-      });
+    // Fetch company name from QB to store alongside tokens
+    let companyName: string | null = null;
+    try {
+      const companyRes = await fetch(
+        `https://quickbooks.api.intuit.com/v3/company/${realmId}/companyinfo/${realmId}?minorversion=73`,
+        {
+          headers: {
+            'Authorization': `Bearer ${tokens.access_token}`,
+            'Accept': 'application/json',
+          },
+        }
+      );
+      if (companyRes.ok) {
+        const companyData = await companyRes.json();
+        companyName = companyData?.CompanyInfo?.CompanyName || null;
+        console.log('✅ Connected to company:', companyName, '(realmId:', realmId, ')');
+      }
+    } catch (compErr) {
+      console.warn('⚠️ Could not fetch company name (non-critical):', compErr);
+    }
 
-    if (saveError) {
-      console.error('Failed to store tokens:', saveError);
-      return res.redirect('/settings?error=storage_failed');
+    // Update existing integration row (preserves credentials) or insert new one
+    const tokenData = {
+      realm_id: realmId,
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+      company_name: companyName,
+      updated_at: new Date().toISOString(),
+    };
+
+    // Try update first (preserves qb_client_id, qb_client_secret, qb_redirect_uri)
+    const { data: updateResult, error: updateError } = await serviceClient
+      .from('integrations')
+      .update(tokenData)
+      .eq('provider', 'quickbooks')
+      .eq('tenant_id', tenantId)
+      .select('id');
+
+    if (updateError || !updateResult || updateResult.length === 0) {
+      // No existing row — insert full record
+      console.log('📝 No existing integration row, inserting new one');
+      const { error: insertError } = await serviceClient
+        .from('integrations')
+        .insert({
+          provider: 'quickbooks',
+          tenant_id: tenantId,
+          ...tokenData,
+          // Preserve credentials from the integration we read earlier
+          qb_client_id: integration?.qb_client_id || null,
+          qb_client_secret: integration?.qb_client_secret || null,
+          qb_redirect_uri: integration?.qb_redirect_uri || null,
+        });
+
+      if (insertError) {
+        console.error('Failed to store tokens (insert):', insertError);
+        return res.redirect('/settings?error=storage_failed');
+      }
+    } else {
+      console.log('✅ Updated existing integration with new tokens');
     }
 
     // Clear state cookie

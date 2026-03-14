@@ -107,7 +107,7 @@ export default async function handler(
     }
 
     // Fetch company info from QuickBooks
-    const companyInfoUrl = `${QBO_BASE}/v3/company/${tokens.realm_id}/companyinfo/${tokens.realm_id}`;
+    const companyInfoUrl = `${QBO_BASE}/v3/company/${tokens.realm_id}/companyinfo/${tokens.realm_id}?minorversion=73`;
     
     console.log('📡 Fetching QB company info:', {
       realmId: tokens.realm_id,

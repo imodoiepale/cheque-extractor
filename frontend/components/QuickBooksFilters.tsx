@@ -1,11 +1,21 @@
 'use client'
 
-import { useState } from 'react'
-import { Calendar, DollarSign, User, Building2, Filter, X } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Calendar, DollarSign, User, Building2, Filter, X, Loader2 } from 'lucide-react'
+import { createClient } from '@/lib/supabase/client'
+
+interface QBAccount {
+  id: string
+  name: string
+  fullName: string
+  accountSubType: string
+  currentBalance: number
+}
 
 interface QuickBooksFiltersProps {
   onApplyFilters: (filters: FilterParams) => void
   isLoading?: boolean
+  qbConnected?: boolean
 }
 
 export interface FilterParams {
@@ -18,11 +28,38 @@ export interface FilterParams {
   type?: 'all' | 'cheque_written' | 'bill_paid_by_cheque' | 'cheque_received'
 }
 
-export default function QuickBooksFilters({ onApplyFilters, isLoading }: QuickBooksFiltersProps) {
+export default function QuickBooksFilters({ onApplyFilters, isLoading, qbConnected }: QuickBooksFiltersProps) {
   const [showFilters, setShowFilters] = useState(false)
   const [filters, setFilters] = useState<FilterParams>({
     type: 'all'
   })
+  const [qbAccounts, setQbAccounts] = useState<QBAccount[]>([])
+  const [loadingAccounts, setLoadingAccounts] = useState(false)
+
+  // Fetch bank accounts from QuickBooks when connected
+  useEffect(() => {
+    if (!qbConnected || qbAccounts.length > 0) return
+    const fetchAccounts = async () => {
+      setLoadingAccounts(true)
+      try {
+        const supabase = createClient()
+        const { data: { session } } = await supabase.auth.getSession()
+        if (!session) return
+        const res = await fetch('/api/qbo/accounts', {
+          headers: { 'Authorization': `Bearer ${session.access_token}` },
+        })
+        if (res.ok) {
+          const data = await res.json()
+          setQbAccounts(data.accounts || [])
+        }
+      } catch (err) {
+        console.error('Failed to fetch QB accounts:', err)
+      } finally {
+        setLoadingAccounts(false)
+      }
+    }
+    fetchAccounts()
+  }, [qbConnected, qbAccounts.length])
 
   const handleApply = () => {
     onApplyFilters(filters)
@@ -247,16 +284,39 @@ export default function QuickBooksFilters({ onApplyFilters, isLoading }: QuickBo
           <div className="space-y-3">
             <div className="flex items-center gap-2 text-sm font-medium text-gray-700">
               <Building2 className="w-4 h-4" />
-              Account
+              Bank Account
             </div>
-            <input
-              type="text"
-              placeholder="Search by account name..."
-              value={filters.account || ''}
-              onChange={(e) => setFilters({ ...filters, account: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-            <p className="text-xs text-gray-500">Filter by bank account or expense account</p>
+            {qbAccounts.length > 0 ? (
+              <select
+                value={filters.account || ''}
+                onChange={(e) => setFilters({ ...filters, account: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              >
+                <option value="">All Bank Accounts</option>
+                {qbAccounts.map((acc) => (
+                  <option key={acc.id} value={acc.name}>
+                    {acc.fullName} ({acc.accountSubType}) — ${acc.currentBalance?.toLocaleString() ?? '0'}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  placeholder={loadingAccounts ? 'Loading accounts...' : 'Type account name...'}
+                  value={filters.account || ''}
+                  onChange={(e) => setFilters({ ...filters, account: e.target.value })}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  disabled={loadingAccounts}
+                />
+                {loadingAccounts && <Loader2 className="w-4 h-4 animate-spin text-gray-400" />}
+              </div>
+            )}
+            <p className="text-xs text-gray-500">
+              {qbAccounts.length > 0
+                ? `${qbAccounts.length} bank accounts found in QuickBooks`
+                : 'Connect to QuickBooks to see available bank accounts'}
+            </p>
           </div>
 
           {/* Transaction Type Filter */}

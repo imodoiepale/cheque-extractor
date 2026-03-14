@@ -92,7 +92,9 @@ async function refreshAccessToken(supabase: any, tokens: QBTokens): Promise<stri
 
 async function qboQuery(accessToken: string, realmId: string, query: string, useSandbox = false): Promise<any> {
   const base = useSandbox ? QBO_SANDBOX : QBO_BASE;
-  const url = `${base}/v3/company/${realmId}/query?query=${encodeURIComponent(query)}`;
+  const url = `${base}/v3/company/${realmId}/query?query=${encodeURIComponent(query)}&minorversion=73`;
+
+  console.log('🌐 QBO API call:', url.substring(0, 200) + '...');
 
   const response = await fetch(url, {
     headers: {
@@ -104,10 +106,34 @@ async function qboQuery(accessToken: string, realmId: string, query: string, use
 
   if (!response.ok) {
     const text = await response.text();
+    console.error('❌ QBO API error:', { status: response.status, body: text.substring(0, 500) });
     throw new Error(`QBO query failed (${response.status}): ${text}`);
   }
 
   return response.json();
+}
+
+/**
+ * Paginated QBO query — fetches all pages (QB returns max 1000 per page).
+ */
+async function qboQueryAll(accessToken: string, realmId: string, baseQuery: string, entityKey: string, useSandbox = false): Promise<any[]> {
+  const PAGE_SIZE = 1000;
+  let startPosition = 1;
+  const allResults: any[] = [];
+
+  while (true) {
+    const pagedQuery = `${baseQuery} STARTPOSITION ${startPosition} MAXRESULTS ${PAGE_SIZE}`;
+    const data = await qboQuery(accessToken, realmId, pagedQuery, useSandbox);
+    const results = data?.QueryResponse?.[entityKey] || [];
+    allResults.push(...results);
+
+    console.log(`  📄 Page ${Math.ceil(startPosition / PAGE_SIZE)}: ${results.length} ${entityKey} records`);
+
+    if (results.length < PAGE_SIZE) break; // last page
+    startPosition += PAGE_SIZE;
+  }
+
+  return allResults;
 }
 
 function normalizePurchaseCheck(purchase: any): any {
@@ -292,26 +318,35 @@ export default async function handler(
     const allEntries: any[] = [];
     const errors: string[] = [];
 
+    // ── 0. Diagnostic: wide-open query if no filters to verify connectivity ──
+    if (!dateFilter && !accountFilter && !vendorFilter && !typeFilter) {
+      console.log('🔎 No filters applied — running diagnostic wide-open queries');
+    }
+
     // ── 1. Purchase (PaymentType=Check) — Cheques written to vendors ──
     try {
-      const purchaseQuery = `SELECT * FROM Purchase WHERE PaymentType = 'Check'${dateFilter} MAXRESULTS 1000`;
+      const purchaseQuery = `SELECT * FROM Purchase WHERE PaymentType = 'Check'${dateFilter}`;
       console.log('🔍 Purchase query:', purchaseQuery);
-      const purchaseData = await qboQuery(accessToken, realmId, purchaseQuery, useSandbox);
-      const purchases = purchaseData?.QueryResponse?.Purchase || [];
+      const purchases = await qboQueryAll(accessToken, realmId, purchaseQuery, 'Purchase', useSandbox);
       console.log(`✅ Purchases found: ${purchases.length}`);
+      if (purchases.length > 0) {
+        console.log('  📝 Sample Purchase:', { Id: purchases[0].Id, DocNumber: purchases[0].DocNumber, TxnDate: purchases[0].TxnDate, TotalAmt: purchases[0].TotalAmt });
+      }
       purchases.forEach((p: any) => allEntries.push(normalizePurchaseCheck(p)));
     } catch (e: any) {
       console.error('❌ Purchase query error:', e.message);
       errors.push(`Purchase query failed: ${e.message}`);
     }
 
-    // ── 2. BillPayment (PayType=Check) — Bills paid by cheque ──
+    // ── 2. BillPayment (PayType=Check) — Bills paid by cheque (MOST CONTRACTOR CHECKS) ──
     try {
-      const bpQuery = `SELECT * FROM BillPayment WHERE PayType = 'Check'${dateFilter} MAXRESULTS 1000`;
+      const bpQuery = `SELECT * FROM BillPayment WHERE PayType = 'Check'${dateFilter}`;
       console.log('🔍 BillPayment query:', bpQuery);
-      const bpData = await qboQuery(accessToken, realmId, bpQuery, useSandbox);
-      const billPayments = bpData?.QueryResponse?.BillPayment || [];
+      const billPayments = await qboQueryAll(accessToken, realmId, bpQuery, 'BillPayment', useSandbox);
       console.log(`✅ BillPayments found: ${billPayments.length}`);
+      if (billPayments.length > 0) {
+        console.log('  📝 Sample BillPayment:', { Id: billPayments[0].Id, DocNumber: billPayments[0].DocNumber, TxnDate: billPayments[0].TxnDate, TotalAmt: billPayments[0].TotalAmt, BankAccount: billPayments[0].CheckPayment?.BankAccountRef?.name });
+      }
       billPayments.forEach((bp: any) => allEntries.push(normalizeBillPaymentCheck(bp)));
     } catch (e: any) {
       console.error('❌ BillPayment query error:', e.message);
@@ -320,11 +355,14 @@ export default async function handler(
 
     // ── 3. Payment — Cheques received from customers ──
     try {
-      const paymentQuery = `SELECT * FROM Payment${dateFilter ? ' WHERE 1=1' + dateFilter : ''} MAXRESULTS 1000`;
+      // QB query language: WHERE clause needs actual conditions, not 'WHERE 1=1'
+      const paymentDateFilter = dateFilter
+        ? ` WHERE ${dateFilter.replace(/^ AND /, '')}`
+        : '';
+      const paymentQuery = `SELECT * FROM Payment${paymentDateFilter}`;
       console.log('🔍 Payment query:', paymentQuery);
-      const paymentData = await qboQuery(accessToken, realmId, paymentQuery, useSandbox);
-      const payments = paymentData?.QueryResponse?.Payment || [];
-      // Filter for cheque payments (PaymentMethodRef with name containing 'check' or 'cheque')
+      const payments = await qboQueryAll(accessToken, realmId, paymentQuery, 'Payment', useSandbox);
+      // Filter for cheque payments client-side (PaymentMethodRef with name containing 'check' or 'cheque')
       const chequePayments = payments.filter((p: any) => {
         const methodName = (p.PaymentMethodRef?.name || '').toLowerCase();
         return methodName.includes('check') || methodName.includes('cheque');

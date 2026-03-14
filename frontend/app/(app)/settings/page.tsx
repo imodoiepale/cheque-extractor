@@ -683,6 +683,7 @@ function SettingsPageContent() {
                                     <QuickBooksFilters 
                                         onApplyFilters={handlePullData}
                                         isLoading={pullingData}
+                                        qbConnected={qboConnected}
                                     />
 
                                     {pullResult && (
