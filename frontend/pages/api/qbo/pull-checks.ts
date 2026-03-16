@@ -375,37 +375,67 @@ export default async function handler(
     }
 
     console.log(`📊 Total entries before filters: ${allEntries.length}`);
+    if (allEntries.length > 0) {
+      console.log('  📝 Sample entry:', {
+        qb_type: allEntries[0].qb_type,
+        check_number: allEntries[0].check_number,
+        date: allEntries[0].date,
+        amount: allEntries[0].amount,
+        payee: allEntries[0].payee,
+        account: allEntries[0].account,
+      });
+    }
 
     // Apply client-side filters (for fields not supported in QBO queries)
     let filteredEntries = allEntries;
     
     // Filter by amount range
     if (minAmount !== undefined) {
+      const beforeCount = filteredEntries.length;
       filteredEntries = filteredEntries.filter(e => parseFloat(e.amount) >= minAmount);
+      console.log(`💰 Amount filter (min ${minAmount}): ${beforeCount} → ${filteredEntries.length}`);
     }
     if (maxAmount !== undefined) {
+      const beforeCount = filteredEntries.length;
       filteredEntries = filteredEntries.filter(e => parseFloat(e.amount) <= maxAmount);
+      console.log(`💰 Amount filter (max ${maxAmount}): ${beforeCount} → ${filteredEntries.length}`);
     }
     
     // Filter by vendor/payee (case-insensitive partial match)
     if (vendorFilter) {
+      const beforeCount = filteredEntries.length;
       const vendorLower = vendorFilter.toLowerCase();
       filteredEntries = filteredEntries.filter(e => 
         e.payee?.toLowerCase().includes(vendorLower)
       );
+      console.log(`👤 Vendor filter ("${vendorFilter}"): ${beforeCount} → ${filteredEntries.length}`);
     }
     
     // Filter by account (case-insensitive partial match)
     if (accountFilter) {
+      const beforeCount = filteredEntries.length;
       const accountLower = accountFilter.toLowerCase();
-      filteredEntries = filteredEntries.filter(e => 
-        e.account?.toLowerCase().includes(accountLower)
-      );
+      
+      // Log all unique account values to debug matching
+      const uniqueAccounts = [...new Set(filteredEntries.map(e => e.account).filter(Boolean))];
+      console.log(`🏦 Account filter requested: "${accountFilter}"`);
+      console.log(`🏦 Available accounts in data (${uniqueAccounts.length}):`, uniqueAccounts);
+      
+      filteredEntries = filteredEntries.filter(e => {
+        const match = e.account?.toLowerCase().includes(accountLower);
+        if (!match && e.account) {
+          console.log(`  ❌ No match: "${e.account}" does not contain "${accountFilter}"`);
+        }
+        return match;
+      });
+      console.log(`🏦 Account filter ("${accountFilter}"): ${beforeCount} → ${filteredEntries.length}`);
     }
     
     // Filter by transaction type
     if (typeFilter && typeFilter !== 'all') {
+      const beforeCount = filteredEntries.length;
       filteredEntries = filteredEntries.filter(e => e.qb_source === typeFilter);
+      console.log(`📋 Type filter ("${typeFilter}"): ${beforeCount} → ${filteredEntries.length}`);
     }
     
     // Sort by date descending

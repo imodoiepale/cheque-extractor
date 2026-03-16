@@ -23,6 +23,8 @@ function SettingsPageContent() {
     const [qboUploadResult, setQboUploadResult] = useState<{ success: boolean; message: string } | null>(null)
     const [pullingData, setPullingData] = useState(false)
     const [pullResult, setPullResult] = useState<any>(null)
+    const [diagnosing, setDiagnosing] = useState(false)
+    const [diagnosisResult, setDiagnosisResult] = useState<any>(null)
     const [loadingSettings, setLoadingSettings] = useState(true)
     const [mounted, setMounted] = useState(false)
     const [credentialsExist, setCredentialsExist] = useState(false)
@@ -339,6 +341,30 @@ function SettingsPageContent() {
         } catch (error) {
             console.error('Failed to disconnect QBO:', error)
             toast.error('Failed to disconnect', { duration: 4000 })
+        }
+    }
+
+    const handleDiagnose = async () => {
+        setDiagnosing(true)
+        setDiagnosisResult(null)
+        try {
+            const supabase = createClient()
+            const { data: { session } } = await supabase.auth.getSession()
+            if (!session) {
+                toast.error('Session expired. Please refresh the page.')
+                setDiagnosing(false)
+                return
+            }
+            const response = await fetch('/api/qbo/diagnose', {
+                headers: { 'Authorization': `Bearer ${session.access_token}` },
+            })
+            const data = await response.json()
+            setDiagnosisResult(data)
+            console.log('🔍 QB Diagnosis:', JSON.stringify(data, null, 2))
+        } catch (error: any) {
+            setDiagnosisResult({ conclusion: `Error: ${error.message}`, steps: [] })
+        } finally {
+            setDiagnosing(false)
         }
     }
 
@@ -715,6 +741,99 @@ function SettingsPageContent() {
                                             </div>
                                         </div>
                                     )}
+
+                                    {/* Diagnose Connection */}
+                                    <div className="mt-4 pt-4 border-t border-gray-200">
+                                        <button
+                                            onClick={handleDiagnose}
+                                            disabled={diagnosing}
+                                            className="px-4 py-2 text-sm font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 disabled:opacity-50 transition flex items-center gap-2"
+                                        >
+                                            {diagnosing ? (
+                                                <><Loader2 size={14} className="animate-spin" /> Running Diagnostics...</>
+                                            ) : (
+                                                <><AlertCircle size={14} /> Diagnose Connection (0 results?)</>
+                                            )}
+                                        </button>
+                                        <p className="text-xs text-gray-500 mt-1">
+                                            Runs wide-open QB queries with no filters to verify your token, company, and whether data exists.
+                                        </p>
+
+                                        {diagnosisResult && (
+                                            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm">
+                                                <div className="flex items-start justify-between mb-3">
+                                                    <div className="flex-1">
+                                                        <p className="font-bold text-amber-900 mb-2">
+                                                            🔍 {diagnosisResult.conclusion}
+                                                        </p>
+                                                        {diagnosisResult.recommendation && (
+                                                            <p className="text-xs text-amber-800 bg-amber-100 p-2 rounded border border-amber-300">
+                                                                💡 <strong>Next Steps:</strong> {diagnosisResult.recommendation}
+                                                            </p>
+                                                        )}
+                                                        {diagnosisResult.summary && (
+                                                            <div className="mt-2 text-xs text-amber-700 flex gap-4">
+                                                                <span>✅ {diagnosisResult.summary.successfulSteps} passed</span>
+                                                                <span>❌ {diagnosisResult.summary.failedSteps} failed</span>
+                                                                <span>📊 {diagnosisResult.summary.totalSteps} total checks</span>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                    <button
+                                                        onClick={() => {
+                                                            const text = JSON.stringify(diagnosisResult, null, 2);
+                                                            navigator.clipboard.writeText(text);
+                                                            toast.success('Diagnostic report copied to clipboard!', { duration: 2000 });
+                                                        }}
+                                                        className="ml-3 px-3 py-1 text-xs font-medium text-amber-700 bg-white border border-amber-300 rounded hover:bg-amber-50 transition flex items-center gap-1 flex-shrink-0"
+                                                    >
+                                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                                        </svg>
+                                                        Copy Report
+                                                    </button>
+                                                </div>
+                                                <div className="space-y-2 max-h-96 overflow-y-auto">
+                                                    {diagnosisResult.steps?.map((step: any, i: number) => (
+                                                        <div key={i} className={`p-2 rounded text-xs ${
+                                                            step.success ? 'bg-emerald-50 border border-emerald-200' : 'bg-red-50 border border-red-200'
+                                                        }`}>
+                                                            <div className="flex items-center gap-2 font-medium">
+                                                                <span>{step.success ? '✅' : '❌'}</span>
+                                                                <span>{step.step}</span>
+                                                                {step.count !== undefined && (
+                                                                    <span className="ml-auto bg-white px-2 py-0.5 rounded text-gray-700">
+                                                                        {step.count} results {step.totalCount ? `(${step.totalCount} total)` : ''}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            {step.query && (
+                                                                <pre className="mt-1 text-[10px] text-gray-600 bg-white p-1 rounded overflow-x-auto">{step.query}</pre>
+                                                            )}
+                                                            {step.error && (
+                                                                <p className="mt-1 text-red-700">{step.error}</p>
+                                                            )}
+                                                            {step.data && (
+                                                                <pre className="mt-1 text-[10px] text-gray-600 bg-white p-1 rounded overflow-x-auto">
+                                                                    {JSON.stringify(step.data, null, 2)}
+                                                                </pre>
+                                                            )}
+                                                            {step.sample && step.sample.length > 0 && (
+                                                                <details className="mt-1">
+                                                                    <summary className="text-[10px] cursor-pointer text-gray-500 hover:text-gray-700">
+                                                                        View sample data ({step.sample.length} records)
+                                                                    </summary>
+                                                                    <pre className="mt-1 text-[10px] text-gray-600 bg-white p-1 rounded overflow-x-auto max-h-40">
+                                                                        {JSON.stringify(step.sample, null, 2)}
+                                                                    </pre>
+                                                                </details>
+                                                            )}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
                             </div>
                         )}
