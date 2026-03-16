@@ -338,14 +338,23 @@ export default async function handler(
       errors.push(`Purchase query failed: ${e.message}`);
     }
 
-    // ── 2. BillPayment (PayType=Check) — Bills paid by cheque (MOST CONTRACTOR CHECKS) ──
+    // ── 2. BillPayment — Bills paid by cheque (MOST CONTRACTOR CHECKS) ──
+    // NOTE: QB doesn't support WHERE PayType in query, must filter client-side
     try {
-      const bpQuery = `SELECT * FROM BillPayment WHERE PayType = 'Check'${dateFilter}`;
+      const bpDateFilter = dateFilter ? ` WHERE ${dateFilter.replace(/^ AND /, '')}` : '';
+      const bpQuery = `SELECT * FROM BillPayment${bpDateFilter}`;
       console.log('🔍 BillPayment query:', bpQuery);
-      const billPayments = await qboQueryAll(accessToken, realmId, bpQuery, 'BillPayment', useSandbox);
-      console.log(`✅ BillPayments found: ${billPayments.length}`);
+      const allBillPayments = await qboQueryAll(accessToken, realmId, bpQuery, 'BillPayment', useSandbox);
+      
+      // Filter for Check payments client-side
+      const billPayments = allBillPayments.filter((bp: any) => {
+        const payType = bp.PayType || bp.CheckPayment?.PayType || '';
+        return payType.toLowerCase() === 'check';
+      });
+      
+      console.log(`✅ BillPayments found: ${billPayments.length} checks (out of ${allBillPayments.length} total)`);
       if (billPayments.length > 0) {
-        console.log('  📝 Sample BillPayment:', { Id: billPayments[0].Id, DocNumber: billPayments[0].DocNumber, TxnDate: billPayments[0].TxnDate, TotalAmt: billPayments[0].TotalAmt, BankAccount: billPayments[0].CheckPayment?.BankAccountRef?.name });
+        console.log('  📝 Sample BillPayment:', { Id: billPayments[0].Id, DocNumber: billPayments[0].DocNumber, TxnDate: billPayments[0].TxnDate, TotalAmt: billPayments[0].TotalAmt, PayType: billPayments[0].PayType, BankAccount: billPayments[0].CheckPayment?.BankAccountRef?.name });
       }
       billPayments.forEach((bp: any) => allEntries.push(normalizeBillPaymentCheck(bp)));
     } catch (e: any) {

@@ -6,6 +6,9 @@ import { Save, AlertCircle, Key, ExternalLink, CheckCircle, XCircle, Users, Sett
 import QuickBooksFilters, { FilterParams } from '@/components/QuickBooksFilters'
 import { createClient } from '@/lib/supabase/client'
 import toast, { Toaster } from 'react-hot-toast'
+import dynamic from 'next/dynamic'
+
+const QBDataPreview = dynamic(() => import('@/components/QBDataPreview'), { ssr: false })
 
 function SettingsPageContent() {
     const [activeTab, setActiveTab] = useState('general')
@@ -27,6 +30,9 @@ function SettingsPageContent() {
     const [diagnosisResult, setDiagnosisResult] = useState<any>(null)
     const [exploring, setExploring] = useState(false)
     const [exploreResult, setExploreResult] = useState<any>(null)
+    const [previewType, setPreviewType] = useState<string>('Purchase')
+    const [previewData, setPreviewData] = useState<any>(null)
+    const [loadingPreview, setLoadingPreview] = useState(false)
     const [loadingSettings, setLoadingSettings] = useState(true)
     const [mounted, setMounted] = useState(false)
     const [credentialsExist, setCredentialsExist] = useState(false)
@@ -391,6 +397,32 @@ function SettingsPageContent() {
             setExploreResult({ error: error.message, entities: [] })
         } finally {
             setExploring(false)
+        }
+    }
+
+    const handlePreview = async (type: string) => {
+        setPreviewType(type)
+        setLoadingPreview(true)
+        setPreviewData(null)
+        try {
+            const supabase = createClient()
+            const { data: { session } } = await supabase.auth.getSession()
+            if (!session) {
+                toast.error('Session expired. Please refresh the page.')
+                setLoadingPreview(false)
+                return
+            }
+            const response = await fetch(`/api/qbo/preview?type=${type}&limit=100`, {
+                headers: { 'Authorization': `Bearer ${session.access_token}` },
+            })
+            const data = await response.json()
+            setPreviewData(data)
+            console.log(`📊 Preview ${type}:`, data)
+        } catch (error: any) {
+            toast.error(`Failed to load ${type} preview`)
+            setPreviewData({ error: error.message, records: [] })
+        } finally {
+            setLoadingPreview(false)
         }
     }
 
@@ -984,6 +1016,52 @@ function SettingsPageContent() {
                                             </div>
                                         )}
                                     </div>
+
+                                    {/* QB Data Preview with Tabs */}
+                                    {exploreResult && exploreResult.entitiesWithData && exploreResult.entitiesWithData.length > 0 && (
+                                        <div className="mt-4 pt-4 border-t border-blue-200">
+                                            <h3 className="text-sm font-semibold text-blue-900 mb-3">📊 Preview Data in Tables</h3>
+                                            
+                                            {/* Entity Type Tabs */}
+                                            <div className="flex flex-wrap gap-2 mb-3">
+                                                {exploreResult.entitiesWithData.map((entity: any) => (
+                                                    <button
+                                                        key={entity.type}
+                                                        onClick={() => handlePreview(entity.type)}
+                                                        className={`px-3 py-1.5 text-xs font-medium rounded transition ${
+                                                            previewType === entity.type
+                                                                ? 'bg-blue-600 text-white'
+                                                                : 'bg-white text-blue-700 border border-blue-300 hover:bg-blue-50'
+                                                        }`}
+                                                    >
+                                                        {entity.type} ({entity.count.toLocaleString()})
+                                                    </button>
+                                                ))}
+                                            </div>
+
+                                            {/* Preview Table */}
+                                            {loadingPreview ? (
+                                                <div className="flex items-center justify-center py-8 text-sm text-gray-500">
+                                                    <Loader2 className="animate-spin mr-2" size={16} />
+                                                    Loading {previewType} data...
+                                                </div>
+                                            ) : previewData?.records ? (
+                                                <QBDataPreview
+                                                    entityType={previewType}
+                                                    data={previewData.records}
+                                                    totalCount={previewData.totalCount}
+                                                />
+                                            ) : previewData?.error ? (
+                                                <div className="text-center py-8 text-sm text-red-600">
+                                                    Error loading {previewType}: {previewData.error}
+                                                </div>
+                                            ) : (
+                                                <div className="text-center py-8 text-sm text-gray-500">
+                                                    Click an entity type above to preview its data
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         )}

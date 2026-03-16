@@ -218,14 +218,60 @@ export default async function handler(
       )
     );
 
-    // Step 5: Wide-open BillPayment query
-    diagnostics.steps.push(
-      await runDiagQuery(
-        '5_billpayment_wide_open',
-        "SELECT * FROM BillPayment WHERE PayType = 'Check' MAXRESULTS 5",
-        'BillPayment'
-      )
-    );
+    // Step 5: BillPayment wide-open (fetch all, filter client-side since WHERE PayType not supported)
+    try {
+      const bpQuery = `SELECT * FROM BillPayment MAXRESULTS 5`;
+      const url = `${QBO_BASE}/v3/company/${realmId}/query?query=${encodeURIComponent(bpQuery)}&minorversion=73`;
+      const response = await fetch(url, {
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Accept': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const errText = await response.text();
+        diagnostics.steps.push({
+          step: '5_billpayment_wide_open',
+          query: bpQuery,
+          success: false,
+          error: `HTTP ${response.status}: ${errText}`,
+        });
+      } else {
+        const data = await response.json();
+        const allBillPayments = data?.QueryResponse?.BillPayment || [];
+        const checkBillPayments = allBillPayments.filter((bp: any) => {
+          const payType = bp.PayType || bp.CheckPayment?.PayType || '';
+          return payType.toLowerCase() === 'check';
+        });
+
+        diagnostics.steps.push({
+          step: '5_billpayment_wide_open',
+          query: bpQuery,
+          success: true,
+          count: checkBillPayments.length,
+          totalCount: data?.QueryResponse?.totalCount || allBillPayments.length,
+          maxResults: 5,
+          sample: checkBillPayments.slice(0, 3).map((bp: any) => ({
+            Id: bp.Id,
+            DocNumber: bp.DocNumber,
+            TxnDate: bp.TxnDate,
+            TotalAmt: bp.TotalAmt,
+            PayType: bp.PayType,
+            VendorRef: bp.VendorRef,
+            CheckPayment: bp.CheckPayment,
+          })),
+          rawFirst: checkBillPayments[0] || null,
+        });
+      }
+    } catch (err: any) {
+      diagnostics.steps.push({
+        step: '5_billpayment_wide_open',
+        query: 'SELECT * FROM BillPayment MAXRESULTS 5',
+        success: false,
+        error: err.message,
+      });
+    }
 
     // Step 6: Wide-open BillPayment WITHOUT PayType filter (to see if there are any BillPayments at all)
     diagnostics.steps.push(
@@ -263,10 +309,11 @@ export default async function handler(
       )
     );
 
+    // Step 10: Count all BillPayments (can't filter by PayType in query)
     diagnostics.steps.push(
       await runDiagQuery(
-        '10_count_billpayment_checks',
-        "SELECT COUNT(*) FROM BillPayment WHERE PayType = 'Check'",
+        '10_count_billpayment_all',
+        "SELECT COUNT(*) FROM BillPayment",
         'BillPayment'
       )
     );
@@ -284,10 +331,11 @@ export default async function handler(
       )
     );
 
+    // Step 12: Recent BillPayments (fetch all, will filter PayType client-side in actual pull)
     diagnostics.steps.push(
       await runDiagQuery(
         '12_recent_billpayments',
-        `SELECT * FROM BillPayment WHERE PayType = 'Check' AND TxnDate >= '${fromDate}' MAXRESULTS 5`,
+        `SELECT * FROM BillPayment WHERE TxnDate >= '${fromDate}' MAXRESULTS 5`,
         'BillPayment'
       )
     );
