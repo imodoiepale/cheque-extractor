@@ -736,6 +736,20 @@ function SettingsPageContent() {
                                                             <li>• Bills Paid by Cheque: {pullResult.data.breakdown?.bills_paid_by_cheque || 0}</li>
                                                             <li>• Cheques Received: {pullResult.data.breakdown?.cheques_received || 0}</li>
                                                         </ul>
+                                                        {pullResult.data.count === 0 && (
+                                                            <div className="mt-3 pt-3 border-t border-emerald-200">
+                                                                <p className="font-medium text-amber-700 mb-2">⚠️ 0 results found with current filters</p>
+                                                                <button
+                                                                    onClick={() => handlePullData({})}
+                                                                    className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700 transition"
+                                                                >
+                                                                    Try All Time (No Filters)
+                                                                </button>
+                                                                <p className="text-[10px] text-gray-600 mt-1">
+                                                                    This will fetch ALL check transactions to verify data exists in QuickBooks
+                                                                </p>
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 )}
                                             </div>
