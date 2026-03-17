@@ -732,8 +732,19 @@ def extract_with_openai(img_path):
             temperature=0.1
         )
         
+        # Capture usage metadata from OpenAI
+        usage_data = {
+            "prompt_tokens": response.usage.prompt_tokens if response.usage else 0,
+            "completion_tokens": response.usage.completion_tokens if response.usage else 0,
+            "total_tokens": response.usage.total_tokens if response.usage else 0,
+        }
+        # OpenAI GPT-4o pricing (as of 2024): $2.50/1M input tokens, $10.00/1M output tokens
+        cost_usd = (usage_data["prompt_tokens"] * 2.50 / 1_000_000) + (usage_data["completion_tokens"] * 10.00 / 1_000_000)
+        usage_data["cost_usd"] = round(cost_usd, 6)
+        
         text = response.choices[0].message.content
         print(f"    OpenAI raw response (first 500 chars): {text[:500]}")
+        print(f"    OpenAI usage: {usage_data['total_tokens']} tokens, ${usage_data['cost_usd']:.6f}")
         
         json_str = text
         if "```json" in json_str:
@@ -759,7 +770,8 @@ def extract_with_openai(img_path):
         print(f"    OpenAI extracted fields: payee={fields.get('payee')}, amount={fields.get('amount')}, date={fields.get('checkDate')}, check#={fields.get('checkNumber')}")
         
         return {"source": "openai", "raw_text": text.strip(), "raw_json": parsed,
-                "fields": fields, "processing_time_ms": int((time.time() - t0) * 1000)}
+                "fields": fields, "processing_time_ms": int((time.time() - t0) * 1000),
+                "usage": usage_data}
     
     except Exception as e:
         print(f"    OpenAI extraction error: {e}")
@@ -805,6 +817,20 @@ def extract_with_gemini(img_path):
             resp.raise_for_status()
             data = resp.json()
 
+            # Capture usage metadata from Gemini API response
+            usage_data = {}
+            if "usageMetadata" in data:
+                metadata = data["usageMetadata"]
+                usage_data = {
+                    "prompt_tokens": metadata.get("promptTokenCount", 0),
+                    "completion_tokens": metadata.get("candidatesTokenCount", 0),
+                    "total_tokens": metadata.get("totalTokenCount", 0),
+                }
+                # Gemini 2.0 Flash pricing: $0.075/1M input tokens, $0.30/1M output tokens (128K context)
+                cost_usd = (usage_data["prompt_tokens"] * 0.075 / 1_000_000) + (usage_data["completion_tokens"] * 0.30 / 1_000_000)
+                usage_data["cost_usd"] = round(cost_usd, 6)
+                print(f"    Gemini usage: {usage_data['total_tokens']} tokens (in:{usage_data['prompt_tokens']}, out:{usage_data['completion_tokens']}), ${usage_data['cost_usd']:.6f}")
+
             text = data["candidates"][0]["content"]["parts"][0]["text"]
             print(f"    Gemini raw response (first 500 chars): {text[:500]}")
             
@@ -831,8 +857,11 @@ def extract_with_gemini(img_path):
             
             print(f"    Gemini extracted fields: payee={fields.get('payee')}, amount={fields.get('amount')}, date={fields.get('checkDate')}, check#={fields.get('checkNumber')}")
 
-            return {"source": "gemini", "raw_text": text.strip(), "raw_json": parsed,
+            result = {"source": "gemini", "raw_text": text.strip(), "raw_json": parsed,
                     "fields": fields, "processing_time_ms": int((time.time() - t0) * 1000)}
+            if usage_data:
+                result["usage"] = usage_data
+            return result
 
         except Exception as e:
             last_err = str(e)
@@ -1186,6 +1215,14 @@ class CheckExtractorApp:
 
             # Merge (works even if some engines returned empty fields)
             hybrid = merge_all(tess_result, numd_result, gemi_result)
+            
+            # Collect API usage data for billing
+            api_usage = {}
+            if run_gemi and gemi_result.get("usage"):
+                api_usage["gemini"] = gemi_result["usage"]
+            if gemi_result.get("source") == "gemini-openai-backup" and gemi_result.get("usage"):
+                api_usage["openai"] = gemi_result["usage"]
+            
             hybrid_out = {
                 "check_id": cid,
                 "page": page_num,
@@ -1198,6 +1235,7 @@ class CheckExtractorApp:
                     "numarkdown": numd_result.get("processing_time_ms", 0),
                     "gemini": gemi_result.get("processing_time_ms", 0),
                 },
+                "api_usage": api_usage,
             }
             with open(os.path.join(check_dir, "hybrid.json"), "w") as f:
                 json.dump(hybrid_out, f, indent=2)

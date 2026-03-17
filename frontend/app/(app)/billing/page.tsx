@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Receipt, FileText, Loader2, CreditCard, Download,
-  Calendar, ChevronRight, Zap, TrendingUp,
+  Calendar, ChevronRight, Zap, TrendingUp, AlertCircle,
 } from 'lucide-react';
 
 interface Job {
@@ -15,6 +15,25 @@ interface Job {
   checks?: any[];
   created_at: string;
   completed_at?: string;
+  total_api_cost_usd?: number;
+  total_tokens?: number;
+  api_usage_summary?: any;
+}
+
+interface ApiUsage {
+  total_cost_usd: number;
+  total_tokens: number;
+  total_api_calls: number;
+  usage_by_provider: {
+    [key: string]: {
+      calls: number;
+      total_tokens: number;
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_cost_usd: number;
+    };
+  };
+  jobs_with_usage: Job[];
 }
 
 interface Invoice {
@@ -31,24 +50,24 @@ interface Invoice {
 
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090';
 
-// Pricing tiers
-const PRICING = {
-  perPage: 0.05,
-  perExtraction: 0.10,
-  baseFee: 0,
-};
-
 export default function BillingPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
+  const [apiUsage, setApiUsage] = useState<ApiUsage | null>(null);
   const [loading, setLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
     try {
+      // Fetch jobs
       const res = await fetch(`${BACKEND}/api/jobs`);
       const data = await res.json();
       setJobs((data.jobs || []).sort((a: Job, b: Job) =>
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       ));
+      
+      // Fetch actual API usage from database
+      const usageRes = await fetch(`${BACKEND}/api/billing/usage`);
+      const usageData = await usageRes.json();
+      setApiUsage(usageData);
     } catch (e) {
       console.error('Failed to fetch billing data:', e);
     } finally {
@@ -58,7 +77,7 @@ export default function BillingPage() {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
-  // Group jobs by month for invoices
+  // Group jobs by month for invoices using actual API costs
   const invoices = useMemo(() => {
     const byMonth: Record<string, Job[]> = {};
     jobs.forEach(j => {
@@ -77,7 +96,8 @@ export default function BillingPage() {
         const extracted = monthJobs.reduce((s, j) => {
           return s + (j.checks || []).filter((c: any) => c.extraction && Object.keys(c.extraction).length > 0).length;
         }, 0);
-        const amount = PRICING.baseFee + (pages * PRICING.perPage) + (extracted * PRICING.perExtraction);
+        // Use actual API costs from database
+        const amount = monthJobs.reduce((s, j) => s + (j.total_api_cost_usd || 0), 0);
 
         const [y, m] = period.split('-');
         const label = new Date(parseInt(y), parseInt(m) - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
@@ -99,13 +119,15 @@ export default function BillingPage() {
       });
   }, [jobs]);
 
-  // Current month stats
+  // Current month stats using actual API usage
   const currentInvoice = invoices.find(i => i.status === 'current') || invoices[0];
   const totalSpent = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + i.amount, 0);
   const totalExtracted = jobs.reduce((s, j) => {
     return s + (j.checks || []).filter((c: any) => c.extraction && Object.keys(c.extraction).length > 0).length;
   }, 0);
   const totalPages = jobs.reduce((s, j) => s + (j.total_pages || 0), 0);
+  const totalApiCost = apiUsage?.total_cost_usd || 0;
+  const totalTokens = apiUsage?.total_tokens || 0;
 
   const fmtCurrency = (n: number) => `$${n.toFixed(2)}`;
 
@@ -155,7 +177,7 @@ export default function BillingPage() {
             <span className="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Pages</span>
           </div>
           <div className="text-[24px] font-semibold text-gray-900 tracking-tight">{totalPages}</div>
-          <div className="text-[11px] text-gray-400 mt-0.5">{fmtCurrency(PRICING.perPage)}/page</div>
+          <div className="text-[11px] text-gray-400 mt-0.5">processed</div>
         </div>
         <div className="bg-white rounded-xl border border-gray-200/80 p-4">
           <div className="flex items-center gap-2 mb-2">
@@ -163,31 +185,56 @@ export default function BillingPage() {
             <span className="text-[11px] font-medium text-gray-500 uppercase tracking-wider">Extractions</span>
           </div>
           <div className="text-[24px] font-semibold text-gray-900 tracking-tight">{totalExtracted}</div>
-          <div className="text-[11px] text-gray-400 mt-0.5">{fmtCurrency(PRICING.perExtraction)}/cheque</div>
+          <div className="text-[11px] text-gray-400 mt-0.5">completed</div>
         </div>
       </div>
 
-      {/* Pricing */}
-      <div className="bg-white rounded-xl border border-gray-200/80 p-5">
-        <h2 className="text-[13px] font-medium text-gray-500 uppercase tracking-wider mb-3">Pricing</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          <div className="px-4 py-3 bg-gray-50/80 rounded-lg">
-            <div className="text-[13px] font-medium text-gray-900">Page Scanning</div>
-            <div className="text-[20px] font-semibold text-gray-900 mt-1">{fmtCurrency(PRICING.perPage)}</div>
-            <div className="text-[11px] text-gray-500">per page processed</div>
-          </div>
-          <div className="px-4 py-3 bg-blue-50/60 rounded-lg border border-blue-100">
-            <div className="text-[13px] font-medium text-blue-900">OCR Extraction</div>
-            <div className="text-[20px] font-semibold text-blue-900 mt-1">{fmtCurrency(PRICING.perExtraction)}</div>
-            <div className="text-[11px] text-blue-600">per cheque extracted</div>
-          </div>
-          <div className="px-4 py-3 bg-gray-50/80 rounded-lg">
-            <div className="text-[13px] font-medium text-gray-900">Export & Storage</div>
-            <div className="text-[20px] font-semibold text-gray-900 mt-1">Free</div>
-            <div className="text-[11px] text-gray-500">unlimited exports</div>
+      {/* Warning for Estimated Costs */}
+      {apiUsage && (apiUsage as any).is_estimate && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="text-amber-600 flex-shrink-0 mt-0.5" size={18} />
+            <div>
+              <h3 className="text-[13px] font-semibold text-amber-900 mb-1">Using Estimated Costs</h3>
+              <p className="text-[12px] text-amber-800 mb-2">
+                {(apiUsage as any).warning || 'Historical jobs extracted before billing tracking was enabled are showing estimated costs.'}
+              </p>
+              <p className="text-[11px] text-amber-700">
+                <strong>To get accurate costs:</strong> Run database migration <code className="bg-amber-100 px-1 rounded">012_add_api_usage_tracking.sql</code> 
+                {' '}or re-extract documents. See <code className="bg-amber-100 px-1 rounded">docs/BILLING_INTEGRATION.md</code> for details.
+              </p>
+            </div>
           </div>
         </div>
-      </div>
+      )}
+
+      {/* API Usage Breakdown */}
+      {apiUsage && apiUsage.total_cost_usd > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200/80 p-5">
+          <h2 className="text-[13px] font-medium text-gray-500 uppercase tracking-wider mb-3">
+            API Usage {(apiUsage as any).is_estimate ? '(Estimated)' : '(Actual GCC Costs)'}
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {Object.entries(apiUsage.usage_by_provider).map(([provider, usage]) => (
+              <div key={provider} className="px-4 py-3 bg-blue-50/60 rounded-lg border border-blue-100">
+                <div className="text-[13px] font-medium text-blue-900 capitalize">{provider}</div>
+                <div className="text-[20px] font-semibold text-blue-900 mt-1">{fmtCurrency(usage.total_cost_usd)}</div>
+                <div className="text-[11px] text-blue-600">{usage.calls} calls · {usage.total_tokens.toLocaleString()} tokens</div>
+              </div>
+            ))}
+            <div className="px-4 py-3 bg-emerald-50/60 rounded-lg border border-emerald-100">
+              <div className="text-[13px] font-medium text-emerald-900">Total API Cost</div>
+              <div className="text-[20px] font-semibold text-emerald-900 mt-1">{fmtCurrency(totalApiCost)}</div>
+              <div className="text-[11px] text-emerald-600">{totalTokens.toLocaleString()} total tokens</div>
+            </div>
+          </div>
+          <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+            <p className="text-[11px] text-blue-800">
+              <strong>💡 Accurate Billing:</strong> Costs shown are actual usage from Google Cloud Console and OpenAI APIs, not estimates.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Invoices */}
       <div className="bg-white rounded-xl border border-gray-200/80 overflow-hidden">

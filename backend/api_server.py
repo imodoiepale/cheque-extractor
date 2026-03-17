@@ -100,6 +100,99 @@ def _supabase_insert(table: str, data: dict, retries=3):
                 return None
 
 
+def _log_api_usage(job_id: str, check_id: str, api_provider: str, usage_data: dict, tenant_id: str = None):
+    """Log API usage to database for accurate billing tracking."""
+    if not _supabase_ok or not usage_data:
+        return
+    
+    try:
+        log_entry = {
+            "tenant_id": tenant_id or "00000000-0000-0000-0000-000000000000",
+            "job_id": job_id,
+            "check_id": check_id,
+            "api_provider": api_provider,
+            "api_model": usage_data.get("model", "gemini-2.0-flash" if api_provider == "gemini" else "gpt-4o"),
+            "prompt_tokens": usage_data.get("prompt_tokens", 0),
+            "completion_tokens": usage_data.get("completion_tokens", 0),
+            "total_tokens": usage_data.get("total_tokens", 0),
+            "cost_usd": usage_data.get("cost_usd", 0),
+            "processing_time_ms": usage_data.get("processing_time_ms", 0),
+            "response_metadata": usage_data,
+        }
+        _supabase_insert("api_usage_logs", log_entry)
+        print(f"    💰 Logged API usage: {api_provider} - {usage_data.get('total_tokens', 0)} tokens, ${usage_data.get('cost_usd', 0):.6f}")
+    except Exception as e:
+        print(f"    ⚠️ Failed to log API usage: {e}")
+
+
+def _get_billing_fallback(start_date: str = None, end_date: str = None):
+    """
+    Fallback billing calculation for when api_usage_logs table doesn't exist.
+    Estimates costs based on historical job data.
+    """
+    try:
+        # Get jobs with date filters
+        jobs_url = f"{_sb_url}/rest/v1/check_jobs?select=job_id,pdf_name,created_at,total_checks,total_api_cost_usd,total_tokens"
+        if start_date:
+            jobs_url += f"&created_at=gte.{start_date}"
+        if end_date:
+            jobs_url += f"&created_at=lte.{end_date}"
+        
+        jobs_resp = _requests.get(jobs_url, headers=_sb_headers(), timeout=30)
+        jobs_data = jobs_resp.json() if jobs_resp.status_code == 200 else []
+        
+        # Estimate costs for jobs that don't have total_api_cost_usd
+        # Assumption: ~1000 tokens per check, Gemini pricing
+        total_cost = 0
+        total_tokens_estimated = 0
+        estimated_jobs = 0
+        
+        for job in jobs_data:
+            if job.get("total_api_cost_usd"):
+                # Use actual cost if available
+                total_cost += float(job["total_api_cost_usd"])
+                total_tokens_estimated += int(job.get("total_tokens", 0))
+            else:
+                # Estimate: ~1000 tokens per check (500 input + 500 output)
+                checks = int(job.get("total_checks", 0))
+                est_tokens = checks * 1000
+                # Gemini pricing: $0.075/1M input + $0.30/1M output
+                est_cost = (checks * 500 * 0.075 / 1_000_000) + (checks * 500 * 0.30 / 1_000_000)
+                total_cost += est_cost
+                total_tokens_estimated += est_tokens
+                estimated_jobs += 1
+        
+        return {
+            "total_cost_usd": round(total_cost, 6),
+            "total_tokens": total_tokens_estimated,
+            "total_api_calls": 0,
+            "usage_by_provider": {
+                "gemini": {
+                    "calls": 0,
+                    "total_tokens": total_tokens_estimated,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_cost_usd": round(total_cost, 6)
+                }
+            },
+            "jobs_with_usage": jobs_data,
+            "period": {
+                "start_date": start_date,
+                "end_date": end_date
+            },
+            "warning": f"Using estimated costs for {estimated_jobs} historical jobs. Run migration 012 for accurate tracking.",
+            "is_estimate": True
+        }
+    except Exception as e:
+        print(f"Fallback billing error: {e}")
+        return {
+            "error": str(e),
+            "total_cost_usd": 0,
+            "usage_by_provider": {},
+            "is_estimate": True
+        }
+
+
 def _supabase_update(table: str, match: dict, updates: dict, retries=3):
     """Update rows in a Supabase table matching conditions with retry logic."""
     if not _supabase_ok:
@@ -1312,9 +1405,23 @@ def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
                 except Exception as e:
                     print(f"  Extraction summary upload failed: {e}")
 
-            # Save to DB
+            # Save to DB and log API usage
             checks_data = []
+            tenant_id = job.get("tenant_id")
             for c in checks:
+                # Log API usage for billing if available
+                api_usage = c.get("api_usage", {})
+                if api_usage:
+                    for provider, usage_data in api_usage.items():
+                        if usage_data and usage_data.get("cost_usd", 0) > 0:
+                            _log_api_usage(
+                                job_id=req.job_id,
+                                check_id=c["check_id"],
+                                api_provider=provider,
+                                usage_data=usage_data,
+                                tenant_id=tenant_id
+                            )
+                
                 checks_data.append({
                     "check_id": c["check_id"],
                     "page": c["page"],
@@ -1441,6 +1548,99 @@ def get_job(job_id: str, source: str = "auto"):
         return job
     except Exception as e:
         raise HTTPException(500, f"Error retrieving job: {str(e)}")
+
+
+@app.get("/api/billing/usage")
+def get_billing_usage(start_date: str = None, end_date: str = None, _auth=Depends(_verify_token)):
+    """
+    Get actual API usage and costs from database for accurate billing.
+    Returns real costs from Google Cloud Console and OpenAI.
+    
+    Gracefully handles missing api_usage_logs table (for users who extracted before migration).
+    """
+    if not _supabase_ok:
+        return {"error": "Database not configured", "total_cost_usd": 0, "usage_by_provider": {}}
+    
+    try:
+        # Build query with date filters
+        query_params = []
+        if start_date:
+            query_params.append(f"created_at=gte.{start_date}")
+        if end_date:
+            query_params.append(f"created_at=lte.{end_date}")
+        
+        query_string = "&".join(query_params) if query_params else ""
+        url = f"{_sb_url}/rest/v1/api_usage_logs?{query_string}" if query_string else f"{_sb_url}/rest/v1/api_usage_logs"
+        
+        resp = _requests.get(url, headers=_sb_headers(), timeout=30)
+        
+        # Handle missing table gracefully (404 or 406 means table doesn't exist)
+        if resp.status_code in (404, 406):
+            print(f"⚠️ api_usage_logs table not found (status {resp.status_code}). Run migration 012_add_api_usage_tracking.sql")
+            print(f"   Falling back to job-level estimates for historical data...")
+            return _get_billing_fallback(start_date, end_date)
+        
+        if resp.status_code != 200:
+            print(f"Failed to fetch API usage: {resp.status_code} - {resp.text[:200]}")
+            return _get_billing_fallback(start_date, end_date)
+        
+        usage_logs = resp.json()
+        
+        # Aggregate by provider
+        usage_by_provider = {}
+        total_cost = 0
+        total_tokens = 0
+        
+        for log in usage_logs:
+            provider = log.get("api_provider", "unknown")
+            cost = float(log.get("cost_usd", 0))
+            tokens = int(log.get("total_tokens", 0))
+            
+            if provider not in usage_by_provider:
+                usage_by_provider[provider] = {
+                    "calls": 0,
+                    "total_tokens": 0,
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_cost_usd": 0
+                }
+            
+            usage_by_provider[provider]["calls"] += 1
+            usage_by_provider[provider]["total_tokens"] += tokens
+            usage_by_provider[provider]["prompt_tokens"] += int(log.get("prompt_tokens", 0))
+            usage_by_provider[provider]["completion_tokens"] += int(log.get("completion_tokens", 0))
+            usage_by_provider[provider]["total_cost_usd"] += cost
+            
+            total_cost += cost
+            total_tokens += tokens
+        
+        # Get job-level aggregates
+        jobs_url = f"{_sb_url}/rest/v1/check_jobs?select=job_id,pdf_name,created_at,total_api_cost_usd,total_tokens,api_usage_summary"
+        if start_date:
+            jobs_url += f"&created_at=gte.{start_date}"
+        if end_date:
+            jobs_url += f"&created_at=lte.{end_date}"
+        
+        jobs_resp = _requests.get(jobs_url, headers=_sb_headers(), timeout=30)
+        jobs_with_usage = jobs_resp.json() if jobs_resp.status_code == 200 else []
+        
+        return {
+            "total_cost_usd": round(total_cost, 6),
+            "total_tokens": total_tokens,
+            "total_api_calls": len(usage_logs),
+            "usage_by_provider": usage_by_provider,
+            "jobs_with_usage": jobs_with_usage,
+            "period": {
+                "start_date": start_date,
+                "end_date": end_date
+            }
+        }
+        
+    except Exception as e:
+        print(f"Error fetching billing usage: {e}")
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e), "total_cost_usd": 0, "usage_by_provider": {}}
 
 
 @app.get("/api/jobs")
