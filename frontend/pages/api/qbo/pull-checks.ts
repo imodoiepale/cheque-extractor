@@ -495,6 +495,39 @@ export default async function handler(
           if (storeError) {
             errors.push(`Storage failed: ${storeError.message}`);
           }
+
+          // ── Also upsert into qb_transactions for match engine ──
+          try {
+            const realmId = tokens.realm_id;
+            const qbTxnRows = filteredEntries.map(e => ({
+              tenant_id: tenantId,
+              user_id: user!.id,
+              realm_id: realmId,
+              txn_id: e.id,
+              txn_type: e.qb_type,
+              txn_date: e.date || null,
+              payee: e.payee || null,
+              amount: e.amount ? parseFloat(e.amount) : null,
+              memo: e.memo || null,
+              account: e.account || null,
+              doc_number: e.check_number || null,
+              synced_at: new Date().toISOString(),
+            }));
+
+            if (qbTxnRows.length > 0) {
+              const { error: txnError } = await supabase
+                .from('qb_transactions')
+                .upsert(qbTxnRows, { onConflict: 'tenant_id,realm_id,txn_id' });
+
+              if (txnError) {
+                console.warn('⚠️ qb_transactions upsert warning:', txnError.message);
+              } else {
+                console.log(`✅ Upserted ${qbTxnRows.length} rows into qb_transactions`);
+              }
+            }
+          } catch (txnErr: any) {
+            console.warn('⚠️ qb_transactions upsert failed (non-critical):', txnErr.message);
+          }
         }
       } catch (e: any) {
         errors.push(`Storage error: ${e.message}`);

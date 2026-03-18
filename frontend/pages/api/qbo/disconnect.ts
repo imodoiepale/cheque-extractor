@@ -89,6 +89,57 @@ export default async function handler(
       return res.status(500).json({ error: 'Failed to disconnect' });
     }
 
+    // ── Also clean qb_connections for multi-company switcher ──
+    try {
+      const { data: { user: currentUser } } = await supabase.auth.getUser();
+      if (currentUser) {
+        const { data: userProfile } = await supabase
+          .from('user_profiles')
+          .select('tenant_id')
+          .eq('id', currentUser.id)
+          .single();
+
+        if (userProfile?.tenant_id) {
+          // Get the realm_id from the request body, or delete all connections
+          const realmId = req.body?.realmId;
+          
+          if (realmId) {
+            // Delete specific connection
+            await supabase
+              .from('qb_connections')
+              .delete()
+              .eq('tenant_id', userProfile.tenant_id)
+              .eq('realm_id', realmId);
+          } else {
+            // No specific realm — delete all connections for this tenant
+            await supabase
+              .from('qb_connections')
+              .delete()
+              .eq('tenant_id', userProfile.tenant_id);
+          }
+
+          // If we deleted the active one, activate the most recent remaining
+          const { data: remaining } = await supabase
+            .from('qb_connections')
+            .select('id')
+            .eq('tenant_id', userProfile.tenant_id)
+            .order('connected_at', { ascending: false })
+            .limit(1);
+
+          if (remaining?.length) {
+            await supabase
+              .from('qb_connections')
+              .update({ is_active: true })
+              .eq('id', remaining[0].id);
+          }
+
+          console.log('✅ Cleaned qb_connections for multi-company switcher');
+        }
+      }
+    } catch (connErr: any) {
+      console.warn('⚠️ qb_connections cleanup failed (non-critical):', connErr.message);
+    }
+
     return res.status(200).json({ success: true, message: 'Disconnected. QB data cleared. Credentials preserved.' });
   } catch (error) {
     console.error('QuickBooks disconnect error:', error);

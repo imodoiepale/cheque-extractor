@@ -209,6 +209,40 @@ export default async function handler(
       console.log('✅ Updated existing integration with new tokens');
     }
 
+    // ── Also upsert into qb_connections for multi-company switcher ──
+    try {
+      // Deactivate all other connections for this tenant
+      await serviceClient
+        .from('qb_connections')
+        .update({ is_active: false })
+        .eq('tenant_id', tenantId);
+
+      // Upsert the new/updated connection as active
+      const { error: connError } = await serviceClient
+        .from('qb_connections')
+        .upsert({
+          tenant_id: tenantId,
+          user_id: stateData?.user_id || null,
+          realm_id: realmId,
+          company_name: companyName,
+          access_token: tokens.access_token,
+          refresh_token: tokens.refresh_token,
+          token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
+          is_active: true,
+          connected_at: new Date().toISOString(),
+        }, {
+          onConflict: 'tenant_id,realm_id',
+        });
+
+      if (connError) {
+        console.warn('⚠️ Failed to upsert qb_connections (non-critical):', connError.message);
+      } else {
+        console.log('✅ QB connection saved for multi-company switcher');
+      }
+    } catch (connErr: any) {
+      console.warn('⚠️ qb_connections upsert failed (non-critical):', connErr.message);
+    }
+
     // Clear state cookie
     res.setHeader('Set-Cookie', 'qbo_state=; Path=/; HttpOnly; Max-Age=0');
 
