@@ -57,3 +57,8 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Landing page smooth scroll */
+html {
+  scroll-behavior: smooth;
+}

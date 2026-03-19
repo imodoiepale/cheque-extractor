@@ -48,21 +48,21 @@ function LoginForm() {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow-xl p-8">
+    <div className="bg-white rounded-2xl shadow-xl shadow-gray-900/5 border border-gray-100 p-6 sm:p-8">
       <div className="text-center mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Welcome Back</h1>
-        <p className="text-gray-600 mt-2">Sign in to your account</p>
+        <h1 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight">Welcome Back</h1>
+        <p className="text-gray-500 mt-2 text-sm">Sign in to your CheckSync Pro account</p>
       </div>
 
-      <form onSubmit={handleLogin} className="space-y-6">
+      <form onSubmit={handleLogin} className="space-y-5">
         {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
             {error}
           </div>
         )}
 
         <div>
-          <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
+          <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1.5">
             Email
           </label>
           <input
@@ -70,7 +70,8 @@ function LoginForm() {
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            placeholder="you@yourfirm.com"
+            className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white"
             required
           />
         </div>
@@ -89,7 +90,7 @@ function LoginForm() {
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white"
             required
           />
         </div>
@@ -97,16 +98,16 @@ function LoginForm() {
         <button
           type="submit"
           disabled={loading}
-          className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium"
+          className="w-full bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 rounded-xl hover:shadow-lg hover:shadow-blue-600/25 hover:-translate-y-px disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm transition-all"
         >
           {loading ? 'Signing in...' : 'Sign In'}
         </button>
       </form>
 
-      <p className="text-center text-gray-600 mt-6">
-        Don't have an account?{' '}
-        <Link href="/signup" className="text-blue-600 hover:underline font-medium">
-          Sign up
+      <p className="text-center text-gray-500 mt-6 text-sm">
+        Don&apos;t have an account?{' '}
+        <Link href="/signup" className="text-blue-600 hover:underline font-semibold">
+          Start free trial
         </Link>
       </p>
     </div>
@@ -117,8 +118,8 @@ export default function LoginPage() {
   return (
     <Suspense
       fallback={
-        <div className="bg-white rounded-lg shadow-xl p-8">
-          <div className="text-center">
+        <div className="bg-white rounded-2xl shadow-xl shadow-gray-900/5 border border-gray-100 p-6 sm:p-8">
+          <div className="text-center py-8">
             <div className="animate-pulse">
               <div className="h-8 bg-gray-200 rounded w-48 mx-auto mb-4"></div>
               <div className="h-4 bg-gray-200 rounded w-32 mx-auto"></div>

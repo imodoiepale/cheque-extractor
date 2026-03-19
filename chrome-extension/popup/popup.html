@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CheckSync Pro</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header id="header">
+      <div class="logo">
+        <div class="logo-icon">CS</div>
+        <span class="logo-text">CheckSync Pro</span>
+      </div>
+      <div class="header-right">
+        <button id="btn-settings" class="icon-btn" title="Settings">⚙️</button>
+      </div>
+    </header>
+
+    <!-- Login View -->
+    <div id="view-login" class="view" style="display:none;">
+      <div class="login-card">
+        <h2>Welcome to CheckSync Pro</h2>
+        <p class="subtitle">Log in to start reconciling checks</p>
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" id="login-email" placeholder="you@yourfirm.com">
+        </div>
+        <div class="form-group">
+          <label>Password</label>
+          <input type="password" id="login-password" placeholder="Enter password">
+        </div>
+        <div id="login-error" class="error-msg" style="display:none;"></div>
+        <button id="btn-login" class="btn-primary full">Log In</button>
+        <p class="login-footer">$300/year &middot; <a href="#" id="btn-show-settings">Configure Settings</a></p>
+      </div>
+    </div>
+
+    <!-- Company Switcher Bar -->
+    <div id="company-bar" style="display:none;">
+      <select id="company-select"></select>
+      <button id="btn-sync" class="btn-sm btn-green" title="Sync QB">🔄 Sync</button>
+    </div>
+
+    <!-- Tabs -->
+    <div id="tabs" style="display:none;">
+      <button class="tab active" data-tab="matches">Matches</button>
+      <button class="tab" data-tab="upload">Upload</button>
+      <button class="tab" data-tab="history">History</button>
+    </div>
+
+    <!-- Matches View -->
+    <div id="view-matches" class="view" style="display:none;">
+      <!-- Status filter pills -->
+      <div class="filter-row">
+        <button class="pill active" data-status="all">All <span class="cnt" id="cnt-all">0</span></button>
+        <button class="pill" data-status="pending">Pending <span class="cnt" id="cnt-pending">0</span></button>
+        <button class="pill" data-status="matched">Matched <span class="cnt" id="cnt-matched">0</span></button>
+        <button class="pill" data-status="discrepancy">Disc. <span class="cnt" id="cnt-discrepancy">0</span></button>
+        <button class="pill" data-status="unmatched">No Match <span class="cnt" id="cnt-unmatched">0</span></button>
+        <button class="pill" data-status="approved">Done <span class="cnt" id="cnt-approved">0</span></button>
+      </div>
+
+      <!-- Bulk actions -->
+      <div class="bulk-bar">
+        <button id="btn-bulk-approve" class="btn-sm btn-green">✅ Auto-Approve ≥95%</button>
+      </div>
+
+      <!-- Match list -->
+      <div id="match-list" class="match-list">
+        <div class="empty-state">
+          <div class="empty-icon">📋</div>
+          <p>No matches yet</p>
+          <p class="sub">Upload checks or sync with QB to start</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Upload View -->
+    <div id="view-upload" class="view" style="display:none;">
+      <div class="upload-zone" id="upload-zone">
+        <div class="upload-icon">📎</div>
+        <p><strong>Drop check images here</strong></p>
+        <p class="sub">or click to browse (PNG, JPG, PDF)</p>
+        <input type="file" id="file-input" accept="image/*,.pdf" multiple style="display:none;">
+      </div>
+      <div id="extraction-results" style="display:none;">
+        <h3>Extracted Checks</h3>
+        <div id="extracted-list"></div>
+        <button id="btn-match-extracted" class="btn-primary full">🔍 Match Against QB</button>
+      </div>
+    </div>
+
+    <!-- History View -->
+    <div id="view-history" class="view" style="display:none;">
+      <div class="empty-state">
+        <div class="empty-icon">📊</div>
+        <p>Approval history coming soon</p>
+      </div>
+    </div>
+
+    <!-- Settings View -->
+    <div id="view-settings" class="view" style="display:none;">
+      <h3>Extension Settings</h3>
+      <div class="form-group">
+        <label>Supabase URL</label>
+        <input type="text" id="cfg-supabase-url" placeholder="https://xxxx.supabase.co">
+      </div>
+      <div class="form-group">
+        <label>Supabase Anon Key</label>
+        <input type="text" id="cfg-supabase-key" placeholder="eyJ...">
+      </div>
+      <div class="form-group">
+        <label>QB Client ID</label>
+        <input type="text" id="cfg-qb-client-id" placeholder="ABc...">
+      </div>
+      <div class="form-group">
+        <label>QB Client Secret</label>
+        <input type="password" id="cfg-qb-secret" placeholder="xxxxxxxx">
+      </div>
+      <div class="form-group">
+        <label>Gemini API Key</label>
+        <input type="text" id="cfg-gemini-key" placeholder="AIza...">
+      </div>
+      <div id="settings-msg" class="success-msg" style="display:none;">Settings saved!</div>
+      <button id="btn-save-settings" class="btn-primary full">💾 Save Settings</button>
+      <button id="btn-back" class="btn-outline full" style="margin-top:8px;">← Back</button>
+      <div id="user-info" style="display:none; margin-top:16px; padding-top:12px; border-top:1px solid #e5e7eb;">
+        <p class="sub" id="user-email"></p>
+        <button id="btn-logout" class="btn-sm btn-red">Log Out</button>
+      </div>
+    </div>
+
+    <!-- Loading overlay -->
+    <div id="loading" class="loading" style="display:none;">
+      <div class="spinner"></div>
+      <p id="loading-text">Loading...</p>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

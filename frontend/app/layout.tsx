@@ -7,8 +7,8 @@ import AIKeyWarning from '@/components/common/AIKeyWarning'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'OCR Check Processor',
-  description: 'Enterprise-grade check processing with AI',
+  title: 'CheckSync Pro — Automated Check Reconciliation',
+  description: 'Upload check images, let AI extract the data, and auto-match against QuickBooks in seconds. Save 15+ hours per week per client. Built by iTax Hub.',
 }
 
 export default function RootLayout({

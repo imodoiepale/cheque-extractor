@@ -46,6 +46,8 @@ export async function updateSession(request: NextRequest) {
     '/signup',
     '/forgot-password',
     '/reset-password',
+    '/privacy',
+    '/terms',
     '/legal/privacy',
     '/legal/terms',
     '/legal/eula',
