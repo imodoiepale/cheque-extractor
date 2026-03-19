@@ -7,15 +7,15 @@ import { createClient } from '@/lib/supabase/client';
 import { Check, ArrowRight, Shield, Zap } from 'lucide-react';
 
 const plans = [
-  { id: 'starter', name: 'Starter', price: 49, desc: 'Solo accountants', features: ['500 checks/mo', '1 user', '1 QB connection'] },
-  { id: 'professional', name: 'Professional', price: 129, desc: 'Growing firms', popular: true, features: ['2,500 checks/mo', '5 users', 'Unlimited QB'] },
-  { id: 'enterprise', name: 'Enterprise', price: 299, desc: 'Large firms', features: ['Unlimited checks', 'Unlimited users', 'API + SSO'] },
+  { id: 'starter', name: 'Starter', price: 29, desc: 'Solo accountants', features: ['250 checks/mo', 'Unlimited QB companies', 'AI confidence matching'] },
+  { id: 'growth', name: 'Growth', price: 59, desc: 'Growing firms', popular: true, features: ['750 checks/mo', 'Bulk approve & export', 'Priority support'] },
+  { id: 'pro', name: 'Pro', price: 99, desc: 'Large firms', features: ['2,000 checks/mo', 'Custom integrations', 'SLA guarantee'] },
 ];
 
 function SignupForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const planParam = searchParams?.get('plan') || 'professional';
+  const planParam = searchParams?.get('plan') || 'growth';
 
   const [selectedPlan, setSelectedPlan] = useState(planParam);
   const [email, setEmail] = useState('');
