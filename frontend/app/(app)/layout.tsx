@@ -3,6 +3,7 @@ import { CheckSquare, Upload, Settings, List, BarChart3, Download, Receipt, GitC
 import UserProfile from '@/components/UserProfile';
 import QBProviderWrapper from '@/components/QBProviderWrapper';
 import SidebarCompanySwitcher from '@/components/SidebarCompanySwitcher';
+import SuperAdminLink from '@/components/SuperAdminLink';
 
 const NAV_ITEMS = [
   { href: '/firm-dashboard', icon: LayoutDashboard, label: 'Firm Dashboard' },
@@ -57,6 +58,8 @@ export default function AppLayout({
               <Settings className="w-[16px] h-[16px]" />
               <span>Settings</span>
             </Link>
+
+            <SuperAdminLink />
           </nav>
 
           <div className="border-t border-gray-100/80 flex-shrink-0">
