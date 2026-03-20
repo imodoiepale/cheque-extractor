@@ -722,42 +722,39 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
             print(f"OCR phase error (non-fatal): {ocr_err}")
             traceback.print_exc()
 
-        # ── Background: upload page images + OCR JSONs to Storage ──
-        # Runs in a daemon thread so it doesn't block completion
-        def _background_storage_uploads():
-            try:
-                pages_dir = Path(out_dir) / "pages"
-                ocr_results_dir = Path(out_dir) / "ocr_results"
-                summary_file = Path(out_dir) / "extraction_summary.json"
+        # ── Parallel upload: page images + OCR JSONs to Storage ──
+        # Upload in parallel BEFORE marking complete (was background thread)
+        print(f"  Uploading page images + OCR results to Storage in parallel...")
+        try:
+            pages_dir = Path(out_dir) / "pages"
+            ocr_results_dir = Path(out_dir) / "ocr_results"
+            summary_file = Path(out_dir) / "extraction_summary.json"
 
-                upload_tasks = []
-                if pages_dir.exists():
-                    for pf in pages_dir.glob("page_*.png"):
-                        upload_tasks.append(("checks", f"jobs/{job_id}/pages/{pf.name}", str(pf), "image/png"))
-                if ocr_results_dir.exists():
-                    for cd in ocr_results_dir.iterdir():
-                        if cd.is_dir():
-                            for jf in cd.glob("*.json"):
-                                upload_tasks.append(("checks", f"jobs/{job_id}/ocr_results/{cd.name}/{jf.name}", str(jf), "application/octet-stream"))
-                if summary_file.exists():
-                    upload_tasks.append(("checks", f"jobs/{job_id}/extraction_summary.json", str(summary_file), "application/octet-stream"))
+            upload_tasks = []
+            if pages_dir.exists():
+                for pf in pages_dir.glob("page_*.png"):
+                    upload_tasks.append(("checks", f"jobs/{job_id}/pages/{pf.name}", str(pf), "image/png"))
+            if ocr_results_dir.exists():
+                for cd in ocr_results_dir.iterdir():
+                    if cd.is_dir():
+                        for jf in cd.glob("*.json"):
+                            upload_tasks.append(("checks", f"jobs/{job_id}/ocr_results/{cd.name}/{jf.name}", str(jf), "application/octet-stream"))
+            if summary_file.exists():
+                upload_tasks.append(("checks", f"jobs/{job_id}/extraction_summary.json", str(summary_file), "application/octet-stream"))
 
-                def _do_upload(task):
-                    bucket, path, fpath, ctype = task
-                    try:
-                        with open(fpath, "rb") as fh:
-                            _supabase_upload_file(bucket, path, fh.read(), ctype)
-                    except Exception as ue:
-                        print(f"  BG upload failed {path}: {ue}")
+            def _do_upload(task):
+                bucket, path, fpath, ctype = task
+                try:
+                    with open(fpath, "rb") as fh:
+                        _supabase_upload_file(bucket, path, fh.read(), ctype)
+                except Exception as ue:
+                    print(f"  Upload failed {path}: {ue}")
 
-                with ThreadPoolExecutor(max_workers=10) as _bg_pool:
-                    list(_bg_pool.map(_do_upload, upload_tasks))
-                print(f"  ✓ Background storage uploads complete ({len(upload_tasks)} files)")
-            except Exception as bg_err:
-                print(f"  Background storage upload error: {bg_err}")
-
-        bg_thread = threading.Thread(target=_background_storage_uploads, daemon=True)
-        bg_thread.start()
+            with ThreadPoolExecutor(max_workers=20) as _storage_pool:
+                list(_storage_pool.map(_do_upload, upload_tasks))
+            print(f"  ✓ Storage uploads complete ({len(upload_tasks)} files)")
+        except Exception as storage_err:
+            print(f"  Storage upload error (non-fatal): {storage_err}")
 
         # ── Save final results to Supabase immediately after OCR ─
         # (Storage uploads run concurrently in background — don't block completion)
@@ -1503,8 +1500,9 @@ def get_job(job_id: str, source: str = "auto"):
     # Fetch from Supabase if requested or job is complete
     if use_db and _supabase_ok:
         try:
-            db_job = _supabase_select("check_jobs", {"job_id": job_id})
-            if db_job:
+            db_jobs = _supabase_select("check_jobs", filters={"job_id": job_id})
+            if db_jobs and len(db_jobs) > 0:
+                db_job = db_jobs[0]  # _supabase_select returns a list, get first item
                 # Parse checks_data JSON
                 checks_data = []
                 if db_job.get("checks_data"):

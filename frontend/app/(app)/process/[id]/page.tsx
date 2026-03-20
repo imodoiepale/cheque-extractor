@@ -53,7 +53,7 @@ export default function ProcessingPage() {
   // Auto-redirect to review page when extraction completes
   useEffect(() => {
     if (isComplete && jobData?.checks && jobData.checks.length > 0) {
-      // Brief flash of completion state, then redirect
+      // Brief flash of completion state, then redirect (500ms - was 2000ms)
       const timer = setTimeout(() => {
         router.push(`/review/${jobId}`);
       }, 500);

@@ -174,22 +174,34 @@ export default function UploadPage() {
           // Build detailed progress messages
           const messages: string[] = [];
           
-          // Status-based messages
-          if (jobData.status === 'pending' || jobData.status === 'analyzing') {
-            messages.push('Converting PDF to images...');
+          // Status-based messages with real-time updates
+          if (jobData.status === 'pending') {
+            messages.push('📄 Uploading PDF...');
+          } else if (jobData.status === 'analyzing') {
+            messages.push('🔍 Converting PDF to images...');
+          } else if (jobData.status === 'detecting') {
+            messages.push('🔎 Detecting checks on pages...');
+          } else if (jobData.status === 'extracting') {
+            messages.push('✂️ Extracting check images...');
+          } else if (jobData.status === 'ocr_running') {
+            messages.push('🤖 Running OCR extraction...');
+          } else if (jobData.status === 'analyzed') {
+            messages.push('✅ Analysis complete');
+          } else if (jobData.status === 'complete') {
+            messages.push('✅ Extraction complete');
           }
           
           // Show page conversion progress
           if (jobData.total_pages > 0) {
-            messages.push(`Converted ${jobData.total_pages} pages`);
+            messages.push(`📑 ${jobData.total_pages} pages converted`);
             if (jobData.doc_format) {
-              messages.push(`Format: ${jobData.doc_format}`);
+              messages.push(`📐 Format: ${jobData.doc_format}`);
             }
           }
           
           // Show check detection progress
           if (jobData.total_checks > 0) {
-            messages.push(`${jobData.total_checks} checks detected across ${jobData.total_pages || 0} pages`);
+            messages.push(`✓ ${jobData.total_checks} checks detected`);
           }
           
           // Show per-page detection if available
@@ -292,6 +304,7 @@ export default function UploadPage() {
             const jobData = await statusRes.json();
             
             // Check if Phase 1 is complete: status is 'analyzed' OR we have real page+check data
+            // Fixed: was total_checks >= 0 (always true), now total_checks > 0
             if (jobData.status === 'analyzed' || jobData.status === 'complete' ||
                 (jobData.total_pages > 0 && jobData.total_checks > 0)) {
               console.log(`✅ Phase 1 complete: ${jobData.total_pages} pages, ${jobData.total_checks} checks`);

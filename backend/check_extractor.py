@@ -1285,8 +1285,8 @@ class CheckExtractorApp:
         # Process ALL checks in parallel (Promise.all equivalent)
         # Scale workers with number of Gemini keys: each key handles ~8 checks concurrently
         n_keys = max(1, len(GEMINI_KEYS))
-        max_concurrent_checks = min(n_keys * 8, total, 50)  # Up to 50 concurrent
-        print(f"  Running {total} checks with {max_concurrent_checks} concurrent workers ({n_keys} API keys)")
+        max_concurrent_checks = min(n_keys * 8, total, 50)  # Up to 50 concurrent (was min(4, total))
+        print(f"  Running {total} checks with {max_concurrent_checks} concurrent workers ({n_keys} API keys × 8 = {n_keys * 8} theoretical max)")
         with ThreadPoolExecutor(max_workers=max_concurrent_checks) as executor:
             futures = [
                 executor.submit(process_single_check, idx, cid, img_path, page_num)

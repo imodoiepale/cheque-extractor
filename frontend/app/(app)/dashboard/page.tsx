@@ -816,7 +816,7 @@ export default function DashboardPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {allChecks.map((c: any, idx: number) => {
+                {filteredChecks.map((c: any, idx: number) => {
                   const ext = c.extraction;
                   return (
                     <tr

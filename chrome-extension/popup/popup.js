@@ -295,8 +295,10 @@ function handleFiles(files) {
   if (!files.length) return;
   extractedChecks = [];
 
+  let completed = 0;
+  const total = files.length;
+
   const processFile = async (file) => {
-    showLoading(`Extracting: ${file.name}...`);
     try {
       const base64 = await fileToBase64(file);
       const res = await sendMsg({
@@ -306,18 +308,24 @@ function handleFiles(files) {
       });
       if (res?.success) {
         extractedChecks.push({ ...res.data, _fileName: file.name });
+        completed++;
+        showLoading(`🤖 Extracting checks... ${completed}/${total} complete`);
       } else {
         console.error('OCR failed:', res?.error);
+        completed++;
+        showLoading(`⚠️ Processing... ${completed}/${total} (1 failed)`);
       }
     } catch (e) {
       console.error('Extract error:', e);
+      completed++;
+      showLoading(`⚠️ Processing... ${completed}/${total} (1 error)`);
     }
   };
 
   (async () => {
-    for (const file of files) {
-      await processFile(file);
-    }
+    // Process all files in parallel for blazing fast extraction
+    showLoading(`🚀 Extracting ${total} check(s) in parallel...`);
+    await Promise.all(Array.from(files).map(file => processFile(file)));
     hideLoading();
     renderExtracted();
   })();
