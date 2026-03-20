@@ -562,15 +562,30 @@ app = FastAPI(title="Check Extractor API", version="1.0.0")
 
 # CORS configuration - allow all origins for maximum compatibility
 # Production frontend: https://check-extractor-frontend.vercel.app
+# Build allowed origins from environment variable
+_frontend_urls = os.environ.get("FRONTEND_URL", "").strip()
+_allowed_origins = [
+    "https://check-extractor-frontend.vercel.app",
+    "https://cheque-extractor-frontend.vercel.app",
+    "http://kyriq.com",
+    "https://kyriq.com",
+    "http://localhost:3080",
+    "http://localhost:3000",
+]
+
+# Add URLs from FRONTEND_URL env var (comma-separated)
+if _frontend_urls:
+    for url in _frontend_urls.split(","):
+        url = url.strip()
+        if url and url not in _allowed_origins:
+            _allowed_origins.append(url)
+
+# Add wildcard for maximum compatibility
+_allowed_origins.append("*")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://check-extractor-frontend.vercel.app",
-        "https://cheque-extractor-frontend.vercel.app",
-        "http://localhost:3080",
-        "http://localhost:3000",
-        "*"
-    ],
+    allow_origins=_allowed_origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
