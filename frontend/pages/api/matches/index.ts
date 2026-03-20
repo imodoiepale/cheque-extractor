@@ -25,7 +25,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         resolution, resolution_notes, notes, flagged_reason,
         approved_by, approved_at, created_at, updated_at,
         check:checks (
-          id, check_number, check_date, payee, amount, memo, check_id, source_file
+          id, check_number, check_date, payee, amount, memo, file_url
         ),
         qb_txn:qb_transactions (
           id, txn_id, txn_type, txn_date, payee, amount, memo, account, doc_number
