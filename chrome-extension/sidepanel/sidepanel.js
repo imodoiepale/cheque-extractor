@@ -292,6 +292,16 @@ document.addEventListener('DOMContentLoaded', () => {
   bindEvents();
   loadDateFormat();
   init();
+  // Approve confirmation dialog bindings
+  $('#approve-confirm-cancel')?.addEventListener('click', hideApproveConfirm);
+  $('#approve-confirm-overlay')?.addEventListener('click', e => {
+    if (e.target === $('#approve-confirm-overlay')) hideApproveConfirm();
+  });
+  $('#approve-confirm-ok')?.addEventListener('click', async () => {
+    const idx = _pendingApproveIdx;
+    hideApproveConfirm();
+    if (idx !== null) await approveAndClear(idx);
+  });
 });
 
 // ── View management ───────────────────────────────────────────
@@ -671,7 +681,7 @@ function bindMatchEvents() {
       const action = btn.dataset.action;
       const match = matches[idx];
       if (!match) return;
-      if (action === 'approve') { await approveAndClear(idx); }
+      if (action === 'approve') { showApproveConfirm(idx); }
       else if (action === 'review') { openReviewModal(match.check, match); }
       else if (action === 'undo') { match.status = match.score >= 95 ? 'matched' : 'pending'; renderMatches(); }
       else if (action === 'flag') { match.status = 'flagged'; renderMatches(); }
@@ -693,6 +703,42 @@ function bindMatchEvents() {
       }
     });
   });
+}
+
+// ── Approve confirmation dialog ─────────────────────────────
+let _pendingApproveIdx = null;
+
+function showApproveConfirm(idx) {
+  const match = matches[idx];
+  if (!match) return;
+  _pendingApproveIdx = idx;
+  const c = match.check || {};
+  const q = match.qbTxn || {};
+  const fmt = v => v != null ? `$${parseFloat(v).toFixed(2)}` : '—';
+  const details = [
+    ['Check #', c.check_number || '—'],
+    ['Check Amount', fmt(c.amount)],
+    ['Payee', c.payee || '—'],
+    ['Date', c.check_date || '—'],
+    ['QB Type', q.txn_type || '—'],
+    ['QB Amount', fmt(q.amount)],
+    ['QB Account', q.account || '—'],
+    ['Action', 'Set ClearStatus = Cleared in QB'],
+  ];
+  const detailsEl = $('#approve-confirm-details');
+  if (detailsEl) {
+    detailsEl.innerHTML = details.map(([label, val]) =>
+      `<div class="approve-confirm-detail-row"><span class="approve-confirm-detail-label">${label}</span><span class="approve-confirm-detail-val">${escHtml(String(val))}</span></div>`
+    ).join('');
+  }
+  const overlay = $('#approve-confirm-overlay');
+  if (overlay) overlay.style.display = 'flex';
+}
+
+function hideApproveConfirm() {
+  const overlay = $('#approve-confirm-overlay');
+  if (overlay) overlay.style.display = 'none';
+  _pendingApproveIdx = null;
 }
 
 async function approveAndClear(idx) {

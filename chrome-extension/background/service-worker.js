@@ -287,15 +287,14 @@ async function clearQBTransaction(txnType, txnId) {
   const entity = readData[txnType] || readData[Object.keys(readData)[0]];
   if (!entity) throw new Error('Transaction not found in QB');
 
-  // QuickBooks uses SyncToken for optimistic locking
-  // To "clear" a transaction for reconciliation, we update it with a custom field
-  // or the Cleared status. QB API doesn't have a direct "clear" endpoint,
-  // but we can mark it by adding a tag or updating the memo.
-  // The actual reconciliation clearing happens in QB's reconcile flow.
-  // What we CAN do: update the transaction's PrivateNote to indicate it's been verified
+  // QuickBooks reconciliation clear:
+  // - ClearStatus: "Cleared" marks the transaction in QB's reconcile view (the actual tick)
+  // - PrivateNote stamp provides a human-readable audit trail inside the transaction
+  const clearDate = new Date().toISOString().split('T')[0];
   const updatePayload = {
     ...entity,
-    PrivateNote: `${entity.PrivateNote || ''}\n[Kyriq] Verified & Cleared ${new Date().toISOString().split('T')[0]}`.trim(),
+    ClearStatus: 'Cleared',
+    PrivateNote: `${entity.PrivateNote || ''}\n[Kyriq] Verified & Cleared ${clearDate}`.trim(),
   };
 
   const result = await qbApiRequest(
@@ -577,7 +576,7 @@ async function runFullMatch(extractedChecks) {
   // Normalise to the shape scoreMatch expects — same mapping as GET_QB_TXNS
   const qbTxns = (entries || []).map(e => ({
     id: e.id,
-    txn_id: e.check_number || e.id,
+    txn_id: e.id,          // e.g. "purchase-614" — APPROVE_AND_CLEAR splits this for Intuit entity ID
     txn_type: e.qb_type || e.qb_source || 'Entry',
     qb_source: e.qb_source || null,
     txn_date: e.date,
@@ -924,7 +923,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // Normalise to a common shape used by renderQBList
           const txns = (entries || []).map(e => ({
             id: e.id,
-            txn_id: e.check_number || e.id,
+            txn_id: e.id,          // e.g. "purchase-614" — consistent with runFullMatch
             txn_type: e.qb_type || e.qb_source || 'Entry',
             qb_source: e.qb_source || null,
             txn_date: e.date,
@@ -1212,6 +1211,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               data: { txnType, intuitIdLen: String(qbIntuitId).length },
             });
             // #endregion
+            // Log QB clear action to match_audit_log for full audit trail
+            try {
+              const s3 = await getSession();
+              const tid3 = s3 ? await getTenantId(s3.user.id).catch(() => null) : null;
+              if (tid3) {
+                await supabaseRequest(
+                  'match_audit_log',
+                  {
+                    method: 'POST',
+                    body: JSON.stringify({
+                      tenant_id: tid3,
+                      action: 'qb_cleared',
+                      old_status: 'pending',
+                      new_status: 'approved',
+                      details: {
+                        txn_type: txnType,
+                        intuit_id: qbIntuitId,
+                        check_id: msg.checkId || null,
+                        check_number: qbTxn.doc_number || null,
+                        qb_note: `[Kyriq] Verified & Cleared ${new Date().toISOString().split('T')[0]}`,
+                        cleared_at: new Date().toISOString(),
+                      },
+                    }),
+                  }
+                );
+              }
+            } catch (auditErr) {
+              logErr('APPROVE_AND_CLEAR: audit log write failed (non-critical)', auditErr);
+            }
             await saveCheckApproval(msg.checkId, msg.jobId);
             return { success: true, cleared: true };
           } catch (e) {

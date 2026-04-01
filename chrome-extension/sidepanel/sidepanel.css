@@ -730,6 +730,39 @@ header {
 .rm-actions #rm-save { grid-column: 1 / -1; width: 100%; }
 .rm-actions #rm-undo { grid-column: 1 / -1; }
 
+/* ── Approve confirmation dialog ───────────────────────────── */
+.approve-confirm-overlay {
+  position: fixed; inset: 0; background: rgba(15,15,30,0.55);
+  backdrop-filter: blur(3px); display: flex; align-items: center;
+  justify-content: center; z-index: 300; padding: 16px;
+}
+.approve-confirm-card {
+  background: #fff; border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+  padding: 22px 20px 18px; width: 100%; max-width: 320px;
+}
+.approve-confirm-title {
+  font-size: 14px; font-weight: 800; color: var(--gray-900); margin-bottom: 8px;
+}
+.approve-confirm-desc {
+  font-size: 11px; color: var(--gray-500); line-height: 1.5; margin-bottom: 12px;
+}
+.approve-confirm-details {
+  background: var(--gray-50); border: 1px solid var(--gray-200); border-radius: 8px;
+  padding: 10px 12px; margin-bottom: 14px; font-size: 11px; color: var(--gray-700);
+  display: flex; flex-direction: column; gap: 5px;
+}
+.approve-confirm-detail-row {
+  display: flex; justify-content: space-between; gap: 8px;
+}
+.approve-confirm-detail-label { font-weight: 600; color: var(--gray-400); flex-shrink: 0; }
+.approve-confirm-detail-val { font-weight: 700; color: var(--gray-900); text-align: right; word-break: break-all; }
+.approve-confirm-actions {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+}
+.approve-confirm-actions .btn-primary, .approve-confirm-actions .btn-outline {
+  font-size: 11px; padding: 9px 10px; justify-content: center;
+}
+
 /* ── Loading overlay ───────────────────────────────────────── */
 .loading-overlay {
   position: fixed; inset: 0; background: rgba(255,255,255,0.88);

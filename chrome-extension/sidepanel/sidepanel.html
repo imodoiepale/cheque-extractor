@@ -527,6 +527,21 @@
   </div>
 
   <!-- ═══════════════════════════════════════════
+       APPROVE CONFIRMATION DIALOG
+  ═══════════════════════════════════════════ -->
+  <div id="approve-confirm-overlay" class="approve-confirm-overlay" style="display:none;">
+    <div class="approve-confirm-card">
+      <div class="approve-confirm-title">✅ Approve &amp; Clear in QuickBooks?</div>
+      <p class="approve-confirm-desc">This will mark the QuickBooks transaction as <strong>Cleared</strong> (reconciliation status) and stamp a verification note. This does <strong>not</strong> delete anything.</p>
+      <div class="approve-confirm-details" id="approve-confirm-details"></div>
+      <div class="approve-confirm-actions">
+        <button id="approve-confirm-cancel" class="btn-outline">✕ Cancel</button>
+        <button id="approve-confirm-ok" class="btn-primary">✅ Confirm &amp; Approve</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
        LOADING OVERLAY
   ═══════════════════════════════════════════ -->
   <div id="loading" class="loading-overlay" style="display:none;">
