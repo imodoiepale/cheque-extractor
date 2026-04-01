@@ -49,6 +49,17 @@
       <a href="https://kyriq.com/settings" target="_blank" class="profile-link">↗ Web Settings</a>
     </div>
     <div class="profile-divider"></div>
+    <div class="profile-date-fmt">
+      <label class="profile-label" for="date-format-select">📅 Date Format</label>
+      <select id="date-format-select" class="profile-select">
+        <option value="dd/mm/yyyy">DD/MM/YYYY</option>
+        <option value="mm/dd/yyyy">MM/DD/YYYY</option>
+        <option value="yyyy-mm-dd">YYYY-MM-DD</option>
+        <option value="dd mmm yyyy">DD MMM YYYY</option>
+        <option value="mmm dd yyyy">MMM DD YYYY</option>
+      </select>
+    </div>
+    <div class="profile-divider"></div>
     <button id="btn-profile-logout" class="btn-profile-logout">↩ Sign out</button>
   </div>
 
@@ -200,10 +211,25 @@
       <button id="btn-bulk-approve" class="btn-sm btn-green">✅ Auto-Approve ≥95%</button>
       <button id="btn-match-filter-toggle" class="btn-sm btn-ghost" title="Search &amp; filter">🔍 Filter</button>
     </div>
-    <!-- Document filter -->
+    <!-- Document + source filter row -->
     <div class="doc-filter-bar">
       <label class="doc-filter-label" for="doc-filter">📄 Doc:</label>
-      <select id="doc-filter" class="doc-filter-select"><option value="">All Uploads</option></select>
+      <select id="doc-filter" class="doc-filter-select" style="flex:1;"><option value="">All Uploads</option></select>
+      <select id="match-source-filter" class="doc-filter-select" style="flex:1;margin-left:4px;" title="Filter by QB transaction type">
+        <option value="">All Types</option>
+        <option value="cheque_written">📝 Written</option>
+        <option value="bill_paid_by_cheque">💸 Bill Pmt</option>
+        <option value="cheque_received">✉️ Received</option>
+        <option value="payroll_check">💰 Payroll</option>
+      </select>
+    </div>
+    <!-- Date filter row (always visible) -->
+    <div class="checks-date-row" style="padding:4px 0 6px;">
+      <label class="checks-date-label">From</label>
+      <input id="match-date-from" type="date" class="checks-date-input">
+      <label class="checks-date-label">To</label>
+      <input id="match-date-to" type="date" class="checks-date-input">
+      <button id="match-date-clear" class="btn-xs btn-ghost">×</button>
     </div>
     <!-- Sort controls -->
     <div class="sort-bar">
@@ -214,19 +240,12 @@
       <button class="sort-btn" data-sort="score">Score</button>
       <button id="btn-sort-dir" class="sort-dir-btn" title="Toggle sort direction">↓</button>
     </div>
-    <!-- Matches search + date filter (hidden by default) -->
+    <!-- Matches search filter (hidden by default, toggled by Filter btn) -->
     <div id="matches-filter-bar" class="checks-filter-bar" style="display:none;">
       <div class="checks-search-wrap">
         <span class="checks-search-icon">🔍</span>
         <input id="match-search" type="text" class="checks-search" placeholder="Search payee, check #, bank…" autocomplete="off">
-        <button id="match-search-clear" class="checks-search-clear" style="display:none;">&amp;#x2715;</button>
-      </div>
-      <div class="checks-date-row">
-        <label class="checks-date-label">From</label>
-        <input id="match-date-from" type="date" class="checks-date-input">
-        <label class="checks-date-label">To</label>
-        <input id="match-date-to" type="date" class="checks-date-input">
-        <button id="match-date-clear" class="btn-xs btn-ghost">× Clear</button>
+        <button id="match-search-clear" class="checks-search-clear" style="display:none;">&#x2715;</button>
       </div>
     </div>
     <div id="match-list" class="match-list">
@@ -374,6 +393,14 @@
       <span class="tab-toolbar-title">QuickBooks Transactions</span>
       <span id="qb-count-badge" class="checks-count-badge qb-count-badge" style="margin-left:6px;"></span>
       <button id="btn-refresh-qb" class="btn-xs btn-ghost" style="margin-left:auto;">↻ Refresh</button>
+    </div>
+    <!-- QB source type filter pills -->
+    <div class="qb-source-pills">
+      <button class="src-pill active" data-src="">All</button>
+      <button class="src-pill" data-src="cheque_written">✏️ Written</button>
+      <button class="src-pill" data-src="bill_paid_by_cheque">💸 Bill</button>
+      <button class="src-pill" data-src="cheque_received">✉ Recv</button>
+      <button class="src-pill" data-src="payroll_check">💰 Payroll</button>
     </div>
     <div class="checks-filter-bar">
       <div class="checks-search-wrap">

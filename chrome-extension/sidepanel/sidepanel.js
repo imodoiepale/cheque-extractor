@@ -44,10 +44,57 @@ function parseCheckDate(d) {
   const native = new Date(s);
   return isNaN(native.getTime()) ? null : native;
 }
+// ── Date format (loaded from chrome.storage.local) ──
+let _dateFormat = 'dd/mm/yyyy'; // default: dd/mm/yyyy
+
+const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
 function fmtDate(d) {
   const dt = parseCheckDate(d);
   if (!dt) return d || '—';
-  return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const DD  = String(dt.getDate()).padStart(2, '0');
+  const MM  = String(dt.getMonth() + 1).padStart(2, '0');
+  const YYYY = dt.getFullYear();
+  const MMM = MONTHS_SHORT[dt.getMonth()];
+  switch (_dateFormat) {
+    case 'mm/dd/yyyy': return `${MM}/${DD}/${YYYY}`;
+    case 'yyyy-mm-dd': return `${YYYY}-${MM}-${DD}`;
+    case 'dd mmm yyyy': return `${DD} ${MMM} ${YYYY}`;
+    case 'mmm dd yyyy': return `${MMM} ${DD} ${YYYY}`;
+    default:           return `${DD}/${MM}/${YYYY}`; // dd/mm/yyyy
+  }
+}
+
+function getQBSource(txn) {
+  if (!txn) return '';
+  if (txn.qb_source) return txn.qb_source;
+  switch (txn.txn_type) {
+    case 'Purchase':    return 'cheque_written';
+    case 'BillPayment': return 'bill_paid_by_cheque';
+    case 'Check':       return 'payroll_check';
+    case 'Payment':     return 'cheque_received';
+    default:            return '';
+  }
+}
+
+async function loadDateFormat() {
+  try {
+    const { dateFormat } = await chrome.storage.local.get('dateFormat');
+    if (dateFormat) _dateFormat = dateFormat;
+  } catch (_) {}
+  const sel = $('#date-format-select');
+  if (sel) sel.value = _dateFormat;
+}
+
+async function saveDateFormat(fmt) {
+  _dateFormat = fmt;
+  await chrome.storage.local.set({ dateFormat: fmt }).catch(() => {});
+  // Re-render all visible date displays
+  if (_cachedQB !== null) renderQBList(_cachedQB);
+  if (matches.length) renderMatches();
+  if (_cachedChecks !== null) renderChecksList(_cachedChecks);
+  if (_cachedDocs !== null) renderDocumentsList(_cachedDocs);
+  if (_cachedHistory !== null) renderHistoryList(_cachedHistory);
 }
 function fmtSize(bytes) {
   if (!bytes) return '';
@@ -142,14 +189,16 @@ let _matchDateTo = null;
 let _sortField = 'date';     // 'date' | 'amount' | 'checknum' | 'score'
 let _sortDir   = 'desc';    // 'asc' | 'desc'
 // ── QB transactions filter state ──
-let _qbSearch    = '';
-let _qbDateFrom  = null;
-let _qbDateTo    = null;
-let _cachedQB    = null;   // null = not loaded yet; [] = loaded but empty
-// ── Document / account filter state ──
-let _docFilter      = '';  // job_id to filter matches by ('' = all)
-let _chequeDocFilter = ''; // job_id to filter cheques by ('' = all)
-let _accountFilter  = '';  // account name to filter matches + QB txns ('' = all)
+let _qbSearch       = '';
+let _qbDateFrom     = null;
+let _qbDateTo       = null;
+let _qbSourceFilter = '';  // qb_source value to filter QB Data tab ('' = all)
+let _cachedQB       = null; // null = not loaded yet; [] = loaded but empty
+// ── Document / account / source filter state ──
+let _docFilter        = ''; // job_id to filter matches by ('' = all)
+let _chequeDocFilter  = ''; // job_id to filter cheques by ('' = all)
+let _accountFilter    = ''; // account name to filter matches + QB txns ('' = all)
+let _matchSourceFilter = ''; // qb_source filter on Matches tab ('' = all)
 
 // ── QB endpoint-missing banner (kyriq.com not yet deployed) ─
 function showQBEndpointMissingBanner(msg) {
@@ -225,20 +274,10 @@ chrome.runtime.onMessage.addListener((msg) => {
 });
 
 // ── Init ──────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', async () => {
-  dbg('Kyriq side panel init');
-  const res = await sendMsg({ type: 'GET_SESSION' });
-  session = res?.session;
-  dbg(`Session: ${session ? session.user?.email : 'none'}`);
-
-  if (session) {
-    setUserChip(session.user?.email, session.user);
-    await postLoginFlow();
-  } else {
-    hide('#btn-profile'); hide('#profile-panel'); hide('#btn-logout');
-    showView('auth');
-  }
+document.addEventListener('DOMContentLoaded', () => {
   bindEvents();
+  loadDateFormat();
+  init();
 });
 
 // ── View management ───────────────────────────────────────────
@@ -457,6 +496,10 @@ function renderMatches() {
   if (_accountFilter) {
     filtered = filtered.filter(m => (m.qbTxn?.account || '') === _accountFilter);
   }
+  // Source type filter (QB transaction type)
+  if (_matchSourceFilter) {
+    filtered = filtered.filter(m => getQBSource(m.qbTxn) === _matchSourceFilter);
+  }
   // Search filter
   if (_matchSearch) {
     const q = _matchSearch.toLowerCase();
@@ -548,12 +591,13 @@ function renderMatchRow(m, index) {
         </div>
         <div class="match-qb">
           ${hasTxn ? (() => {
-            const txnTypeLabel = { Purchase: 'Cheque', BillPayment: 'Bill Pmt', Check: 'Payroll Check' };
-            const typeLabel = txnTypeLabel[txn.txn_type] || txn.txn_type || 'QB';
-            const numPart = txn.doc_number ? '#' + txn.doc_number : typeLabel;
+            const SRC_SHORT = { cheque_written: 'Written', bill_paid_by_cheque: 'Bill Pmt', cheque_received: 'Recv', payroll_check: 'Payroll' };
+            const src = getQBSource(txn);
+            const srcLabel = SRC_SHORT[src] || txn.txn_type || 'QB';
+            const numPart = txn.doc_number ? '#' + txn.doc_number : srcLabel;
             return `
             <div class="num">${numPart} · ${fmt(txn.amount)}</div>
-            <div class="detail">${fmtDate(txn.txn_date)} · ${escHtml(txn.payee || '—')}</div>`;
+            <div class="detail">${fmtDate(txn.txn_date)} · ${escHtml(txn.payee || '—')} <span class="qb-type-badge" style="font-size:8px;opacity:0.8;">${srcLabel}</span></div>`;
           })() : `<div class="no-match">No QB match</div>`}
         </div>
       </div>
@@ -887,6 +931,10 @@ function renderQBList(txns) {
 
   // Apply account filter
   let filtered = _accountFilter ? txns.filter(t => (t.account || '') === _accountFilter) : txns;
+  // Apply source type filter
+  if (_qbSourceFilter) {
+    filtered = filtered.filter(t => (t.qb_source || '') === _qbSourceFilter);
+  }
   // Apply search filter
   if (_qbSearch) {
     const q = _qbSearch.toLowerCase();
@@ -926,25 +974,30 @@ function renderQBList(txns) {
     return;
   }
 
-  const typeIcon = { Purchase: '💳', BillPayment: '💸', Check: '💵' };
+  const SRC_LABEL = {
+    cheque_written:      { icon: '✏️', label: 'Written' },
+    bill_paid_by_cheque: { icon: '�', label: 'Bill Pmt' },
+    cheque_received:     { icon: '✉️', label: 'Received' },
+    payroll_check:       { icon: '�', label: 'Payroll' },
+  };
   list.innerHTML = filtered.map(t => {
-    const icon   = typeIcon[t.txn_type] || '💰';
+    const src    = getQBSource(t);
+    const srcMeta = SRC_LABEL[src] || { icon: '💳', label: t.txn_type || 'Txn' };
     const date   = t.txn_date ? fmtDate(t.txn_date) : '—';
     const payee  = t.payee ? escHtml(t.payee) : 'No payee';
     const amount = fmt(t.amount);
     const acct   = t.account ? escHtml(t.account) : '';
     const doc    = t.doc_number ? `#${escHtml(t.doc_number)}` : '';
-    const type   = escHtml(t.txn_type || 'Transaction');
     const memo   = t.memo ? `<div class="qb-card-memo">${escHtml(t.memo)}</div>` : '';
     return `
       <div class="qb-card">
-        <div class="qb-card-icon">${icon}</div>
+        <div class="qb-card-icon">${srcMeta.icon}</div>
         <div class="qb-card-body">
           <div class="qb-card-top">
             <span class="qb-card-payee">${payee}</span>
             <span class="qb-card-amount">${amount}</span>
           </div>
-          <div class="qb-card-meta">${date}${doc ? ' · ' + doc : ''} · <span class="qb-type-badge">${type}</span>${acct ? ' · ' + acct : ''}</div>
+          <div class="qb-card-meta">${date}${doc ? ' · ' + doc : ''} · <span class="qb-type-badge">${srcMeta.label}</span>${acct ? ' · ' + acct : ''}</div>
           ${memo}
         </div>
       </div>`;
@@ -1876,5 +1929,25 @@ function bindEvents() {
     _accountFilter = e.target.value;
     renderMatches();
     if (_cachedQB !== null) renderQBList(_cachedQB);
+  });
+
+  // ── Match source filter (Matches tab) ──
+  $('#match-source-filter')?.addEventListener('change', e => {
+    _matchSourceFilter = e.target.value;
+    renderMatches();
+  });
+
+  // ── QB source type pills (QB Data tab) ──
+  $$('.src-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      _qbSourceFilter = pill.dataset.src;
+      $$('.src-pill').forEach(p => p.classList.toggle('active', p.dataset.src === _qbSourceFilter));
+      if (_cachedQB !== null) renderQBList(_cachedQB);
+    });
+  });
+
+  // ── Date format selector (profile panel) ──
+  $('#date-format-select')?.addEventListener('change', e => {
+    saveDateFormat(e.target.value);
   });
 }

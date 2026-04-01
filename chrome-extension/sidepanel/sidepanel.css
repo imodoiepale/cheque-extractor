@@ -802,3 +802,31 @@ header {
 }
 .btn-doc-delete:hover { background: #fee2e2; color: var(--red); }
 .btn-doc-delete:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── QB Source type pills ────────────────────────────────── */
+.qb-source-pills {
+  display: flex; gap: 4px; padding: 6px 0 4px;
+  overflow-x: auto; -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.qb-source-pills::-webkit-scrollbar { display: none; }
+.src-pill {
+  flex-shrink: 0; padding: 3px 10px; border-radius: 20px;
+  font-size: 10px; font-weight: 600; cursor: pointer; border: 1px solid var(--gray-200);
+  background: #fff; color: var(--gray-500); transition: all 0.12s;
+  white-space: nowrap;
+}
+.src-pill:hover { border-color: #2CA01C; color: #2CA01C; background: #f0fdf4; }
+.src-pill.active { background: #2CA01C; color: #fff; border-color: #2CA01C; }
+
+/* ── Date format row in profile panel ────────────────────── */
+.profile-date-fmt {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 0; gap: 8px;
+}
+.profile-select {
+  border: 1px solid var(--gray-200); border-radius: 6px;
+  padding: 4px 8px; font-size: 11px; font-family: inherit;
+  background: #fff; color: var(--gray-700); outline: none; cursor: pointer;
+}
+.profile-select:focus { border-color: var(--indigo); }

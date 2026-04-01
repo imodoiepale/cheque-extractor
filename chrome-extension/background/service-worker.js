@@ -544,7 +544,7 @@ async function runFullMatch(extractedChecks) {
 
   // Get QB transactions from Supabase
   const qbTxns = await supabaseRequest(
-    `qb_transactions?tenant_id=eq.${tenantId}&realm_id=eq.${realmId}&order=txn_date.desc&limit=500`,
+    `qb_transactions?tenant_id=eq.${tenantId}&realm_id=eq.${realmId}&select=*,qb_source&order=txn_date.desc&limit=500`,
     { method: 'GET' }
   );
 
@@ -884,6 +884,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             id: e.id,
             txn_id: e.check_number || e.id,
             txn_type: e.qb_type || e.qb_source || 'Entry',
+            qb_source: e.qb_source || null,
             txn_date: e.date,
             payee: e.payee,
             amount: e.amount,
