@@ -18,6 +18,12 @@ DROP POLICY IF EXISTS "Users can manage own qb entries" ON public.qb_entries;
 -- Ensure RLS is enabled
 ALTER TABLE public.qb_entries ENABLE ROW LEVEL SECURITY;
 
+-- Drop new policies too in case migration was partially applied
+DROP POLICY IF EXISTS "Users can select own tenant qb_entries" ON public.qb_entries;
+DROP POLICY IF EXISTS "Users can insert own tenant qb_entries" ON public.qb_entries;
+DROP POLICY IF EXISTS "Users can update own tenant qb_entries" ON public.qb_entries;
+DROP POLICY IF EXISTS "Users can delete own tenant qb_entries" ON public.qb_entries;
+
 -- SELECT: authenticated users can read their own tenant's entries
 CREATE POLICY "Users can select own tenant qb_entries"
   ON public.qb_entries FOR SELECT
