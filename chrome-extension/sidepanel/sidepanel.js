@@ -432,6 +432,23 @@ async function loadChecksIntoMatches() {
   if (matchRes?.matches) {
     matches = matchRes.matches;
     dbg(`Matching done: ${matches.length} results`, 'success');
+    // Refresh account select from matched QB data (accounts come from qb_entries via runFullMatch)
+    const matchAccounts = [...new Set(matches.filter(m => m.qbTxn?.account).map(m => m.qbTxn.account))].sort();
+    if (matchAccounts.length > 0) {
+      const sel = $('#account-select');
+      if (sel) {
+        const prev = sel.value;
+        while (sel.options.length > 1) sel.remove(1);
+        matchAccounts.forEach(a => {
+          const opt = document.createElement('option');
+          opt.value = a;
+          opt.textContent = a.slice(0, 28);
+          sel.appendChild(opt);
+        });
+        if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+      }
+      dbg(`Account select refreshed: ${matchAccounts.length} accounts`);
+    }
   }
   renderMatches();
 }

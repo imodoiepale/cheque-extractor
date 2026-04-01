@@ -568,18 +568,32 @@ async function runFullMatch(extractedChecks) {
   const { tenantId, realmId } = await getActiveConnection();
   const session = await getSession();
 
-  // Get QB transactions from Supabase
-  const qbTxns = await supabaseRequest(
-    `qb_transactions?tenant_id=eq.${tenantId}&realm_id=eq.${realmId}&select=*,qb_source&order=txn_date.desc&limit=500`,
+  // qb_entries is the canonical source (561+ records). qb_transactions is empty (extension-only legacy store).
+  const entries = await supabaseRequest(
+    `qb_entries?tenant_id=eq.${tenantId}&select=id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc&limit=1000`,
     { method: 'GET' }
-  );
+  ).catch(() => []);
+
+  // Normalise to the shape scoreMatch expects — same mapping as GET_QB_TXNS
+  const qbTxns = (entries || []).map(e => ({
+    id: e.id,
+    txn_id: e.check_number || e.id,
+    txn_type: e.qb_type || e.qb_source || 'Entry',
+    qb_source: e.qb_source || null,
+    txn_date: e.date,
+    payee: e.payee,
+    amount: e.amount,
+    memo: e.memo,
+    doc_number: e.check_number,
+    account: e.account,
+  }));
 
   // #region agent log
   debugAgentLog({
     hypothesisId: 'H3',
     location: 'service-worker.js:runFullMatch',
-    message: 'supabase qb_transactions for matching',
-    data: { realmId, qbRowCount: Array.isArray(qbTxns) ? qbTxns.length : -1, checkCount: extractedChecks?.length ?? 0 },
+    message: 'supabase qb_entries for matching',
+    data: { tenantId, qbRowCount: qbTxns.length, checkCount: extractedChecks?.length ?? 0 },
   });
   // #endregion
 
@@ -861,14 +875,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           } catch (qbErr) {
             log('GET_QB_ACCOUNTS: QB API unavailable, using transaction data fallback', qbErr.message);
           }
-          // Fallback: derive from already-synced qb_entries
+          // Fallback: derive from already-synced qb_entries (filtered by tenant)
           if (accounts.size === 0) {
             try {
+              const tenantId = await getTenantId(s.user.id).catch(() => null);
+              const filter = tenantId ? `tenant_id=eq.${tenantId}&` : '';
               const entries = await supabaseRequest(
-                `qb_entries?select=account&order=date.desc&limit=500`
+                `qb_entries?${filter}select=account&order=date.desc&limit=500`
               ).catch(() => []);
               (entries || []).forEach(e => { if (e.account) accounts.add(e.account); });
-              log('GET_QB_ACCOUNTS: fallback from qb_entries', { count: accounts.size });
+              log('GET_QB_ACCOUNTS: fallback from qb_entries', { count: accounts.size, tenantId });
             } catch (_) {}
           }
           return { accounts: Array.from(accounts).sort() };
