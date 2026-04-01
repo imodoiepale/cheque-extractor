@@ -46,7 +46,7 @@ export default function UserProfile() {
         
         {/* User Info */}
         <div className="flex-1 text-left min-w-0">
-          <p className="text-sm font-medium text-gray-900 truncate">
+          <p className="text-sm font-medium text-gray-200 truncate">
             {displayName}
           </p>
           <p className="text-xs text-gray-500 truncate">
