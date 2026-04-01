@@ -102,10 +102,10 @@ export default async function handler(
     }
 
     // Env vars OVERRIDE database values — same priority as auth.ts to guarantee they always match.
-    const clientId = integration?.qb_client_id || process.env.QUICKBOOKS_CLIENT_ID;
-    const clientSecret = integration?.qb_client_secret || process.env.QUICKBOOKS_CLIENT_SECRET;
-    const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://kyriq.com').replace(/\/$/, '');
-    const redirectUri = process.env.QUICKBOOKS_REDIRECT_URI || integration?.qb_redirect_uri || `${appUrl}/api/qbo/callback`;
+    const clientId = (integration?.qb_client_id || process.env.QUICKBOOKS_CLIENT_ID)?.trim();
+    const clientSecret = (integration?.qb_client_secret || process.env.QUICKBOOKS_CLIENT_SECRET)?.trim();
+    const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://kyriq.com').replace(/\/$/, '').trim();
+    const redirectUri = (process.env.QUICKBOOKS_REDIRECT_URI || integration?.qb_redirect_uri || `${appUrl}/api/qbo/callback`).trim();
     
     console.log('🔑 QB Callback credentials source:', {
       fromDB: !!integration?.qb_client_id,

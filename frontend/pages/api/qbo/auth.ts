@@ -110,9 +110,9 @@ export default async function handler(
     });
 
     // Env vars OVERRIDE database values (allows easy updates when domain changes without touching DB)
-    const clientId = process.env.QUICKBOOKS_CLIENT_ID || integration?.qb_client_id;
-    const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://kyriq.com').replace(/\/$/, '');
-    const redirectUri = process.env.QUICKBOOKS_REDIRECT_URI || integration?.qb_redirect_uri || `${appUrl}/api/qbo/callback`;
+    const clientId = (process.env.QUICKBOOKS_CLIENT_ID || integration?.qb_client_id)?.trim();
+    const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://kyriq.com').replace(/\/$/, '').trim();
+    const redirectUri = (process.env.QUICKBOOKS_REDIRECT_URI || integration?.qb_redirect_uri || `${appUrl}/api/qbo/callback`).trim();
     
     console.log('🔑 QB OAuth - Using credentials:', {
       clientId: clientId ? `${clientId.substring(0, 10)}...` : 'MISSING',
