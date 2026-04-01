@@ -809,13 +809,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           log('GET_QB_TXNS');
           const s = await getSession();
           if (!s) return { txns: [] };
-          const tenantId = await getTenantId(s.user.id).catch(() => null);
-          if (!tenantId) return { txns: [] };
-          const txns = await supabaseRequest(
-            `qb_transactions?tenant_id=eq.${tenantId}&select=id,txn_id,txn_type,txn_date,payee,amount,memo,doc_number,account&order=txn_date.desc&limit=500`
+          // qb_entries is where /api/qbo/pull-checks stores data (the 561 records shown in the web app).
+          // qb_transactions is a separate extension-only store — use qb_entries as primary source.
+          const entries = await supabaseRequest(
+            `qb_entries?select=id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc&limit=1000`
           ).catch(() => []);
-          log('GET_QB_TXNS result', { count: txns?.length || 0 });
-          return { txns: txns || [] };
+          // Normalise to a common shape used by renderQBList
+          const txns = (entries || []).map(e => ({
+            id: e.id,
+            txn_id: e.check_number || e.id,
+            txn_type: e.qb_type || e.qb_source || 'Entry',
+            txn_date: e.date,
+            payee: e.payee,
+            amount: e.amount,
+            memo: e.memo,
+            doc_number: e.check_number,
+            account: e.account,
+          }));
+          log('GET_QB_TXNS result', { count: txns.length });
+          return { txns };
         }
         case 'SAVE_QB_TXN': {
           log('SAVE_QB_TXN', { txnId: msg.txnId, txnType: msg.txnType, fields: msg.fields });
