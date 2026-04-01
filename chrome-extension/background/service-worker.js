@@ -569,14 +569,15 @@ async function runFullMatch(extractedChecks) {
 
   // qb_entries is the canonical source (561+ records). qb_transactions is empty (extension-only legacy store).
   const entries = await supabaseRequest(
-    `qb_entries?tenant_id=eq.${tenantId}&select=id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc&limit=1000`,
+    `qb_entries?tenant_id=eq.${tenantId}&select=id,intuit_id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc&limit=1000`,
     { method: 'GET' }
   ).catch(() => []);
 
   // Normalise to the shape scoreMatch expects — same mapping as GET_QB_TXNS
   const qbTxns = (entries || []).map(e => ({
     id: e.id,
-    txn_id: e.id,          // e.g. "purchase-614" — APPROVE_AND_CLEAR splits this for Intuit entity ID
+    txn_id: e.id,
+    intuit_id: e.intuit_id || String(e.id).split('-').slice(1).join('-') || null,
     txn_type: e.qb_type || e.qb_source || 'Entry',
     qb_source: e.qb_source || null,
     txn_date: e.date,
@@ -918,12 +919,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // qb_entries is where /api/qbo/pull-checks stores data (the 561 records shown in the web app).
           // qb_transactions is a separate extension-only store — use qb_entries as primary source.
           const entries = await supabaseRequest(
-            `qb_entries?select=id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc&limit=1000`
+            `qb_entries?select=id,intuit_id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc&limit=1000`
           ).catch(() => []);
           // Normalise to a common shape used by renderQBList
           const txns = (entries || []).map(e => ({
             id: e.id,
-            txn_id: e.id,          // e.g. "purchase-614" — consistent with runFullMatch
+            txn_id: e.id,
+            intuit_id: e.intuit_id || String(e.id).split('-').slice(1).join('-') || null,
             txn_type: e.qb_type || e.qb_source || 'Entry',
             qb_source: e.qb_source || null,
             txn_date: e.date,
@@ -944,15 +946,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             const tenantId = await getTenantId(s.user.id).catch(() => null);
             if (!tenantId) return { error: 'No tenant_id' };
 
-            // 1. Update local Supabase cache
-            await supabaseRequest(
-              `qb_transactions?id=eq.${encodeURIComponent(msg.txnId)}&tenant_id=eq.${tenantId}`,
-              { method: 'PATCH', body: JSON.stringify({ ...msg.fields, synced_at: new Date().toISOString() }) }
-            );
+            // 1. Update local Supabase cache (qb_entries is the canonical table)
+            const cacheId = msg.txnId || msg.qbTxn?.id;
+            if (cacheId) {
+              await supabaseRequest(
+                `qb_entries?id=eq.${encodeURIComponent(cacheId)}&tenant_id=eq.${tenantId}`,
+                { method: 'PATCH', body: JSON.stringify({ ...msg.fields, synced_at: new Date().toISOString() }) }
+              ).catch(e => logErr('SAVE_QB_TXN: local cache update skipped', e));
+            }
 
             // 2. Also push edits to QuickBooks if we have type + Intuit ID
-            const txnType = msg.txnType;
-            const qbIntuitId = msg.qbIntuitId; // caller must pass the raw Intuit Id
+            const txnType = msg.txnType || msg.qbTxn?.txn_type;
+            // Prefer intuit_id from the full qbTxn object; fall back to explicit msg.qbIntuitId or parsing txnId
+            let qbIntuitId = msg.qbTxn?.intuit_id || msg.qbIntuitId || null;
+            if (!qbIntuitId && cacheId) {
+              const parts = String(cacheId).split('-');
+              qbIntuitId = parts.slice(1).join('-') || null;
+            }
             if (txnType && qbIntuitId) {
               try {
                 const readData = await qbApiRequest(`${txnType.toLowerCase()}/${qbIntuitId}?minorversion=65`);
@@ -1160,13 +1170,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const { qbTxn } = msg;
           if (!qbTxn) return { success: false, error: 'No QB transaction provided' };
 
-          // Extract the Intuit entity ID from txn_id (format: "purchase-123", "billpayment-456")
-          // txn_id is always stored as `${type.toLowerCase()}-${intuitId}`
           const txnType = qbTxn.txn_type;
-          let qbIntuitId = null;
-          if (qbTxn.txn_id) {
+          // Prefer the stored intuit_id (added in migration 022); fall back to parsing txn_id
+          let qbIntuitId = qbTxn.intuit_id || null;
+          if (!qbIntuitId && qbTxn.txn_id) {
             const parts = String(qbTxn.txn_id).split('-');
-            // Everything after the first segment is the Intuit ID (may contain dashes)
             qbIntuitId = parts.slice(1).join('-') || null;
           }
 

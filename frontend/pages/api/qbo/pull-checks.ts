@@ -184,6 +184,7 @@ async function qboQueryAll(accessToken: string, realmId: string, baseQuery: stri
 function normalizePurchaseCheck(purchase: any): any {
   return {
     id: `purchase-${purchase.Id}`,
+    intuit_id: String(purchase.Id),
     qb_type: 'Purchase',
     qb_source: 'cheque_written',
     check_number: purchase.DocNumber || '',
@@ -200,6 +201,7 @@ function normalizePurchaseCheck(purchase: any): any {
 function normalizeBillPaymentCheck(bp: any): any {
   return {
     id: `billpayment-${bp.Id}`,
+    intuit_id: String(bp.Id),
     qb_type: 'BillPayment',
     qb_source: 'bill_paid_by_cheque',
     check_number: bp.DocNumber || bp.CheckPayment?.PrintStatus || '',
@@ -216,6 +218,7 @@ function normalizeBillPaymentCheck(bp: any): any {
 function normalizePaymentCheck(payment: any): any {
   return {
     id: `payment-${payment.Id}`,
+    intuit_id: String(payment.Id),
     qb_type: 'Payment',
     qb_source: 'cheque_received',
     check_number: payment.PaymentRefNum || '',
@@ -232,6 +235,7 @@ function normalizePaymentCheck(payment: any): any {
 function normalizeQBCheck(check: any): any {
   return {
     id: `check-${check.Id}`,
+    intuit_id: String(check.Id),
     qb_type: 'Check',
     qb_source: 'payroll_check',
     check_number: check.DocNumber || '',
@@ -561,6 +565,7 @@ export default async function handler(
             .insert(
               filteredEntries.map(e => ({
                 id: e.id,
+                intuit_id: e.intuit_id || null,
                 tenant_id: tenantId,
                 qb_type: e.qb_type,
                 qb_source: e.qb_source,
