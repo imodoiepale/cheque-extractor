@@ -53,6 +53,8 @@ function normalizeAmount(val: number | string | null | undefined): number | null
   return parseFloat(String(val).replace(/[^0-9.-]/g, ''));
 }
 
+const ALGO_MONTH_NAMES = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'];
+
 /**
  * Parse a date string to { y, m, d } components without relying on Date object
  * timezone interpretation. Supports YYYY-MM-DD, M/D/YYYY, ISO with time part,
@@ -62,18 +64,43 @@ function parseDateComponents(s: string): { y: number; m: number; d: number } | n
   const t = s.trim();
   let match: RegExpMatchArray | null;
 
-  // YYYY-MM-DD (with optional time part)
-  match = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  // YYYY-MM-DD or YYYY-M-D (with optional time part)
+  match = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
   if (match) return { y: +match[1], m: +match[2], d: +match[3] };
 
-  // M/D/YYYY or MM/DD/YYYY
+  // M/D/YYYY or MM/DD/YYYY — if first part >12 treat as DD/MM
   match = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (match) return { y: +match[3], m: +match[1], d: +match[2] };
+  if (match) {
+    const a = +match[1], b = +match[2], y = +match[3];
+    if (a > 12) return { y, m: b, d: a };
+    return { y, m: a, d: b };
+  }
 
-  // Fallback: use UTC date parts from Date object
+  // MMM D, YYYY or MMM DD YYYY (e.g. "Mar 23, 2026")
+  match = t.match(/^([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})$/);
+  if (match) {
+    const mi = ALGO_MONTH_NAMES.indexOf(match[1].toLowerCase().slice(0, 3));
+    if (mi >= 0) return { y: +match[3], m: mi + 1, d: +match[2] };
+  }
+
+  // D MMM YYYY or DD MMM YYYY (e.g. "23 Mar 2026")
+  match = t.match(/^(\d{1,2})\s+([A-Za-z]{3,9}),?\s+(\d{4})$/);
+  if (match) {
+    const mi = ALGO_MONTH_NAMES.indexOf(match[2].toLowerCase().slice(0, 3));
+    if (mi >= 0) return { y: +match[3], m: mi + 1, d: +match[1] };
+  }
+
+  // DD-MMM-YYYY (e.g. "23-Mar-2026")
+  match = t.match(/^(\d{1,2})-([A-Za-z]{3,9})-(\d{4})$/);
+  if (match) {
+    const mi = ALGO_MONTH_NAMES.indexOf(match[2].toLowerCase().slice(0, 3));
+    if (mi >= 0) return { y: +match[3], m: mi + 1, d: +match[1] };
+  }
+
+  // Fallback: use local date parts (locale strings are local midnight, not UTC)
   const dt = new Date(t);
   if (!isNaN(dt.getTime())) {
-    return { y: dt.getUTCFullYear(), m: dt.getUTCMonth() + 1, d: dt.getUTCDate() };
+    return { y: dt.getFullYear(), m: dt.getMonth() + 1, d: dt.getDate() };
   }
   return null;
 }

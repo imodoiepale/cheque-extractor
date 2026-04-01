@@ -393,16 +393,42 @@ function scoreMatch(check, qbTxn) {
   if (cn1 && cn2 && cn1 === cn2) reasons.checkNumber = 30;
   else if (cn1 && cn2 && (cn1.endsWith(cn2) || cn2.endsWith(cn1))) reasons.checkNumber = 10;
 
-  // Date (15pts) — use UTC-safe parsing to avoid timezone-shifted day counts
+  // Date (15pts) — parse all common formats to UTC ms without timezone risk
   if (check.check_date && qbTxn.txn_date) {
+    const MO = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
     const parseUTCDay = (s) => {
       const t = String(s).trim();
-      const ymd = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      // YYYY-MM-DD or YYYY-M-D (ISO, with optional time)
+      const ymd = t.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
       if (ymd) return Date.UTC(+ymd[1], +ymd[2] - 1, +ymd[3]);
+      // MM/DD/YYYY or M/D/YYYY — swap if first part >12
       const mdy = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-      if (mdy) return Date.UTC(+mdy[3], +mdy[1] - 1, +mdy[2]);
+      if (mdy) {
+        const a = +mdy[1], b = +mdy[2], y = +mdy[3];
+        return a > 12 ? Date.UTC(y, b - 1, a) : Date.UTC(y, a - 1, b);
+      }
+      // MMM D, YYYY or MMM DD YYYY (e.g. "Mar 23, 2026")
+      const mmmdy = t.match(/^([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})$/);
+      if (mmmdy) {
+        const mo = MO[mmmdy[1].toLowerCase().slice(0,3)];
+        if (mo !== undefined) return Date.UTC(+mmmdy[3], mo, +mmmdy[2]);
+      }
+      // D MMM YYYY or DD MMM YYYY (e.g. "23 Mar 2026")
+      const dmmy = t.match(/^(\d{1,2})\s+([A-Za-z]{3,9}),?\s+(\d{4})$/);
+      if (dmmy) {
+        const mo = MO[dmmy[2].toLowerCase().slice(0,3)];
+        if (mo !== undefined) return Date.UTC(+dmmy[3], mo, +dmmy[1]);
+      }
+      // DD-MMM-YYYY (e.g. "23-Mar-2026")
+      const ddmmy = t.match(/^(\d{1,2})-([A-Za-z]{3,9})-(\d{4})$/);
+      if (ddmmy) {
+        const mo = MO[ddmmy[2].toLowerCase().slice(0,3)];
+        if (mo !== undefined) return Date.UTC(+ddmmy[3], mo, +ddmmy[1]);
+      }
+      // Fallback — locale strings parse as local midnight; use local getters
       const d = new Date(t);
-      return isNaN(d.getTime()) ? null : Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+      if (isNaN(d.getTime())) return null;
+      return Date.UTC(d.getFullYear(), d.getMonth(), d.getDate());
     };
     const t1 = parseUTCDay(check.check_date);
     const t2 = parseUTCDay(qbTxn.txn_date);

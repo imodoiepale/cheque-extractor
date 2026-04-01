@@ -118,6 +118,9 @@ function parseDateParts(dateStr: string): { y: number; m: number; d: number } | 
 }
 
 const SHORT_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONTH_LOOKUP: Record<string, number> = Object.fromEntries(
+  SHORT_MONTHS.map((m, i) => [m.toLowerCase(), i + 1])
+);
 
 export function formatDate(dateStr: string, fmt: DateFormat = 'MMM D, YYYY'): string {
   if (!dateStr) return '';
@@ -213,7 +216,9 @@ export function intelligentMatch(extractions: CheckExtraction[], qbEntries: Quic
         const extDateNorm = toYMD(extVal(ext.extraction, 'checkDate') || '');
         const qbDateNorm = toYMD(qbMatch.date || '');
         if (extDateNorm && qbDateNorm && extDateNorm !== qbDateNorm) {
-          discrepancies.push(`Date: ${extVal(ext.extraction, 'checkDate')} vs ${qbMatch.date}`);
+          const extDateDisplay = formatDate(extDateNorm, 'MMM D, YYYY');
+          const qbDateDisplay = formatDate(qbDateNorm, 'MMM D, YYYY');
+          discrepancies.push(`Date: ${extDateDisplay} vs ${qbDateDisplay}`);
         }
         
         const extPayee = normalizeString(extVal(ext.extraction, 'payee'));
@@ -382,39 +387,55 @@ export function detectIssues(rows: ComparisonRow[]): void {
 
 /**
  * Normalize any date string to YYYY-MM-DD for safe comparison.
- * Avoids Date object timezone pitfalls entirely.
+ * All formats handled via regex — no Date object, no timezone risk.
  */
 function toYMD(raw: string): string | null {
   if (!raw) return null;
   const s = raw.trim();
+  if (!s) return null;
 
-  // Already YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  // YYYY-MM-DD or YYYY-M-D (ISO, with or without time part)
+  const isoFull = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T .Z]|$)/);
+  if (isoFull) return `${isoFull[1]}-${isoFull[2].padStart(2, '0')}-${isoFull[3].padStart(2, '0')}`;
 
-  // MM/DD/YYYY or M/D/YYYY
-  const slashMDY = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (slashMDY) {
-    const [, mm, dd, yyyy] = slashMDY;
-    return `${yyyy}-${mm.padStart(2, '0')}-${dd.padStart(2, '0')}`;
+  // MM/DD/YYYY or M/D/YYYY  (US / QB format)
+  // If first part > 12 it is unambiguously DD/MM/YYYY — swap.
+  const slashNum = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (slashNum) {
+    const a = parseInt(slashNum[1], 10), b = parseInt(slashNum[2], 10);
+    const yyyy = slashNum[3];
+    if (a > 12) return `${yyyy}-${String(b).padStart(2, '0')}-${String(a).padStart(2, '0')}`;
+    return `${yyyy}-${String(a).padStart(2, '0')}-${String(b).padStart(2, '0')}`;
   }
 
-  // DD-MM-YYYY or DD/MM/YYYY
-  const dashDMY = s.match(/^(\d{2})[\-\/](\d{2})[\-\/](\d{4})$/);
-  if (dashDMY) {
-    const [, a, b, yyyy] = dashDMY;
-    const aNum = parseInt(a, 10);
-    if (aNum > 12) return `${yyyy}-${b}-${a}`;
-    return `${yyyy}-${a}-${b}`;
+  // MM-DD-YYYY or DD-MM-YYYY (dash numeric)
+  const dashNum = s.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (dashNum) {
+    const a = parseInt(dashNum[1], 10), b = parseInt(dashNum[2], 10);
+    const yyyy = dashNum[3];
+    if (a > 12) return `${yyyy}-${String(b).padStart(2, '0')}-${String(a).padStart(2, '0')}`;
+    return `${yyyy}-${String(a).padStart(2, '0')}-${String(b).padStart(2, '0')}`;
   }
 
-  // ISO with time
-  const isoMatch = s.match(/^(\d{4}-\d{2}-\d{2})[T ]/);
-  if (isoMatch) return isoMatch[1];
+  // MMM D, YYYY  or  MMM DD YYYY  (e.g. "Mar 23, 2026" / "March 23 2026")
+  const mmmDY = s.match(/^([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})$/);
+  if (mmmDY) {
+    const mi = MONTH_LOOKUP[mmmDY[1].toLowerCase().slice(0, 3)];
+    if (mi) return `${mmmDY[3]}-${String(mi).padStart(2, '0')}-${mmmDY[2].padStart(2, '0')}`;
+  }
 
-  // Fallback: same rules as parseDateParts (local day for locale strings)
-  const parts = parseDateParts(s);
-  if (parts) {
-    return `${parts.y}-${String(parts.m).padStart(2, '0')}-${String(parts.d).padStart(2, '0')}`;
+  // D MMM YYYY  or  DD MMM YYYY  (e.g. "23 Mar 2026")
+  const dMmmY = s.match(/^(\d{1,2})\s+([A-Za-z]{3,9}),?\s+(\d{4})$/);
+  if (dMmmY) {
+    const mi = MONTH_LOOKUP[dMmmY[2].toLowerCase().slice(0, 3)];
+    if (mi) return `${dMmmY[3]}-${String(mi).padStart(2, '0')}-${dMmmY[1].padStart(2, '0')}`;
+  }
+
+  // DD-MMM-YYYY  (e.g. "23-Mar-2026")
+  const dDashMmm = s.match(/^(\d{1,2})-([A-Za-z]{3,9})-(\d{4})$/);
+  if (dDashMmm) {
+    const mi = MONTH_LOOKUP[dDashMmm[2].toLowerCase().slice(0, 3)];
+    if (mi) return `${dDashMmm[3]}-${String(mi).padStart(2, '0')}-${dDashMmm[1].padStart(2, '0')}`;
   }
 
   return null;
