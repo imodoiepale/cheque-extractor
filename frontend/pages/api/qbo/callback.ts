@@ -58,17 +58,28 @@ export default async function handler(
     let integration = null;
     try {
       serviceClient = createServiceClient();
+      // Filter by tenantId (decoded from state) so we always read the right tenant's credentials.
+      // Fall back to limit(1) if no tenant-specific row exists (e.g. shared/legacy setup).
       const { data, error: dbError } = await serviceClient
         .from('integrations')
         .select('qb_client_id, qb_client_secret, qb_redirect_uri, tenant_id')
         .eq('provider', 'quickbooks')
-        .limit(1)
-        .single();
-      
+        .eq('tenant_id', tenantId)
+        .maybeSingle();
+
       if (dbError) {
         console.warn('⚠️ Service client DB read failed:', dbError.message);
-      } else {
+      } else if (data) {
         integration = data;
+      } else {
+        // No tenant-specific row — fall back to any QB integration
+        const { data: anyData } = await serviceClient
+          .from('integrations')
+          .select('qb_client_id, qb_client_secret, qb_redirect_uri, tenant_id')
+          .eq('provider', 'quickbooks')
+          .limit(1)
+          .maybeSingle();
+        integration = anyData;
       }
     } catch (svcErr: any) {
       console.warn('⚠️ Service client unavailable, falling back to cookie auth:', svcErr.message);
@@ -82,17 +93,19 @@ export default async function handler(
           .from('integrations')
           .select('qb_client_id, qb_client_secret, qb_redirect_uri, tenant_id')
           .eq('provider', 'quickbooks')
-          .single();
+          .eq('tenant_id', tenantId)
+          .maybeSingle();
         integration = data;
       } catch (cookieErr: any) {
         console.warn('⚠️ Cookie client also failed:', cookieErr.message);
       }
     }
 
-    // Fallback to env vars
+    // Env vars OVERRIDE database values — same priority as auth.ts to guarantee they always match.
     const clientId = integration?.qb_client_id || process.env.QUICKBOOKS_CLIENT_ID;
     const clientSecret = integration?.qb_client_secret || process.env.QUICKBOOKS_CLIENT_SECRET;
-    const redirectUri = integration?.qb_redirect_uri || process.env.QUICKBOOKS_REDIRECT_URI || `${process.env.NEXT_PUBLIC_APP_URL}/api/qbo/callback`;
+    const appUrl = (process.env.NEXT_PUBLIC_APP_URL || 'https://kyriq.com').replace(/\/$/, '');
+    const redirectUri = process.env.QUICKBOOKS_REDIRECT_URI || integration?.qb_redirect_uri || `${appUrl}/api/qbo/callback`;
     
     console.log('🔑 QB Callback credentials source:', {
       fromDB: !!integration?.qb_client_id,
