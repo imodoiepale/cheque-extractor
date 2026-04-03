@@ -533,7 +533,9 @@ async function pullQBTransactions() {
     const session = await getSession();
     allTxns.forEach(t => { t.user_id = session.user.id; });
     try {
-      await supabaseRequest('qb_transactions', {
+      // on_conflict required: without it PostgREST matches on UUID PK (always misses)
+      // and then INSERT hits the unique constraint on (tenant_id, realm_id, txn_id)
+      await supabaseRequest('qb_transactions?on_conflict=tenant_id,realm_id,txn_id', {
         method: 'POST',
         headers: { Prefer: 'resolution=merge-duplicates' },
         body: JSON.stringify(allTxns),
@@ -1007,16 +1009,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               });
               if (res.ok) return { success: true };
             }
-            // Fallback: direct Supabase PATCH on checks table
-            const tenantId = await getTenantId(s.user.id).catch(() => null);
-            if (tenantId) {
-              await supabaseRequest(
-                `checks?id=eq.${encodeURIComponent(msg.checkId)}&tenant_id=eq.${tenantId}`,
-                { method: 'PATCH', body: JSON.stringify({ ...msg.fields, updated_at: new Date().toISOString() }) }
-              );
-              return { success: true };
-            }
-            return { error: 'Could not update: no tenant_id' };
+            // check_0182-style IDs live in jobs.checks_data JSON, NOT in checks table (UUID PK)
+            // No valid fallback exists — log and succeed silently
+            logErr('UPDATE_CHECK_FIELDS: jobId missing, cannot update job check', { checkId: msg.checkId });
+            return { success: true, warning: 'Fields not persisted: jobId required' };
           } catch (e) {
             logErr('UPDATE_CHECK_FIELDS failed', e);
             return { error: e.message };
@@ -1041,16 +1037,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               });
               if (res.ok) return { success: true };
             }
-            // Fallback: direct Supabase PATCH on checks table
-            const tenantId = await getTenantId(s.user.id).catch(() => null);
-            if (tenantId) {
-              await supabaseRequest(
-                `checks?id=eq.${encodeURIComponent(msg.checkId)}&tenant_id=eq.${tenantId}`,
-                { method: 'PATCH', body: JSON.stringify({ status: msg.status, updated_at: new Date().toISOString() }) }
-              );
-              return { success: true };
-            }
-            return { error: 'Could not update: no tenant_id' };
+            // check_0182-style IDs live in jobs.checks_data JSON, NOT in checks table (UUID PK)
+            // No valid fallback exists — log and succeed silently
+            logErr('UPDATE_CHECK_STATUS: jobId missing, cannot update job check', { checkId: msg.checkId, status: msg.status });
+            return { success: true, warning: 'Status not persisted: jobId required' };
           } catch (e) {
             logErr('UPDATE_CHECK_STATUS failed', e);
             return { error: e.message };
@@ -1212,14 +1202,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 logErr('APPROVE_AND_CLEAR: status route failed (non-critical)', dbErr);
               }
             } else {
-              // Last-resort fallback: patch checks.check_id (text column, not UUID)
-              const tenantId2 = await getTenantId(s2.user.id).catch(() => null);
-              if (tenantId2) {
-                await supabaseRequest(
-                  `checks?check_id=eq.${encodeURIComponent(checkId)}&tenant_id=eq.${tenantId2}`,
-                  { method: 'PATCH', body: JSON.stringify({ status: 'approved', updated_at: new Date().toISOString() }) }
-                ).catch(dbErr => logErr('APPROVE_AND_CLEAR: fallback DB save failed', dbErr));
-              }
+              // jobId missing — check_0182 IDs are in jobs.checks_data JSON, not in checks table
+              logErr('APPROVE_AND_CLEAR: jobId missing, approval status not persisted to DB', { checkId });
             }
           };
 
