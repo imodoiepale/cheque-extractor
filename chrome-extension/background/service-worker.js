@@ -5,6 +5,9 @@
 
 const CONFIG_CACHE_TTL = 3600000; // 1 hour in ms
 
+// In-memory checks cache — avoids round-tripping 1000+ check objects through sendMessage
+let _swChecksCache = null;
+
 // ── Structured logging ───────────────────────────────────────
 function log(msg, data) {
   const ts = new Date().toISOString().slice(11, 23);
@@ -276,8 +279,16 @@ async function qbApiRequest(endpoint, method = 'GET', body = null) {
   }
   const res = await fetch(url, opts);
   if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw new Error(err?.Fault?.Error?.[0]?.Detail || `QB API error ${res.status}`);
+    const rawBody = await res.text().catch(() => '');
+    let parsed = {};
+    try { parsed = JSON.parse(rawBody); } catch {}
+    const detail  = parsed?.Fault?.Error?.[0]?.Detail  || '';
+    const message = parsed?.Fault?.Error?.[0]?.Message || `QB API error ${res.status}`;
+    const e = new Error(detail || message);
+    e.qbFault  = parsed;
+    e.qbStatus = res.status;
+    e.qbRaw    = rawBody;
+    throw e;
   }
   return res.json();
 }
@@ -485,40 +496,94 @@ async function pullQBTransactions() {
     { q: `SELECT * FROM Purchase WHERE PaymentType = 'Check' AND TxnDate >= '${windowStart}'`, key: 'Purchase', type: 'Purchase', source: 'cheque_written' },
     { q: `SELECT * FROM BillPayment WHERE TxnDate >= '${windowStart}'`, key: 'BillPayment', type: 'BillPayment', source: 'bill_paid_by_cheque' },
     { q: `SELECT * FROM Check WHERE TxnDate >= '${windowStart}'`, key: 'Check', type: 'Check', source: 'payroll_check' },
+    { q: `SELECT * FROM Payment WHERE TxnDate >= '${windowStart}'`, key: 'Payment', type: 'Payment', source: 'cheque_received' },
   ];
 
-  // Fetch all transaction types in parallel for 3x faster sync
-  const allTxns = [];
-  const fetchPromises = queries.map(async ({ q, key, type, source }) => {
-    try {
+  const QBO_PAGE_SIZE = 1000;
+
+  // Paginated QBO query — fetches all pages (QB returns max 1000 per page)
+  async function qboQueryAll(baseQuery, entityKey) {
+    let startPos = 1;
+    const all = [];
+    while (true) {
+      const pagedQ = `${baseQuery} STARTPOSITION ${startPos} MAXRESULTS ${QBO_PAGE_SIZE}`;
       const res = await fetch(
-        `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(q)}&minorversion=65`,
+        `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(pagedQ)}&minorversion=73`,
         { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
       );
-      if (res.ok) {
-        const data = await res.json();
-        let txns = data?.QueryResponse?.[key] || [];
-        // BillPayment: QB IDS does not support PayType in WHERE clause — filter client-side
-        if (type === 'BillPayment') txns = txns.filter(t => (t.PayType || '').toLowerCase() === 'check');
-        return txns.map(t => ({
+      if (!res.ok) {
+        // Non-200 — read body for actual error detail
+        let qbDetail = '';
+        try {
+          const errBody = await res.json();
+          qbDetail = errBody?.Fault?.Error?.[0]?.Detail || errBody?.Fault?.Error?.[0]?.Message || JSON.stringify(errBody).slice(0, 200);
+        } catch (_) { try { qbDetail = await res.text(); } catch (_2) {} }
+        // Return the error info so the caller can decide whether to throw or continue
+        return { ok: false, status: res.status, detail: qbDetail || '(no detail)' };
+      }
+      const data = await res.json();
+      const page = data?.QueryResponse?.[entityKey] || [];
+      all.push(...page);
+      if (page.length < QBO_PAGE_SIZE) break; // last page
+      startPos += QBO_PAGE_SIZE;
+    }
+    return { ok: true, txns: all };
+  }
+
+  // Fetch all transaction types in parallel for faster sync
+  const allTxns = [];
+  const partialErrors = [];
+  const fetchPromises = queries.map(async ({ q, key, type, source }) => {
+    try {
+      const result = await qboQueryAll(q, key);
+      if (!result.ok) {
+        logErr(`QB Intuit API ${result.status} for ${type} — sync will be incomplete: ${result.detail}`);
+        partialErrors.push({ type, status: result.status, detail: result.detail });
+        if (result.status === 401) throw new Error('QB_RECONNECT_NEEDED');
+        return [];
+      }
+      let txns = result.txns;
+      // BillPayment: QB IDS does not support PayType in WHERE clause — filter client-side
+      if (type === 'BillPayment') txns = txns.filter(t => (t.PayType || t.CheckPayment?.PayType || '').toLowerCase() === 'check');
+      // Payment: filter for cheque payment methods client-side
+      if (type === 'Payment') txns = txns.filter(t => {
+        const method = (t.PaymentMethodRef?.name || '').toLowerCase();
+        return method.includes('check') || method.includes('cheque');
+      });
+      return txns.map(t => {
+        // Type-specific payee + bank account extraction.
+        // BillPayment: vendor is VendorRef; bank account is nested under CheckPayment.BankAccountRef
+        // (not BankAccountRef directly — that field belongs to Check/Purchase only).
+        let payee, account;
+        if (type === 'BillPayment') {
+          payee   = t.VendorRef?.name || null;
+          account = t.CheckPayment?.BankAccountRef?.name || t.APAccountRef?.name || null;
+        } else if (type === 'Purchase') {
+          payee   = t.EntityRef?.name || null;
+          account = t.AccountRef?.name || null;
+        } else if (type === 'Payment') {
+          payee   = t.CustomerRef?.name || null;
+          account = t.DepositToAccountRef?.name || 'Undeposited Funds';
+        } else { // Check (payroll / direct disbursement)
+          payee   = t.PayeeRef?.name || t.EntityRef?.name || null;
+          account = t.BankAccountRef?.name || t.AccountRef?.name || null;
+        }
+        return {
           tenant_id: tenantId,
           realm_id: realmId,
-          // txn_id encodes both type and Intuit Id: "purchase-123", "billpayment-456"
           txn_id: `${type.toLowerCase()}-${t.Id}`,
           txn_type: type,
+          qb_source: source,
           txn_date: t.TxnDate,
-          // PayeeRef is the primary field for Check entities; fall through to EntityRef/VendorRef for others
-          payee: t.PayeeRef?.name || t.EntityRef?.name || t.VendorRef?.name || t.CustomerRef?.name || null,
+          payee,
           amount: t.TotalAmt,
           memo: t.PrivateNote || null,
-          doc_number: t.DocNumber || null,
-          account: t.BankAccountRef?.name || t.AccountRef?.name || null,
-          // qb_id NOT stored — column doesn't exist in qb_transactions schema.
-          // Extract Intuit Id from txn_id when needed: txn_id.split('-').slice(1).join('-')
-        }));
-      }
-      return [];
+          doc_number: t.DocNumber || (type === 'Payment' ? (t.PaymentRefNum || null) : null),
+          account,
+        };
+      });
     } catch (e) {
+      if (e.message === 'QB_RECONNECT_NEEDED') throw e; // bubble up — PULL_QB_TXNS handler shows reconnect banner
       console.warn(`QB query failed for ${type}:`, e.message);
       return [];
     }
@@ -542,13 +607,42 @@ async function pullQBTransactions() {
   });
   // #endregion
 
-  // Upsert to Supabase
+  // Upsert to Supabase — qb_entries FIRST (canonical table for matching), qb_transactions SECOND (non-fatal).
+  // IMPORTANT: the web app pull-checks.ts uses the same pattern. The old order (qb_transactions first
+  // with `throw e`) meant any qb_transactions failure silently blocked qb_entries from ever being written.
   if (allTxns.length > 0) {
     const session = await getSession();
     allTxns.forEach(t => { t.user_id = session.user.id; });
+
+    // ── 1. qb_entries (primary — matching reads from here) ────────────────────
+    const allQBEntries = allTxns.map(t => ({
+      id:           t.txn_id,
+      intuit_id:    t.txn_id.split('-').slice(1).join('-'),
+      tenant_id:    t.tenant_id,
+      qb_type:      t.txn_type,
+      qb_source:    t.qb_source,
+      check_number: t.doc_number || '',
+      date:         t.txn_date  || '',
+      amount:       t.amount != null ? String(t.amount) : '0',
+      payee:        t.payee   || '',
+      account:      t.account || '',
+      memo:         t.memo    || '',
+      synced_at:    new Date().toISOString(),
+    }));
     try {
-      // on_conflict required: without it PostgREST matches on UUID PK (always misses)
-      // and then INSERT hits the unique constraint on (tenant_id, realm_id, txn_id)
+      await supabaseRequest('qb_entries?on_conflict=id', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates' },
+        body: JSON.stringify(allQBEntries),
+      });
+      log(`pullQBTransactions: qb_entries upserted ${allQBEntries.length} rows`);
+    } catch (entryErr) {
+      logErr('pullQBTransactions: qb_entries upsert failed', entryErr);
+      throw entryErr; // qb_entries is the critical table — surface the error
+    }
+
+    // ── 2. qb_transactions (secondary — non-fatal; missing constraint OK) ─────
+    try {
       await supabaseRequest('qb_transactions?on_conflict=tenant_id,realm_id,txn_id', {
         method: 'POST',
         headers: { Prefer: 'resolution=merge-duplicates' },
@@ -562,20 +656,21 @@ async function pullQBTransactions() {
         data: { rowCount: allTxns.length },
       });
       // #endregion
-    } catch (e) {
+    } catch (txnErr) {
       // #region agent log
       debugAgentLog({
         hypothesisId: 'H2',
         location: 'service-worker.js:pullQBTransactions',
-        message: 'supabase qb_transactions upsert failed',
-        data: { err: String(e?.message || e), rowCount: allTxns.length },
+        message: 'supabase qb_transactions upsert failed (non-fatal — qb_entries already written)',
+        data: { err: String(txnErr?.message || txnErr), rowCount: allTxns.length },
       });
       // #endregion
-      throw e;
+      logErr('pullQBTransactions: qb_transactions upsert failed (non-fatal)', txnErr);
+      // Do NOT throw — qb_entries was already written successfully above
     }
   }
 
-  return allTxns;
+  return { txns: allTxns, partialErrors };
 }
 
 // ── Run full matching ────────────────────────────────────────
@@ -585,7 +680,7 @@ async function runFullMatch(extractedChecks) {
 
   // qb_entries is the canonical source (561+ records). qb_transactions is empty (extension-only legacy store).
   const entries = await supabaseRequest(
-    `qb_entries?tenant_id=eq.${tenantId}&select=id,intuit_id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc&limit=1000`,
+    `qb_entries?tenant_id=eq.${tenantId}&select=id,intuit_id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc&limit=5000`,
     { method: 'GET' }
   ).catch(() => []);
 
@@ -613,14 +708,47 @@ async function runFullMatch(extractedChecks) {
   });
   // #endregion
 
+  // Build fast-lookup indices to avoid O(n²) brute-force over 1000+ entries
+  const byCheckNum = new Map();   // normalised check# → array of qbTxns indices
+  const byAmtBucket = new Map();  // Math.floor(cents/1000) i.e. $10 bucket → array of indices
+  qbTxns.forEach((txn, idx) => {
+    const cn = String(txn.doc_number || '').replace(/\D/g, '').replace(/^0+/, '');
+    if (cn) {
+      if (!byCheckNum.has(cn)) byCheckNum.set(cn, []);
+      byCheckNum.get(cn).push(idx);
+    }
+    const bucket = Math.floor(Math.round(parseFloat(txn.amount || 0) * 100) / 1000);
+    if (!byAmtBucket.has(bucket)) byAmtBucket.set(bucket, []);
+    byAmtBucket.get(bucket).push(idx);
+  });
+
   const results = [];
   for (const check of extractedChecks) {
+    const cn = String(check.check_number || '').replace(/\D/g, '').replace(/^0+/, '');
+    const bucket = Math.floor(Math.round(parseFloat(check.amount || 0) * 100) / 1000);
+
+    // Gather candidates: check-number matches + amount within ±$20 (adjacent $10 buckets)
+    const candidateSet = new Set();
+    if (cn && byCheckNum.has(cn)) {
+      for (const i of byCheckNum.get(cn)) candidateSet.add(i);
+    }
+    for (let b = bucket - 1; b <= bucket + 1; b++) {
+      if (byAmtBucket.has(b)) {
+        for (const i of byAmtBucket.get(b)) candidateSet.add(i);
+      }
+    }
+
+    if (candidateSet.size === 0) {
+      results.push({ check, qbTxn: null, score: 0, reasons: {}, flags: [], status: 'unmatched', amtDiff: 0 });
+      continue;
+    }
+
     let bestMatch = null, bestScore = 0, bestResult = null;
-    for (const txn of qbTxns) {
-      const result = scoreMatch(check, txn);
+    for (const idx of candidateSet) {
+      const result = scoreMatch(check, qbTxns[idx]);
       if (result.score > bestScore) {
         bestScore = result.score;
-        bestMatch = txn;
+        bestMatch = qbTxns[idx];
         bestResult = result;
       }
     }
@@ -779,6 +907,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             return { error: e.message };
           }
         }
+        case 'DISCONNECT_QB': {
+          log('DISCONNECT_QB');
+          const s = await getSession();
+          if (!s) return { error: 'Not logged in' };
+          try {
+            const tid = await getTenantId(s.user.id);
+            await supabaseRequest(`qb_connections?tenant_id=eq.${tid}`, {
+              method: 'PATCH',
+              body: JSON.stringify({ is_active: false }),
+            });
+            log('DISCONNECT_QB: all connections marked inactive', { tenantId: tid });
+            return { success: true };
+          } catch (e) {
+            logErr('DISCONNECT_QB failed', e);
+            return { error: e.message };
+          }
+        }
         case 'GET_DOCUMENTS': {
           log('GET_DOCUMENTS');
           const s = await getSession();
@@ -787,7 +932,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const backendUrl = bootstrap.backendUrl?.replace(/\/$/, '') || '';
           if (!backendUrl) return { documents: [] };
           try {
-            const res = await fetch(`${backendUrl}/api/jobs?limit=200&source=db`, {
+            const res = await fetch(`${backendUrl}/api/jobs?limit=200&source=auto`, {
               headers: { Authorization: `Bearer ${s.access_token}` },
             });
             if (!res.ok) throw new Error(`Backend /api/jobs returned ${res.status}`);
@@ -817,7 +962,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (!backendUrl) return { checks: [] };
           try {
             // Fetch all jobs then extract checks from job.checks array
-            const res = await fetch(`${backendUrl}/api/jobs?limit=200&source=db`, {
+            const res = await fetch(`${backendUrl}/api/jobs?limit=200&source=auto`, {
               headers: { Authorization: `Bearer ${s.access_token}` },
             });
             if (!res.ok) throw new Error(`Backend /api/jobs returned ${res.status}`);
@@ -851,6 +996,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               }
             }
             log('GET_CHECKS result', { count: checks.length });
+            _swChecksCache = checks;
             return { checks };
           } catch (e) {
             logErr('GET_CHECKS failed', e);
@@ -940,7 +1086,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const tenantIdQb = await getTenantId(s.user.id).catch(() => null);
           const tenantFilterQb = tenantIdQb ? `tenant_id=eq.${tenantIdQb}&` : '';
           const entries = await supabaseRequest(
-            `qb_entries?${tenantFilterQb}select=id,intuit_id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc&limit=1000`
+            `qb_entries?${tenantFilterQb}select=id,intuit_id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc&limit=5000`
           ).catch(() => []);
           // Normalise to a common shape used by renderQBList
           const txns = (entries || []).map(e => ({
@@ -995,13 +1141,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   if (msg.fields.payee) updates.PrivateNote = `[Kyriq edit] Payee: ${msg.fields.payee}\n${entity.PrivateNote || ''}`.trim();
                   if (msg.fields.doc_number) updates.DocNumber = msg.fields.doc_number;
                   if (Object.keys(updates).length > 0) {
-                    await qbApiRequest(`${txnType.toLowerCase()}?minorversion=65`, 'POST', { ...entity, ...updates });
+                    // Sparse update: only send Id + SyncToken + changed fields.
+                    // Sending the full entity ({ ...entity, ...updates }) triggers QB error 6070
+                    // ("Operation fileimport not supported") when the entity has AttachableRef,
+                    // RecurDataRef, or Line[].LinkedTxn — fields QB won't accept in write ops.
+                    await qbApiRequest(`${txnType.toLowerCase()}?minorversion=65`, 'POST', {
+                      Id: entity.Id,
+                      SyncToken: entity.SyncToken,
+                      sparse: true,
+                      ...updates,
+                    });
                     log('SAVE_QB_TXN: QB entity updated', { txnType, qbIntuitId });
                   }
                 }
               } catch (qbErr) {
                 logErr('SAVE_QB_TXN: QB update failed (Supabase still saved)', qbErr);
-                return { success: true, qbWarning: qbErr.message };
+                return { success: true, qbWarning: qbErr.message, qbRaw: qbErr.qbRaw || null, qbStatus: qbErr.qbStatus || null };
               }
             }
 
@@ -1136,9 +1291,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         case 'PULL_QB_TXNS': {
           log('PULL_QB_TXNS start');
           try {
-            const txns = await pullQBTransactions();
-            log('PULL_QB_TXNS done', { count: txns.length });
-            return { success: true, count: txns.length };
+            const { txns: pullTxns, partialErrors } = await pullQBTransactions();
+            log('PULL_QB_TXNS done', { count: pullTxns.length, partialErrors });
+            return { success: true, count: pullTxns.length, partialErrors: partialErrors || [] };
           } catch (pullErr) {
             if (pullErr.message === 'QB_RECONNECT_NEEDED') {
               logErr('PULL_QB_TXNS: QB authorization expired — reconnect required', pullErr);
@@ -1158,8 +1313,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           return { success: true, data: result };
         }
         case 'RUN_MATCHING': {
-          log('RUN_MATCHING', { checksCount: msg.checks?.length });
-          const matches = await runFullMatch(msg.checks);
+          const checksToMatch = (_swChecksCache?.length ? _swChecksCache : msg.checks) || [];
+          log('RUN_MATCHING', { checksCount: checksToMatch.length, fromCache: !msg.checks });
+          const matches = await runFullMatch(checksToMatch);
           log('RUN_MATCHING done', { matchCount: matches?.length });
           // #region agent log
           const withQb = (matches || []).filter((m) => m.qbTxn).length;
@@ -1168,7 +1324,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             location: 'service-worker.js:RUN_MATCHING',
             message: 'match result summary',
             data: {
-              checks: msg.checks?.length ?? 0,
+              checks: checksToMatch.length,
               results: matches?.length ?? 0,
               withQbTxn: withQb,
               topScores: (matches || []).slice(0, 5).map((m) => m.score),
@@ -1241,6 +1397,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             }
           };
 
+          // Skip QB API entirely for file-import entries — they have no Intuit record to update
+          const isFileImport = (qbTxn.qb_type === 'FileImport' || qbTxn.txn_type === 'FileImport' || qbTxn.qb_source === 'qbo_file_upload');
+          if (isFileImport) {
+            await saveCheckApproval(msg.checkId, msg.jobId);
+            chrome.runtime.sendMessage({ type: 'CHECK_UPDATED', checkId: msg.checkId, jobId: msg.jobId, status: 'approved', cleared: false }).catch(() => {});
+            return { success: true, cleared: false, warning: 'File import entry — approval saved in Kyriq. No QB Online update needed.' };
+          }
+
           try {
             await clearQBTransaction(txnType, qbIntuitId);
             log(`APPROVE_AND_CLEAR: cleared ${txnType} #${qbIntuitId} in QB`);
@@ -1297,7 +1461,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // Local-only approve: record status in DB but warn user that QB was not cleared
             await saveCheckApproval(msg.checkId, msg.jobId);
             chrome.runtime.sendMessage({ type: 'CHECK_UPDATED', checkId: msg.checkId, jobId: msg.jobId, status: 'approved', cleared: false }).catch(() => {});
-            return { success: true, cleared: false, warning: `QB not cleared: ${e.message}` };
+            return { success: true, cleared: false, warning: `QB not cleared: ${e.message}`, qbRaw: e.qbRaw || null, qbStatus: e.qbStatus || null };
           }
         }
         case 'SEARCH_QB': {

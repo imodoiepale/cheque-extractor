@@ -297,6 +297,23 @@ document.addEventListener('DOMContentLoaded', () => {
   $('#approve-confirm-overlay')?.addEventListener('click', e => {
     if (e.target === $('#approve-confirm-overlay')) hideApproveConfirm();
   });
+
+  // Error dialog bindings
+  $('#error-dialog-close')?.addEventListener('click',  hideErrorDialog);
+  $('#error-dialog-close2')?.addEventListener('click', hideErrorDialog);
+  $('#error-dialog-overlay')?.addEventListener('click', e => {
+    if (e.target === $('#error-dialog-overlay')) hideErrorDialog();
+  });
+  $('#error-dialog-copy')?.addEventListener('click', () => {
+    const title = $('#error-dialog-title')?.textContent || '';
+    const msg   = $('#error-dialog-msg')?.textContent   || '';
+    const raw   = $('#error-dialog-raw')?.textContent   || '';
+    const parts = [`[Kyriq Error] ${title}`, msg, raw ? `--- Raw QB Response ---\n${raw}` : ''].filter(Boolean);
+    navigator.clipboard.writeText(parts.join('\n\n')).then(() => {
+      const btn = $('#error-dialog-copy');
+      if (btn) { btn.textContent = '✓ Copied!'; setTimeout(() => { btn.textContent = '📋 Copy'; }, 2000); }
+    }).catch(() => {});
+  });
   $('#approve-confirm-ok')?.addEventListener('click', async () => {
     const idx = _pendingApproveIdx;
     hideApproveConfirm();
@@ -419,7 +436,11 @@ async function postLoginFlow() {
           dbg('QB token expired on login — reconnect required', 'error');
           return;
         }
+        _cachedQB = null; // Invalidate QB Data cache so tab shows fresh data
         dbg(`QB auto-sync: ${pullRes?.count || 0} transactions`);
+        if (pullRes?.partialErrors?.length) {
+          dbg(`QB auto-sync partial errors: ${pullRes.partialErrors.map(e => `${e.type}(${e.status})`).join(', ')}`, 'warn');
+        }
       } catch (e) {
         dbg(`QB auto-sync failed (non-fatal): ${e.message}`, 'warn');
       }
@@ -772,15 +793,15 @@ async function approveAndClear(idx) {
       const res = await sendMsg({ type: 'APPROVE_AND_CLEAR', qbTxn: match.qbTxn, checkId, jobId });
       if (res?.error) {
         dbg(`Approve failed: ${res.error}`, 'error');
-        showWarningBanner(`❌ Approval failed: ${res.error}`);
+        showErrorDialog('QB Approve Failed', res.error, res.qbRaw || null);
         hideLoading();
         return;
       }
       match.status = 'approved';
       if (res?.warning) {
-        // Local-only approve — show persistent warning in the match banner
+        // Local-only approve — show persistent error dialog so user can read + copy the reason
         dbg(`Approved locally only: ${res.warning}`, 'warn');
-        showWarningBanner(`⚠️ Approved locally — QB not cleared: ${res.warning}`);
+        showErrorDialog('QB Not Cleared', `Approved in Kyriq — but QB was not updated:\n\n${res.warning}`, res.qbRaw || null);
       } else {
         dbg('Approved & cleared in QB', 'success');
         showSuccessBanner('Approved & cleared in QuickBooks ✓');
@@ -791,7 +812,7 @@ async function approveAndClear(idx) {
       if (checkId && jobId) {
         sendMsg({ type: 'UPDATE_CHECK_STATUS', checkId, jobId, status: 'approved' }).catch(() => {});
       }
-      showWarningBanner('⚠️ Approved locally — no QB transaction linked to this check');
+      showWarningBanner('⚠️ Approved — no QB transaction linked to this check');
       dbg('Approved locally only (no QB txn linked)', 'warn');
     }
     renderMatches();
@@ -811,6 +832,30 @@ function showBanner(msg, type = 'warn', autoHideMs = 8000) {
 function showWarningBanner(msg) { showBanner(msg, 'warn', 8000); }
 function showSuccessBanner(msg) { showBanner(msg, 'success', 6000); }
 function showErrorBanner(msg)   { showBanner(msg, 'error',   10000); }
+
+// ── Persistent error dialog with copyable raw QB body ────────
+function showErrorDialog(title, msg, rawBody) {
+  const overlay = $('#error-dialog-overlay');
+  if (!overlay) return;
+  $('#error-dialog-title').textContent = title || 'Error';
+  $('#error-dialog-msg').textContent   = msg   || 'An unknown error occurred.';
+  const rawWrap = $('#error-dialog-raw-wrap');
+  const rawPre  = $('#error-dialog-raw');
+  if (rawBody && rawWrap && rawPre) {
+    let display = rawBody;
+    try { display = JSON.stringify(JSON.parse(rawBody), null, 2); } catch {}
+    rawPre.textContent  = display;
+    rawWrap.style.display = '';
+    rawWrap.removeAttribute('open');
+  } else if (rawWrap) {
+    rawWrap.style.display = 'none';
+  }
+  overlay.style.display = '';
+}
+function hideErrorDialog() {
+  const overlay = $('#error-dialog-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
 
 // ── Upload workflow (3-step) ──────────────────────────────────
 function setUploadStep(step) {
@@ -966,10 +1011,11 @@ async function runExtraction() {
         return;
       }
 
-      // Parse checks_data
-      const checksData = typeof job.checks_data === 'string'
-        ? JSON.parse(job.checks_data || '[]')
-        : (job.checks_data || []);
+      // Parse checks — backend returns `checks` (array), legacy used `checks_data` (JSON string)
+      const checksData = job.checks
+        || (typeof job.checks_data === 'string'
+          ? JSON.parse(job.checks_data || '[]')
+          : (job.checks_data || []));
 
       extractedChecks = checksData.map(c => {
         const ext = c.extraction || {};
@@ -988,6 +1034,10 @@ async function runExtraction() {
       appendLog(`✓ Done — ${extractedChecks.length} cheques extracted from ${job.total_pages || '?'} pages`, 'ok');
       $('#progress-summary').textContent = `Complete — ${extractedChecks.length} cheques`;
       renderExtracted();
+
+      // Refresh docs cache so the new file appears in the Docs dropdown immediately
+      _cachedDocs = null;
+      loadDocuments(true).catch(() => {});
     }
   }, 2000);
 }
@@ -1158,7 +1208,7 @@ function renderDocumentsList(docs) {
       const res = await sendMsg({ type: 'DELETE_DOCUMENT', jobId });
       if (res?.error) {
         dbg(`Delete failed: ${res.error}`, 'error');
-        alert(`Delete failed: ${res.error}`);
+        showErrorDialog('Delete Failed', res.error);
         btn.disabled = false;
         btn.textContent = '🗑';
         return;
@@ -1566,6 +1616,34 @@ function bindEvents() {
   });
   $('#btn-profile-logout')?.addEventListener('click', doLogout);
 
+  // ── Disconnect QB (profile panel) ──
+  $('#btn-qb-disconnect')?.addEventListener('click', async () => {
+    hide('#profile-panel');
+    dbg('Disconnecting QB...');
+    showLoading('Disconnecting QuickBooks...');
+    const res = await sendMsg({ type: 'DISCONNECT_QB' });
+    hideLoading();
+    if (res?.error) {
+      dbg(`Disconnect QB error: ${res.error}`, 'error');
+      return;
+    }
+    connections = [];
+    matches = [];
+    dbg('QB disconnected — returning to connect screen', 'info');
+    showView('qb-connect');
+  });
+
+  // ── Reconnect QB (company bar) ──
+  $('#btn-qb-reconnect')?.addEventListener('click', async () => {
+    dbg('Reconnect QB: opening OAuth flow');
+    const res = await sendMsg({ type: 'OPEN_QB_AUTH' });
+    if (res?.success) {
+      dbg('QB OAuth tab opened — complete auth and return here', 'success');
+    } else {
+      dbg(`QB reconnect error: ${res?.error || 'unknown'}`, 'error');
+    }
+  });
+
   // ── QB Connect ──
   $('#btn-qb-connect').addEventListener('click', async () => {
     dbg('QB Connect: opening OAuth flow via service worker');
@@ -1711,7 +1789,25 @@ function bindEvents() {
       dbg('QB token expired — reconnect required', 'error');
       return;
     }
-    dbg(`Sync done: ${pullRes?.count || 0} txns`);
+    // Invalidate QB Data cache so tab shows fresh results
+    _cachedQB = null;
+    const syncCount = pullRes?.count || 0;
+    const partialErrs = pullRes?.partialErrors || [];
+    dbg(`Sync done: ${syncCount} txns`);
+
+    // Show user-visible feedback
+    if (syncCount > 0) {
+      const errNote = partialErrs.length ? ` (${partialErrs.map(e => `${e.type} failed`).join(', ')})` : '';
+      showSuccessBanner(`Synced ${syncCount} QB transactions${errNote}`);
+    } else if (partialErrs.length) {
+      showWarningBanner(`QB sync: 0 transactions. Errors: ${partialErrs.map(e => `${e.type} ${e.status}`).join(', ')}`);
+    } else {
+      showWarningBanner('QB sync: 0 transactions found. The connected company may not have check transactions recorded yet.');
+    }
+
+    // Refresh QB Data tab if user is currently viewing it
+    if (currentTab === 'qbdata') loadQBTransactions(true);
+
     // If no checks in memory yet, load from DB first
     if (!extractedChecks.length) {
       showLoading('Loading cheques from database…');
@@ -1995,11 +2091,13 @@ function bindEvents() {
 
       if (fb) {
         if (qbWarn) {
-          fb.textContent = `✓ Check saved — QB update skipped: ${qbWarn}`;
+          fb.textContent = `✓ Check saved — QB update skipped`;
           fb.className = 'rm-save-feedback warn';
+          showErrorDialog('Save to QB Failed', qbWarn, qbRes?.qbRaw || null);
         } else if (!qbOk && _reviewMatch?.qbTxn) {
-          fb.textContent = `✓ Check saved — QB push failed: ${qbRes?.error || 'unknown'}`;
+          fb.textContent = `✓ Check saved — QB push failed`;
           fb.className = 'rm-save-feedback warn';
+          showErrorDialog('Save to QB Failed', qbRes?.error || 'Unknown error', qbRes?.qbRaw || null);
         } else {
           fb.textContent = '✓ Saved successfully';
           fb.className = 'rm-save-feedback ok';

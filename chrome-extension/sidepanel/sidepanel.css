@@ -105,6 +105,12 @@ header {
   padding: 3px 8px; border-radius: 6px; background: var(--indigo-light); transition: all 0.1s;
 }
 .profile-link:hover { background: #ddd6fe; color: #4338ca; }
+.btn-profile-disconnect {
+  width: 100%; text-align: left; background: none; border: 1px solid var(--gray-200);
+  border-radius: 7px; padding: 7px 12px; font-size: 12px; font-weight: 600;
+  color: var(--gray-700); cursor: pointer; transition: all 0.1s; margin-top: 4px;
+}
+.btn-profile-disconnect:hover { background: #fef9f0; border-color: #fcd34d; color: #92400e; }
 .btn-profile-logout {
   width: 100%; text-align: left; background: none; border: 1px solid var(--gray-200);
   border-radius: 7px; padding: 7px 12px; font-size: 12px; font-weight: 600;
@@ -257,6 +263,13 @@ header {
 }
 .btn-sync:hover { background: var(--indigo-dark); }
 .btn-sync.spinning #sync-icon { display: inline-block; animation: spin 0.7s linear infinite; }
+.btn-qb-reconnect {
+  display: flex; align-items: center; gap: 4px; flex-shrink: 0;
+  padding: 6px 10px; border-radius: 7px; font-size: 11px; font-weight: 700;
+  background: #2CA01C; color: #fff; border: none; cursor: pointer; transition: all 0.15s;
+  white-space: nowrap;
+}
+.btn-qb-reconnect:hover { background: #1e7b13; }
 .btn-qb {
   display: flex; align-items: center; justify-content: center; gap: 10px;
   padding: 12px 18px; border-radius: var(--radius);
@@ -783,6 +796,49 @@ header {
 .loading-overlay p { font-size: 12px; font-weight: 600; color: var(--gray-500); margin-top: 12px; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Error dialog overlay ───────────────────────────────────── */
+.error-dialog-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.60);
+  backdrop-filter: blur(3px); display: flex; align-items: center;
+  justify-content: center; z-index: 500; padding: 16px;
+}
+.error-dialog-card {
+  background: #1a1a2e; border: 1.5px solid #ef4444; border-radius: 10px;
+  width: 100%; max-width: 360px; max-height: 80vh; overflow-y: auto;
+  padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.55);
+}
+.error-dialog-header {
+  display: flex; align-items: center; justify-content: space-between;
+}
+.error-dialog-title {
+  font-weight: 700; font-size: 13px; color: #ef4444; letter-spacing: 0.01em;
+}
+.error-dialog-x {
+  background: none; border: none; color: #64748b; cursor: pointer;
+  font-size: 14px; padding: 0 2px; line-height: 1;
+}
+.error-dialog-x:hover { color: #f1f5f9; }
+.error-dialog-msg {
+  font-size: 12px; color: #e2e8f0; line-height: 1.55; word-break: break-word;
+  white-space: pre-wrap;
+}
+.error-dialog-raw-wrap { font-size: 11px; }
+.error-dialog-raw-summary {
+  cursor: pointer; color: #94a3b8; font-size: 11px; user-select: none;
+  padding: 2px 0;
+}
+.error-dialog-raw {
+  background: #0d0d1a; border-radius: 6px; padding: 8px 10px;
+  font-family: 'Courier New', monospace; font-size: 10px; color: #86efac;
+  overflow-x: auto; white-space: pre-wrap; word-break: break-all;
+  max-height: 180px; overflow-y: auto; margin-top: 6px;
+}
+.error-dialog-actions {
+  display: flex; gap: 8px; justify-content: flex-end; padding-top: 2px;
+}
+.error-dialog-copy-btn { min-width: 86px; }
 
 /* ── QB Data tab ───────────────────────────────────────────── */
 .qb-list { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }

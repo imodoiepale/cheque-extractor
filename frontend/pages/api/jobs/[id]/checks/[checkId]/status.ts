@@ -39,24 +39,51 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return res.status(401).json({ error: 'Not authenticated' });
 
-    // Fetch job — live table is check_jobs (not 'jobs'); try job_id column first, fall back to integer PK
+    // Fetch job — try job_id TEXT column first; only attempt integer PK if jobId is purely numeric.
+    // IMPORTANT: live DB uses INTEGER primary key. Passing a hex string like "0396c0e1" to
+    // .eq('id', ...) causes: "invalid input syntax for type integer" from PostgreSQL.
     let { data: job } = await supabase
       .from('check_jobs')
       .select('id, job_id, checks_data')
       .eq('job_id', jobId)
       .maybeSingle();
 
-    if (!job) {
+    if (!job && /^\d+$/.test(jobId)) {
       const { data: jobById, error: jobByIdErr } = await supabase
         .from('check_jobs')
         .select('id, job_id, checks_data')
-        .eq('id', jobId)
+        .eq('id', parseInt(jobId, 10))
         .maybeSingle();
       if (jobByIdErr) return res.status(500).json({ error: jobByIdErr.message });
       job = jobById;
     }
 
-    if (!job) return res.status(404).json({ error: 'Job not found' });
+    // When job is not persisted in check_jobs (e.g. Python-only in-memory job), still attempt QB
+    // clear (clearQBTransactionServer only needs qb_entries, not check_jobs) and update the
+    // flattened checks table by check_id as a fallback persistence layer.
+    if (!job) {
+      console.warn(`check_jobs row not found for job_id="${jobId}"; attempting QB clear + checks table update only`);
+
+      try {
+        const mappedStatus = status === 'approved' ? 'approved' : status === 'rejected' ? 'rejected' : null;
+        if (mappedStatus) {
+          await supabase.from('checks').update({ status: mappedStatus }).eq('check_id', checkId);
+        }
+      } catch (_) { /* non-critical */ }
+
+      let qbSync: { status: 'cleared' | 'failed' | 'skipped'; message?: string } = { status: 'skipped' };
+      if (status === 'approved' && qbEntryId && typeof qbEntryId === 'string') {
+        try {
+          const clearResult = await clearQBTransactionServer(supabase, qbEntryId);
+          qbSync = clearResult.cleared
+            ? { status: 'cleared' }
+            : { status: 'failed', message: clearResult.warning };
+        } catch (qbErr: any) {
+          qbSync = { status: 'failed', message: qbErr.message };
+        }
+      }
+      return res.status(200).json({ success: true, status, message: `Check status updated to "${status}"`, qbSync });
+    }
 
     // check_jobs only has checks_data (no 'checks' column)
     const checksData: any[] = Array.isArray(job.checks_data)

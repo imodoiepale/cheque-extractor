@@ -59,6 +59,8 @@
       </select>
     </div>
     <div class="profile-divider"></div>
+    <button id="btn-qb-disconnect" class="btn-profile-disconnect">🔌 Disconnect QB</button>
+    <div class="profile-divider"></div>
     <button id="btn-profile-logout" class="btn-profile-logout">↩ Sign out</button>
   </div>
 
@@ -183,6 +185,7 @@
     <button id="btn-sync" class="btn-sync" title="Sync QB transactions">
       <span id="sync-icon">↻</span> Sync
     </button>
+    <button id="btn-qb-reconnect" class="btn-qb-reconnect" title="Re-authenticate with QuickBooks Online">↻ QB</button>
   </div>
 
   <!-- Tabs -->
@@ -537,6 +540,27 @@
       <div class="approve-confirm-actions">
         <button id="approve-confirm-cancel" class="btn-outline">✕ Cancel</button>
         <button id="approve-confirm-ok" class="btn-primary">✅ Confirm &amp; Approve</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       ERROR DIALOG (persistent, copyable, raw QB body)
+  ═══════════════════════════════════════════ -->
+  <div id="error-dialog-overlay" class="error-dialog-overlay" style="display:none;">
+    <div class="error-dialog-card">
+      <div class="error-dialog-header">
+        <span id="error-dialog-title" class="error-dialog-title">Error</span>
+        <button id="error-dialog-close" class="error-dialog-x" title="Close">✕</button>
+      </div>
+      <div id="error-dialog-msg" class="error-dialog-msg"></div>
+      <details id="error-dialog-raw-wrap" class="error-dialog-raw-wrap" style="display:none;">
+        <summary class="error-dialog-raw-summary">▶ Raw QB Response</summary>
+        <pre id="error-dialog-raw" class="error-dialog-raw"></pre>
+      </details>
+      <div class="error-dialog-actions">
+        <button id="error-dialog-copy" class="btn-sm btn-outline error-dialog-copy-btn">📋 Copy</button>
+        <button id="error-dialog-close2" class="btn-sm btn-primary">✕ Close</button>
       </div>
     </div>
   </div>

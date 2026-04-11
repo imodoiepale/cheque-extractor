@@ -31,24 +31,49 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return res.status(401).json({ error: 'Not authenticated' });
 
-    // Fetch the job row — live table is check_jobs (not 'jobs'); try job_id first, fall back to integer PK
+    // Fetch the job row — try job_id TEXT column first; only attempt integer PK if jobId is purely numeric.
+    // IMPORTANT: live DB uses INTEGER primary key. Passing a hex string like "0396c0e1" to
+    // .eq('id', ...) causes: "invalid input syntax for type integer" from PostgreSQL.
     let { data: job } = await supabase
       .from('check_jobs')
       .select('id, job_id, checks_data')
       .eq('job_id', jobId)
       .maybeSingle();
 
-    if (!job) {
+    if (!job && /^\d+$/.test(jobId)) {
       const { data: jobById, error: jobByIdErr } = await supabase
         .from('check_jobs')
         .select('id, job_id, checks_data')
-        .eq('id', jobId)
+        .eq('id', parseInt(jobId, 10))
         .maybeSingle();
       if (jobByIdErr) return res.status(500).json({ error: jobByIdErr.message });
       job = jobById;
     }
 
-    if (!job) return res.status(404).json({ error: 'Job not found' });
+    if (!job) {
+      // Job not in check_jobs — try to update the flattened checks table flat columns directly
+      console.warn(`check_jobs row not found for job_id="${jobId}"; attempting direct checks table update`);
+      const flatUpdates: Record<string, any> = {};
+      if (amount !== undefined)       flatUpdates.amount       = parseFloat(amount);
+      if (payee !== undefined)        flatUpdates.payee        = payee;
+      if (check_date !== undefined)   flatUpdates.check_date   = check_date;
+      if (check_number !== undefined) flatUpdates.check_number = check_number;
+      if (memo !== undefined)         flatUpdates.memo         = memo;
+
+      if (Object.keys(flatUpdates).length === 0) {
+        return res.status(400).json({ error: 'No fields provided to update' });
+      }
+
+      const { error: flatErr } = await supabase
+        .from('checks')
+        .update(flatUpdates)
+        .eq('check_id', checkId);
+
+      if (flatErr) {
+        return res.status(500).json({ error: `Job not in database and checks table update failed: ${flatErr.message}` });
+      }
+      return res.status(200).json({ success: true, message: 'Check fields updated (via checks table)' });
+    }
 
     // check_jobs only has checks_data (no 'checks' column)
     const checksData: any[] = Array.isArray(job.checks_data)

@@ -103,6 +103,10 @@ export async function clearQBTransactionServer(
     return { cleared: false, warning: 'QB entry not found or missing identifiers' };
   }
 
+  if (entry.qb_type === 'FileImport') {
+    return { cleared: false, warning: 'File import entry — approval saved in Kyriq. No QB Online record to update.' };
+  }
+
   const tokens = await getTokens(supabase);
   if (!tokens) return { cleared: false, warning: 'QuickBooks not connected' };
 

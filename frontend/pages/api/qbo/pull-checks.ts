@@ -436,7 +436,8 @@ export default async function handler(
 
     // ── 3. Check — Payroll checks and direct disbursements (not tied to bills) ──
     try {
-      const checkQuery = `SELECT * FROM Check${dateFilter}`;
+      const checkDateFilter = dateFilter ? ` WHERE ${dateFilter.replace(/^ AND /, '')}` : '';
+      const checkQuery = `SELECT * FROM Check${checkDateFilter}`;
       console.log('🔍 Check query:', checkQuery);
       const checks = await qboQueryAll(accessToken, realmId, checkQuery, 'Check', useSandbox);
       console.log(`✅ Checks found: ${checks.length}`);

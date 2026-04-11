@@ -29,17 +29,71 @@ export default async function handler(
   try {
     const supabase = createAuthenticatedClient(req);
 
-    // Step 1: Read integration record
-    const { data: integration, error: dbError } = await supabase
-      .from('integrations')
-      .select('access_token, refresh_token, realm_id, expires_at, qb_client_id, qb_client_secret, company_name, updated_at')
-      .eq('provider', 'quickbooks')
-      .single();
+    // Step 1: Read active QB connection (qb_connections first — same source as pull-checks.ts & extension)
+    let integration: any = null;
+    let connectionSource = 'none';
+
+    // 1a. Try qb_connections (multi-company, active connection — canonical source)
+    try {
+      const { data: activeConn } = await supabase
+        .from('qb_connections')
+        .select('access_token, refresh_token, realm_id, token_expires_at, company_name, connected_at, is_active')
+        .eq('is_active', true)
+        .order('connected_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (activeConn?.access_token && activeConn?.realm_id) {
+        // Read client credentials from integrations table (secrets stored there)
+        const { data: creds } = await supabase
+          .from('integrations')
+          .select('qb_client_id, qb_client_secret')
+          .eq('provider', 'quickbooks')
+          .maybeSingle();
+
+        integration = {
+          access_token: activeConn.access_token,
+          refresh_token: activeConn.refresh_token,
+          realm_id: activeConn.realm_id,
+          expires_at: activeConn.token_expires_at,
+          company_name: activeConn.company_name,
+          updated_at: activeConn.connected_at,
+          qb_client_id: creds?.qb_client_id,
+          qb_client_secret: creds?.qb_client_secret,
+        };
+        connectionSource = 'qb_connections';
+      }
+    } catch (_) {
+      // Fall through to integrations fallback
+    }
+
+    // 1b. Fallback: legacy integrations table (single-company)
+    if (!integration) {
+      const { data: legacyInt, error: dbError } = await supabase
+        .from('integrations')
+        .select('access_token, refresh_token, realm_id, expires_at, qb_client_id, qb_client_secret, company_name, updated_at')
+        .eq('provider', 'quickbooks')
+        .single();
+
+      if (legacyInt?.access_token && legacyInt?.realm_id) {
+        integration = legacyInt;
+        connectionSource = 'integrations';
+      }
+
+      if (dbError && !integration) {
+        diagnostics.steps.push({
+          step: '1_read_connection',
+          success: false,
+          error: dbError.message,
+          source: 'integrations (fallback)',
+        });
+      }
+    }
 
     diagnostics.steps.push({
-      step: '1_read_integration',
+      step: '1_read_connection',
       success: !!integration,
-      error: dbError?.message || null,
+      source: connectionSource,
       data: integration ? {
         hasAccessToken: !!integration.access_token,
         hasRefreshToken: !!integration.refresh_token,
@@ -54,7 +108,7 @@ export default async function handler(
     });
 
     if (!integration?.access_token || !integration?.realm_id) {
-      diagnostics.conclusion = 'FAIL: No valid integration found in database';
+      diagnostics.conclusion = 'FAIL: No valid QB connection found. Check qb_connections (active) and integrations tables.';
       return res.status(200).json(diagnostics);
     }
 
