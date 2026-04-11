@@ -925,3 +925,86 @@ header {
   background: #fff; color: var(--gray-700); outline: none; cursor: pointer;
 }
 .profile-select:focus { border-color: var(--indigo); }
+
+/* ── QB confirmation toast ────────────────────────────────── */
+@keyframes k-toast-in  { from { opacity:0; transform:translateY(8px) scale(0.97); } to { opacity:1; transform:none; } }
+@keyframes k-toast-out { from { opacity:1; transform:none; } to { opacity:0; transform:translateY(8px) scale(0.97); } }
+
+.kyriq-toast {
+  position: fixed;
+  bottom: 14px;
+  left: 12px;
+  right: 12px;
+  z-index: 9999;
+  background: #0f172a;
+  border-radius: 12px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.35), 0 2px 8px rgba(0,0,0,0.2);
+  font-family: 'Inter', -apple-system, sans-serif;
+  animation: k-toast-in 0.22s cubic-bezier(0.16,1,0.3,1) both;
+  overflow: hidden;
+}
+.kyriq-toast.kyriq-toast-out {
+  animation: k-toast-out 0.18s ease-in both;
+}
+.kyriq-toast-icon {
+  font-size: 18px;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.kyriq-toast-body {
+  flex: 1;
+  min-width: 0;
+}
+.kyriq-toast-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #f1f5f9;
+  margin-bottom: 2px;
+}
+.kyriq-toast-sub {
+  font-size: 11px;
+  color: #64748b;
+  line-height: 1.4;
+}
+.kyriq-toast-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-top: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #34d399;
+  text-decoration: none;
+}
+.kyriq-toast-link:hover { text-decoration: underline; }
+.kyriq-toast-close {
+  background: none;
+  border: none;
+  color: #475569;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  transition: color 0.12s;
+}
+.kyriq-toast-close:hover { color: #94a3b8; }
+.kyriq-toast-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: #10b981;
+  border-radius: 0 0 0 12px;
+  animation: k-toast-progress linear forwards;
+}
+@keyframes k-toast-progress {
+  from { width: 100%; }
+  to   { width: 0%; }
+}

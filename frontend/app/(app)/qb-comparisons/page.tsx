@@ -154,7 +154,7 @@ export default function QBComparisonsPage() {
     }
   };
 
-  const handleApproveCheck = async (checkId: string, jobId?: string, qbEntryId?: string) => {
+  const handleApproveCheck = async (checkId: string, jobId?: string, qbEntryId?: string, extractionData?: any) => {
     const supabase = createClient();
     const { data: { session } } = await supabase.auth.getSession();
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -164,10 +164,24 @@ export default function QBComparisonsPage() {
       throw new Error('Job ID is required to approve a check. Please reload and try again.');
     }
 
+    // Normalise OCR extraction fields to pass to the status route for QB PrivateNote enrichment
+    const ext = extractionData?.extraction || {};
+    const val = (f: any) => (typeof f === 'object' && f !== null ? f.value : f) || null;
+    const checkData = {
+      check_number:   val(ext.checkNumber),
+      check_date:     val(ext.checkDate),
+      amount:         val(ext.amount),
+      payee:          val(ext.payee),
+      bank_name:      val(ext.bankName),
+      memo:           val(ext.memo),
+      account_number: val(ext.accountNumber),
+      routing_number: val(ext.routingNumber),
+    };
+
     const res = await fetch(`/api/jobs/${jobId}/checks/${checkId}/status`, {
       method: 'PATCH',
       headers,
-      body: JSON.stringify({ status: 'approved', qbEntryId: qbEntryId || null }),
+      body: JSON.stringify({ status: 'approved', qbEntryId: qbEntryId || null, checkData }),
     });
 
     if (!res.ok) {
@@ -863,7 +877,7 @@ export default function QBComparisonsPage() {
         row={selectedRow} 
         onClose={() => setSelectedRow(null)} 
         onSave={(checkId, updates) => handleSaveCheck(checkId, updates, selectedRow?.extractionData?.job_id)}
-        onApprove={(checkId: string) => handleApproveCheck(checkId, selectedRow?.extractionData?.job_id, selectedRow?.qbData?.id)}
+        onApprove={(checkId: string) => handleApproveCheck(checkId, selectedRow?.extractionData?.job_id, selectedRow?.qbData?.id, selectedRow?.extractionData)}
         onReject={(checkId: string) => handleRejectCheck(checkId, selectedRow?.extractionData?.job_id)}
       />
       

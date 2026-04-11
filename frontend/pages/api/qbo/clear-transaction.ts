@@ -89,13 +89,26 @@ async function refreshAccessToken(supabase: any, tokens: QBTokens): Promise<stri
  *
  * Exported so it can be called directly from other API routes (e.g. status.ts).
  */
+/** Normalised check extraction fields passed from the status route. */
+interface CheckData {
+  check_number?: string | null;
+  check_date?: string | null;
+  amount?: number | string | null;
+  payee?: string | null;
+  bank_name?: string | null;
+  memo?: string | null;
+  account_number?: string | null;
+  routing_number?: string | null;
+}
+
 export async function clearQBTransactionServer(
   supabase: any,
-  qbEntryId: string
+  qbEntryId: string,
+  checkData: CheckData | null = null
 ): Promise<{ cleared: boolean; warning?: string }> {
   const { data: entry } = await supabase
     .from('qb_entries')
-    .select('intuit_id, qb_type, raw_data')
+    .select('intuit_id, qb_type, raw_data, check_number, date, amount, payee, account')
     .eq('id', qbEntryId)
     .maybeSingle();
 
@@ -137,7 +150,7 @@ export async function clearQBTransactionServer(
   const entity: any = readData[txnType] || readData[Object.keys(readData)[0]];
   if (!entity) return { cleared: false, warning: 'Transaction not found in QB response' };
 
-  const clearDate = new Date().toISOString().split('T')[0];
+  const today = new Date().toISOString().split('T')[0];
   const isBillPayCheck = txnType === 'BillPayment' && entity.PayType === 'Check';
   const isDeposit = txnType === 'Deposit';
 
@@ -147,15 +160,66 @@ export async function clearQBTransactionServer(
   } else if (isDeposit) {
     // Deposit rejects ClearStatus (QB error 2010) but requires DepositToAccountRef in sparse update (QB error 2020)
     clearFields = { DepositToAccountRef: entity.DepositToAccountRef };
+  } else if (txnType === 'Purchase') {
+    // Purchase requires PaymentType even in sparse mode (QB error 2020).
+    // ClearStatus is NOT supported on Purchase via IDS API (QB error 2010).
+    clearFields = { PaymentType: entity.PaymentType };
   } else {
     clearFields = { ClearStatus: 'Cleared' };
   }
+
+  // Build a structured PrivateNote with all available fields.
+  // Priority: live QB entity > qb_entries cache > OCR extraction (checkData).
+  // safeField ensures we never write [object Object] for partially-extracted OCR values.
+  const safeField = (v: any): string | null => {
+    if (v == null) return null;
+    if (typeof v === 'string') return v.trim() || null;
+    if (typeof v === 'number') return String(v);
+    if (typeof v === 'object' && v.value != null) return String(v.value).trim() || null;
+    return null;
+  };
+
+  const noteFields: [string, string][] = [];
+  const docNum  = entity.DocNumber          || entry.check_number || safeField(checkData?.check_number);
+  const txnDate = entity.TxnDate            || entry.date         || safeField(checkData?.check_date);
+  const payee   = entity.EntityRef?.name    || entry.payee        || safeField(checkData?.payee);
+  const amount  = entity.TotalAmt           ?? entry.amount       ?? checkData?.amount;
+  const acct    = entity.AccountRef?.name   || entry.account;
+
+  if (docNum)        noteFields.push(['Check #',  String(docNum)]);
+  if (txnDate)       noteFields.push(['Date',     txnDate]);
+  if (payee)         noteFields.push(['Payee',    payee]);
+  if (amount != null) noteFields.push(['Amount',  `$${parseFloat(String(amount)).toFixed(2)}`]);
+  if (acct)          noteFields.push(['Account',  acct]);
+
+  // OCR-only fields (bank details from scanned cheque)
+  const bankName = safeField(checkData?.bank_name);
+  const routingNum = safeField(checkData?.routing_number);
+  const acctNum = safeField(checkData?.account_number);
+  const memo = safeField(checkData?.memo);
+
+  if (bankName)    noteFields.push(['Bank',    bankName]);
+  if (routingNum)  noteFields.push(['Routing', routingNum]);
+  if (acctNum) {
+    noteFields.push(['Acct #', acctNum.length > 4 ? `****${acctNum.slice(-4)}` : acctNum]);
+  }
+  if (memo)        noteFields.push(['Memo',    memo]);
+
+  const kyriqBlock = [
+    `[Kyriq] Verified & Cleared: ${today}`,
+    ...noteFields.map(([k, v]) => `${k}: ${v}`),
+  ].join('\n');
+
+  const existingNote = (entity.PrivateNote || '')
+    .replace(/\n?---\n\[Kyriq\][\s\S]*$/, '')
+    .replace(/\[Kyriq\][\s\S]*$/, '')
+    .trim();
 
   const updatePayload: any = {
     Id: entity.Id,
     SyncToken: entity.SyncToken,
     sparse: true,
-    PrivateNote: `${entity.PrivateNote || ''}\n[Kyriq] Verified & Cleared ${clearDate}`.trim(),
+    PrivateNote: existingNote ? `${existingNote}\n---\n${kyriqBlock}` : kyriqBlock,
     ...clearFields,
   };
 

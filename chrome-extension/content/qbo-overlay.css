@@ -1,179 +1,262 @@
-/* Kyriq — QBO Content Script Overlay Styles */
+/* ─── Kyriq QBO Overlay — Styles ─────────────────────────────────── */
 
-.kyriq-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 12px;
-  font-family: 'Inter', -apple-system, sans-serif;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.2px;
-  cursor: pointer;
-  transition: all 0.15s;
-  margin-left: 6px;
-  vertical-align: middle;
-  line-height: 18px;
-}
-.kyriq-badge:hover {
-  transform: scale(1.05);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-}
-.kyriq-badge.matched {
-  background: #ecfdf5;
-  color: #059669;
-  border: 1px solid #a7f3d0;
-}
-.kyriq-badge.approved {
-  background: #eff6ff;
-  color: #2563eb;
-  border: 1px solid #bfdbfe;
-}
-.kyriq-badge.pending {
-  background: #fffbeb;
-  color: #d97706;
-  border: 1px solid #fde68a;
-}
-.kyriq-badge.discrepancy {
-  background: #fef2f2;
-  color: #dc2626;
-  border: 1px solid #fecaca;
-}
-.kyriq-badge.unmatched {
-  background: #f3f4f6;
-  color: #6b7280;
-  border: 1px solid #e5e7eb;
-}
-.kyriq-badge .cs-icon {
-  width: 12px;
-  height: 12px;
-  background: linear-gradient(135deg, #10b981, #059669);
-  border-radius: 3px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  font-size: 6px;
-  font-weight: 900;
-  flex-shrink: 0;
+:root {
+  --k-green:   #10b981;
+  --k-green-d: #059669;
+  --k-dark:    #0f172a;
+  --k-slate:   #1e293b;
+  --k-text:    #f1f5f9;
+  --k-muted:   #94a3b8;
+  --k-radius:  12px;
+  --k-font:    -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
 }
 
-/* Floating panel */
-.kyriq-panel {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  width: 320px;
-  max-height: 400px;
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 8px 40px rgba(0,0,0,0.15), 0 0 0 1px rgba(0,0,0,0.05);
-  font-family: 'Inter', -apple-system, sans-serif;
-  z-index: 999999;
-  overflow: hidden;
-  display: none;
+/* ── Keyframes ──────────────────────────────────────────────────── */
+
+@keyframes kyriq-slide-in {
+  from { opacity: 0; transform: translateY(-12px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)     scale(1); }
 }
-.kyriq-panel.open {
-  display: flex;
-  flex-direction: column;
+@keyframes kyriq-slide-out {
+  from { opacity: 1; transform: translateY(0)     scale(1); }
+  to   { opacity: 0; transform: translateY(-10px) scale(0.97); }
 }
-.kyriq-panel-header {
+@keyframes kyriq-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes kyriq-progress {
+  from { width: 100%; }
+  to   { width: 0%; }
+}
+
+/* ── Transaction detail banner ──────────────────────────────────── */
+
+#kyriq-txn-banner {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
   padding: 12px 16px;
-  background: linear-gradient(135deg, #10b981, #059669);
-  color: #fff;
+  margin: 10px 0 10px;
+  background: #fff;
+  border-radius: var(--k-radius);
+  box-shadow: 0 1px 3px rgba(0,0,0,0.08), 0 4px 16px rgba(0,0,0,0.06);
+  border-left: 3px solid var(--k-green);
+  font-family: var(--k-font);
+  position: relative;
+  overflow: hidden;
+  animation: kyriq-slide-in 0.25s cubic-bezier(0.16,1,0.3,1) both;
 }
-.kyriq-panel-header .title {
-  font-size: 13px;
+#kyriq-txn-banner.kyriq-dismissing {
+  animation: kyriq-slide-out 0.2s ease-in both;
+}
+#kyriq-txn-banner.kyriq-unverified {
+  border-left-color: #f59e0b;
+}
+#kyriq-txn-banner .kyriq-icon {
+  font-size: 18px;
+  line-height: 1;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+#kyriq-txn-banner .kyriq-body {
+  flex: 1;
+  min-width: 0;
+}
+#kyriq-txn-banner .kyriq-title {
+  font-size: 12px;
   font-weight: 700;
+  color: #0f172a;
   display: flex;
   align-items: center;
   gap: 6px;
 }
-.kyriq-panel-header .close-btn {
-  background: rgba(255,255,255,0.2);
-  border: none;
-  color: #fff;
-  width: 24px;
-  height: 24px;
-  border-radius: 6px;
-  cursor: pointer;
-  font-size: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.kyriq-panel-header .close-btn:hover {
-  background: rgba(255,255,255,0.3);
-}
-.kyriq-panel-body {
-  padding: 12px 16px;
-  overflow-y: auto;
-  max-height: 340px;
-}
-.kyriq-panel-body .stat-row {
-  display: flex;
-  justify-content: space-between;
-  padding: 6px 0;
-  font-size: 12px;
-  border-bottom: 1px solid #f3f4f6;
-}
-.kyriq-panel-body .stat-row:last-child {
-  border-bottom: none;
-}
-.kyriq-panel-body .stat-label {
-  color: #6b7280;
-}
-.kyriq-panel-body .stat-value {
+#kyriq-txn-banner .kyriq-badge-pill {
+  background: #ecfdf5;
+  color: #059669;
+  border: 1px solid #a7f3d0;
+  border-radius: 999px;
+  font-size: 9px;
   font-weight: 700;
-  color: #1a1a2e;
+  padding: 1px 7px;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
 }
-.kyriq-panel-body .stat-value.green { color: #059669; }
-.kyriq-panel-body .stat-value.amber { color: #d97706; }
-.kyriq-panel-body .stat-value.red { color: #dc2626; }
-
-/* Floating trigger button */
-.kyriq-fab {
-  position: fixed;
-  bottom: 20px;
-  right: 20px;
-  width: 48px;
-  height: 48px;
-  background: linear-gradient(135deg, #10b981, #059669);
-  border-radius: 14px;
+#kyriq-txn-banner .kyriq-fields {
+  margin-top: 6px;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 900;
-  cursor: pointer;
-  box-shadow: 0 4px 20px rgba(16,185,129,0.4);
-  z-index: 999998;
-  transition: all 0.2s;
-  border: none;
-  font-family: 'Inter', -apple-system, sans-serif;
+  flex-wrap: wrap;
+  gap: 4px 16px;
 }
-.kyriq-fab:hover {
-  transform: scale(1.08);
-  box-shadow: 0 6px 28px rgba(16,185,129,0.5);
+#kyriq-txn-banner .kyriq-field {
+  font-size: 11px;
+  color: #475569;
+  display: flex;
+  gap: 4px;
 }
-.kyriq-fab .fab-badge {
+#kyriq-txn-banner .kyriq-field-label {
+  color: #94a3b8;
+  font-weight: 500;
+}
+#kyriq-txn-banner .kyriq-close {
   position: absolute;
-  top: -4px;
-  right: -4px;
-  min-width: 18px;
-  height: 18px;
-  background: #f59e0b;
-  border-radius: 9px;
-  font-size: 10px;
-  font-weight: 700;
-  color: #fff;
+  top: 8px;
+  right: 10px;
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+#kyriq-txn-banner .kyriq-close:hover {
+  color: #475569;
+  background: #f1f5f9;
+}
+#kyriq-txn-banner .kyriq-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background: var(--k-green);
+  opacity: 0.4;
+  border-radius: 0 0 0 var(--k-radius);
+}
+#kyriq-txn-banner .kyriq-open-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--k-green-d);
+  text-decoration: none;
+  cursor: pointer;
+}
+#kyriq-txn-banner .kyriq-open-link:hover {
+  text-decoration: underline;
+}
+
+/* ── Reconciliation auto-clear button ───────────────────────────── */
+
+#kyriq-recon-btn-wrap {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 2147483645;
+  animation: kyriq-slide-in 0.3s cubic-bezier(0.16,1,0.3,1) both;
+}
+#kyriq-recon-btn-wrap.kyriq-dismissing {
+  animation: kyriq-slide-out 0.25s ease-in both;
+}
+#kyriq-recon-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #0f172a;
+  border-radius: 999px;
+  padding: 8px 14px 8px 12px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.3), 0 1px 4px rgba(0,0,0,0.2);
+  font-family: var(--k-font);
+  font-size: 12px;
+  color: #e2e8f0;
+  white-space: nowrap;
+}
+#kyriq-recon-pill .kyriq-k-logo {
+  width: 20px;
+  height: 20px;
+  background: linear-gradient(135deg, var(--k-green), var(--k-green-d));
+  border-radius: 6px;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 0 4px;
+  font-size: 9px;
+  font-weight: 900;
+  color: #fff;
+  flex-shrink: 0;
+}
+#kyriq-recon-pill .kyriq-recon-count {
+  font-weight: 700;
+  color: #f1f5f9;
+}
+#kyriq-recon-pill .kyriq-recon-sub {
+  color: #64748b;
+  font-size: 11px;
+}
+.kyriq-recon-action-btn {
+  border: none;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: var(--k-font);
+  transition: opacity 0.15s, transform 0.15s;
+  white-space: nowrap;
+}
+.kyriq-recon-action-btn:hover:not(:disabled) {
+  opacity: 0.9;
+  transform: scale(1.03);
+}
+.kyriq-recon-action-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.kyriq-recon-action-btn.preview {
+  background: #1e293b;
+  color: #94a3b8;
+}
+.kyriq-recon-action-btn.go {
+  background: linear-gradient(135deg, var(--k-green), var(--k-green-d));
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(16,185,129,0.4);
+}
+.kyriq-recon-action-btn.done {
+  background: #1e293b;
+  color: #34d399;
+}
+
+/* ── Bank feed verified badge ───────────────────────────────────── */
+
+.kyriq-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #ecfdf5;
+  color: #065f46;
+  border: 1px solid #6ee7b7;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  font-family: var(--k-font);
+  margin-left: 6px;
+  vertical-align: middle;
+  white-space: nowrap;
+  animation: kyriq-fade-in 0.3s ease both;
+}
+.kyriq-badge::before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  background: var(--k-green);
+  border-radius: 50%;
+  display: inline-block;
+}
+
+/* ── Status bar ─────────────────────────────────────────────────── */
+
+#kyriq-status-bar {
+  font-family: var(--k-font) !important;
+}
+
+/* ── Row highlights (reconcile preview) ────────────────────────── */
+
+[data-kyriq-highlighted] {
+  transition: outline 0.15s, background 0.15s;
 }

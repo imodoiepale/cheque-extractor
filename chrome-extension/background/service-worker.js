@@ -8,6 +8,22 @@ const CONFIG_CACHE_TTL = 3600000; // 1 hour in ms
 // In-memory checks cache — avoids round-tripping 1000+ check objects through sendMessage
 let _swChecksCache = null;
 
+/**
+ * Safely extract a string from an OCR extraction field.
+ * Fields can be a plain string, a number, or an object like { value: "...", confidence: 0.9 }.
+ * Falls back to null — never returns [object Object].
+ */
+function safeStr(f) {
+  if (f == null) return null;
+  if (typeof f === 'string') return f.trim() || null;
+  if (typeof f === 'number') return String(f);
+  if (typeof f === 'object') {
+    const v = f.value;
+    return (v != null && String(v).trim()) ? String(v).trim() : null;
+  }
+  return null;
+}
+
 // ── Structured logging ───────────────────────────────────────
 function log(msg, data) {
   const ts = new Date().toISOString().slice(11, 23);
@@ -293,8 +309,78 @@ async function qbApiRequest(endpoint, method = 'GET', body = null) {
   return res.json();
 }
 
+// QB Online page path by transaction type (used to build "View in QB" links)
+const QB_TXN_PATH = {
+  Purchase:    'expense',
+  BillPayment: 'billpayment',
+  Check:       'check',
+  Payment:     'payment',
+  Deposit:     'deposit',
+};
+
+function qbTxnUrl(realmId, txnType, intuitId) {
+  const path = QB_TXN_PATH[txnType] || 'transaction';
+  return `https://app.qbo.intuit.com/app/${path}?txnId=${intuitId}`;
+}
+
+/**
+ * Build the PrivateNote memo stamped on QB transactions when Kyriq approves them.
+ * Structured as labelled field: value lines so it's readable inside QB.
+ * Any pre-existing PrivateNote is preserved above a --- divider.
+ * A previous Kyriq block is replaced rather than appended.
+ *
+ * @param {object} entity   - The QB entity as returned by the read call
+ * @param {object} checkData - Extracted check fields from Kyriq (may be null)
+ * @param {object} qbTxn    - The qb_entries row from Supabase (may be null)
+ */
+function buildKyriqNote(entity, checkData, qbTxn) {
+  const today = new Date().toISOString().split('T')[0];
+
+  // Resolve each field — prefer live QB entity, fall back to qb_entries cache, then OCR extraction.
+  // Use safeStr for checkData fields since they may be { value, confidence } objects.
+  const fields = [];
+
+  const checkNum = entity.DocNumber || qbTxn?.doc_number || safeStr(checkData?.check_number);
+  if (checkNum) fields.push(['Check #',  String(checkNum)]);
+
+  const txnDate  = entity.TxnDate    || qbTxn?.txn_date   || safeStr(checkData?.check_date);
+  if (txnDate)  fields.push(['Date',     txnDate]);
+
+  const payee    = entity.EntityRef?.name || qbTxn?.payee || safeStr(checkData?.payee);
+  if (payee)    fields.push(['Payee',    payee]);
+
+  const rawAmt   = entity.TotalAmt    ?? qbTxn?.amount     ?? checkData?.amount;
+  if (rawAmt != null) fields.push(['Amount',  `$${parseFloat(rawAmt).toFixed(2)}`]);
+
+  const account  = entity.AccountRef?.name || qbTxn?.account;
+  if (account)  fields.push(['Account',  account]);
+
+  const bankName = safeStr(checkData?.bank_name);
+  const routing  = safeStr(checkData?.routing_number);
+  const acctRaw  = safeStr(checkData?.account_number);
+  const memo     = safeStr(checkData?.memo) || safeStr(entity.PrivateMemo);
+
+  if (bankName)  fields.push(['Bank',    bankName]);
+  if (routing)   fields.push(['Routing', routing]);
+  if (acctRaw)   fields.push(['Acct #',  acctRaw.length > 4 ? `****${acctRaw.slice(-4)}` : acctRaw]);
+  if (memo)      fields.push(['Memo',    memo]);
+
+  const kyriqBlock = [
+    `[Kyriq] Verified & Cleared: ${today}`,
+    ...fields.map(([k, v]) => `${k}: ${v}`),
+  ].join('\n');
+
+  // Strip any prior [Kyriq] block (idempotent re-approve), preserve the rest
+  const existing = (entity.PrivateNote || '')
+    .replace(/\n?---\n\[Kyriq\][\s\S]*$/, '')
+    .replace(/\[Kyriq\][\s\S]*$/, '')
+    .trim();
+
+  return existing ? `${existing}\n---\n${kyriqBlock}` : kyriqBlock;
+}
+
 // ── QB Clear Transaction (mark as Cleared for reconciliation) ──
-async function clearQBTransaction(txnType, txnId) {
+async function clearQBTransaction(txnType, txnId, checkData = null, qbTxn = null) {
   // Read current transaction
   const readData = await qbApiRequest(`${txnType.toLowerCase()}/${txnId}?minorversion=73`);
   const entity = readData[txnType] || readData[Object.keys(readData)[0]];
@@ -308,11 +394,13 @@ async function clearQBTransaction(txnType, txnId) {
   //     Line[].LinkedTxn   → linked-transaction reference (present in BillPayment)
   // - ClearStatus placement differs by txn type:
   //     BillPayment (PayType=Check) → nested under CheckPayment.ClearStatus
-  //     Deposit                     → ClearStatus not supported — PrivateNote stamp only
-  //     Purchase / other            → top-level ClearStatus
+  //     Deposit                     → ClearStatus not supported (QB error 2010) — PrivateNote stamp only
+  //     Purchase                    → ClearStatus not supported (QB error 2010) — PrivateNote stamp only
+  //     Check / Payment / other     → top-level ClearStatus: 'Cleared'
   const clearDate = new Date().toISOString().split('T')[0];
   const isBillPayCheck = txnType === 'BillPayment' && entity.PayType === 'Check';
   const isDeposit = txnType === 'Deposit';
+  const isPurchase = txnType === 'Purchase';
 
   let clearFields;
   if (isBillPayCheck) {
@@ -320,7 +408,13 @@ async function clearQBTransaction(txnType, txnId) {
   } else if (isDeposit) {
     // Deposit rejects ClearStatus (QB error 2010) but requires DepositToAccountRef even in sparse mode (QB error 2020)
     clearFields = { DepositToAccountRef: entity.DepositToAccountRef };
+  } else if (isPurchase) {
+    // Purchase requires PaymentType even in sparse mode (QB error 2020).
+    // ClearStatus is NOT supported on Purchase via IDS API (QB error 2010) —
+    // use the reconciliation page automation in qbo-overlay.js instead.
+    clearFields = { PaymentType: entity.PaymentType };
   } else {
+    // Check, Payment, SalesReceipt, etc. — top-level ClearStatus is supported
     clearFields = { ClearStatus: 'Cleared' };
   }
 
@@ -328,7 +422,7 @@ async function clearQBTransaction(txnType, txnId) {
     Id: entity.Id,
     SyncToken: entity.SyncToken,
     sparse: true,
-    PrivateNote: `${entity.PrivateNote || ''}\n[Kyriq] Verified & Cleared ${clearDate}`.trim(),
+    PrivateNote: buildKyriqNote(entity, checkData, qbTxn),
     ...clearFields,
   };
 
@@ -338,7 +432,12 @@ async function clearQBTransaction(txnType, txnId) {
     updatePayload
   );
 
-  return result;
+  // QB returns the full updated entity — read back PrivateNote to confirm the stamp was written.
+  const updatedEntity = result[txnType] || result[Object.keys(result)[0]] || {};
+  const confirmedNote = updatedEntity.PrivateNote || null;
+  const noteStamped   = confirmedNote ? confirmedNote.includes('[Kyriq]') : false;
+
+  return { result, confirmedNote, noteStamped };
 }
 
 // ── OCR via Gemini API ───────────────────────────────────────
@@ -505,42 +604,7 @@ async function pullQBTransactions() {
   const queries = [
     { q: `SELECT * FROM Purchase WHERE PaymentType = 'Check' AND TxnDate >= '${windowStart}'`, key: 'Purchase', type: 'Purchase', source: 'cheque_written' },
     { q: `SELECT * FROM BillPayment WHERE TxnDate >= '${windowStart}'`, key: 'BillPayment', type: 'BillPayment', source: 'bill_paid_by_cheque' },
-    { q: `SELECT * FROM Payment WHERE TxnDate >= '${windowStart}'`, key: 'Payment', type: 'Payment', source: 'cheque_received' },
-    { q: `SELECT * FROM Deposit WHERE TxnDate >= '${windowStart}'`, key: 'Deposit', type: 'Deposit', source: 'cheque_received' },
-    // NOTE: BankTransaction is NOT a queryable IDS entity (QB returns 400 QueryValidationError).
-    // Pending bank feed items must be fetched via GET /v3/company/{id}/bankdata/account/{accountId}/transactions
   ];
-
-  const QBO_PAGE_SIZE = 1000;
-
-  // Paginated QBO query — fetches all pages (QB returns max 1000 per page)
-  async function qboQueryAll(baseQuery, entityKey) {
-    let startPos = 1;
-    const all = [];
-    while (true) {
-      const pagedQ = `${baseQuery} STARTPOSITION ${startPos} MAXRESULTS ${QBO_PAGE_SIZE}`;
-      const res = await fetch(
-        `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent(pagedQ)}&minorversion=73`,
-        { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
-      );
-      if (!res.ok) {
-        // Non-200 — read body for actual error detail
-        let qbDetail = '';
-        try {
-          const errBody = await res.json();
-          qbDetail = errBody?.Fault?.Error?.[0]?.Detail || errBody?.Fault?.Error?.[0]?.Message || JSON.stringify(errBody).slice(0, 200);
-        } catch (_) { try { qbDetail = await res.text(); } catch (_2) {} }
-        // Return the error info so the caller can decide whether to throw or continue
-        return { ok: false, status: res.status, detail: qbDetail || '(no detail)' };
-      }
-      const data = await res.json();
-      const page = data?.QueryResponse?.[entityKey] || [];
-      all.push(...page);
-      if (page.length < QBO_PAGE_SIZE) break; // last page
-      startPos += QBO_PAGE_SIZE;
-    }
-    return { ok: true, txns: all };
-  }
 
   // Fetch all transaction types in parallel for faster sync
   const allTxns = [];
@@ -556,12 +620,7 @@ async function pullQBTransactions() {
       }
       let txns = result.txns;
       // BillPayment: QB IDS does not support PayType in WHERE clause — filter client-side
-      if (type === 'BillPayment') txns = txns.filter(t => (t.PayType || t.CheckPayment?.PayType || '').toLowerCase() === 'check');
-      // Payment: filter for cheque payment methods client-side
-      if (type === 'Payment') txns = txns.filter(t => {
-        const method = (t.PaymentMethodRef?.name || '').toLowerCase();
-        return method.includes('check') || method.includes('cheque');
-      });
+      if (type === 'BillPayment') txns = txns.filter(t => (t.PayType || '').toLowerCase() === 'check');
       return txns.map(t => {
         // Type-specific payee + bank account extraction.
         // BillPayment: vendor is VendorRef; bank account is nested under CheckPayment.BankAccountRef
@@ -573,16 +632,7 @@ async function pullQBTransactions() {
         } else if (type === 'Purchase') {
           payee   = t.EntityRef?.name || null;
           account = t.AccountRef?.name || null;
-        } else if (type === 'Payment') {
-          payee   = t.CustomerRef?.name || null;
-          account = t.DepositToAccountRef?.name || 'Undeposited Funds';
-        } else if (type === 'Deposit') {
-          payee   = t.Line?.[0]?.DepositLineDetail?.Entity?.name || null;
-          account = t.DepositToAccountRef?.name || null;
-        } else if (type === 'BankTransaction') {
-          payee   = null;
-          account = t.AccountRef?.name || null;
-        } else {
+        } else { // Check (payroll / direct disbursement)
           payee   = t.PayeeRef?.name || t.EntityRef?.name || null;
           account = t.BankAccountRef?.name || t.AccountRef?.name || null;
         }
@@ -594,11 +644,9 @@ async function pullQBTransactions() {
           qb_source: source,
           txn_date: t.TxnDate,
           payee,
-          amount: type === 'BankTransaction' ? Math.abs(t.Amount || 0) : t.TotalAmt,
-          memo: t.PrivateNote || t.Description || null,
-          doc_number: type === 'BankTransaction'
-            ? ((t.Description || '').match(/CHECK\s+(\d+)/i)?.[1] || t.DocNumber || null)
-            : (t.DocNumber || (type === 'Payment' ? (t.PaymentRefNum || null) : null)),
+          amount: t.TotalAmt,
+          memo: t.PrivateNote || null,
+          doc_number: t.DocNumber || null,
           account,
           ...(type === 'BankTransaction' ? { account_ref_id: t.AccountRef?.value, is_pending: true } : {}),
         };
@@ -759,8 +807,12 @@ async function runFullMatch(extractedChecks) {
       }
     }
 
+    // Terminal statuses from the DB always win over score-derived ones
+    const TERMINAL = ['approved', 'rejected', 'exported'];
+    const persistedStatus = TERMINAL.includes(check.status) ? check.status : null;
+
     if (candidateSet.size === 0) {
-      results.push({ check, qbTxn: null, score: 0, reasons: {}, flags: [], status: 'unmatched', amtDiff: 0 });
+      results.push({ check, qbTxn: null, score: 0, reasons: {}, flags: [], status: persistedStatus || 'unmatched', amtDiff: 0 });
       continue;
     }
 
@@ -781,11 +833,11 @@ async function runFullMatch(extractedChecks) {
         score: bestScore,
         reasons: bestResult.reasons,
         flags: bestResult.flags,
-        status: statusFromScore(bestScore, bestResult.flags),
+        status: persistedStatus || statusFromScore(bestScore, bestResult.flags),
         amtDiff: bestResult.amtDiff,
       });
     } else {
-      results.push({ check, qbTxn: null, score: 0, reasons: {}, flags: [], status: 'unmatched', amtDiff: 0 });
+      results.push({ check, qbTxn: null, score: 0, reasons: {}, flags: [], status: persistedStatus || 'unmatched', amtDiff: 0 });
     }
   }
 
@@ -945,6 +997,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             return { error: e.message };
           }
         }
+        case 'DISCONNECT_QB': {
+          log('DISCONNECT_QB');
+          const s = await getSession();
+          if (!s) return { error: 'Not logged in' };
+          try {
+            const tid = await getTenantId(s.user.id);
+            await supabaseRequest(`qb_connections?tenant_id=eq.${tid}`, {
+              method: 'PATCH',
+              body: JSON.stringify({ is_active: false }),
+            });
+            log('DISCONNECT_QB: all connections marked inactive', { tenantId: tid });
+            return { success: true };
+          } catch (e) {
+            logErr('DISCONNECT_QB failed', e);
+            return { error: e.message };
+          }
+        }
         case 'GET_DOCUMENTS': {
           log('GET_DOCUMENTS');
           const s = await getSession();
@@ -998,17 +1067,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   : (job.checks_data || []));
               for (const c of checksData) {
                 const ext = c.extraction || {};
+                const rawAmt = safeStr(ext.amount) || '0';
                 checks.push({
                   id: c.check_id,
                   job_id: job.job_id,
-                  check_number: ext.checkNumber?.value || ext.checkNumber || null,
-                  amount: parseFloat((ext.amount?.value || ext.amount || '0').toString().replace(/[^0-9.]/g, '')) || null,
-                  payee: ext.payee?.value || ext.payee || null,
-                  check_date: ext.checkDate?.value || ext.checkDate || null,
-                  bank_name: ext.bankName?.value || ext.bankName || null,
-                  memo: ext.memo?.value || ext.memo || null,
-                  account_number: ext.accountNumber?.value || ext.accountNumber || null,
-                  routing_number: ext.routingNumber?.value || ext.routingNumber || null,
+                  check_number: safeStr(ext.checkNumber),
+                  amount: parseFloat(rawAmt.replace(/[^0-9.]/g, '')) || null,
+                  payee: safeStr(ext.payee),
+                  check_date: safeStr(ext.checkDate),
+                  bank_name: safeStr(ext.bankName),
+                  memo: safeStr(ext.memo),
+                  account_number: safeStr(ext.accountNumber),
+                  routing_number: safeStr(ext.routingNumber),
                   image_url: c.image_url || null,
                   status: c.status || 'pending_review',
                   source_file: job.pdf_name,
@@ -1048,7 +1118,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           try {
             const { token, realmId } = await getValidQBToken();
             const qbRes = await fetch(
-              `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent("SELECT * FROM Account WHERE AccountType = 'Bank'")}&minorversion=65`,
+              `https://quickbooks.api.intuit.com/v3/company/${realmId}/query?query=${encodeURIComponent("SELECT * FROM Account WHERE AccountType = 'Bank'")}&minorversion=73`,
               { headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' } }
             );
             if (qbRes.ok) {
@@ -1153,7 +1223,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             }
             if (txnType && qbIntuitId) {
               try {
-                const readData = await qbApiRequest(`${txnType.toLowerCase()}/${qbIntuitId}?minorversion=65`);
+                const readData = await qbApiRequest(`${txnType.toLowerCase()}/${qbIntuitId}?minorversion=73`);
                 const entity = readData[txnType] || readData[Object.keys(readData)[0]];
                 if (entity) {
                   const updates = {};
@@ -1166,7 +1236,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                     // Sending the full entity ({ ...entity, ...updates }) triggers QB error 6070
                     // ("Operation fileimport not supported") when the entity has AttachableRef,
                     // RecurDataRef, or Line[].LinkedTxn — fields QB won't accept in write ops.
-                    await qbApiRequest(`${txnType.toLowerCase()}?minorversion=65`, 'POST', {
+                    await qbApiRequest(`${txnType.toLowerCase()}?minorversion=73`, 'POST', {
                       Id: entity.Id,
                       SyncToken: entity.SyncToken,
                       sparse: true,
@@ -1218,6 +1288,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           log('UPDATE_CHECK_STATUS', { checkId: msg.checkId, status: msg.status });
           const s = await getSession();
           if (!s?.access_token) return { error: 'Not logged in' };
+
+          // Patch in-memory cache immediately so subsequent RUN_MATCHING calls are consistent
+          if (_swChecksCache && msg.checkId && msg.status) {
+            const cached = _swChecksCache.find(c => c.id === msg.checkId || c.check_id === msg.checkId);
+            if (cached) cached.status = msg.status;
+          }
+
           const bootstrap = getBootstrapConfig();
           // /api/jobs/... routes are in Next.js (frontendUrl), NOT the Python backendUrl
           const statusHost = (bootstrap.frontendUrl || bootstrap.backendUrl || '').replace(/\/$/, '');
@@ -1398,6 +1475,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // Save approval status via Next.js status route (handles jobs.checks_data JSON)
           const saveCheckApproval = async (checkId, jobId) => {
             if (!checkId) return;
+
+            // Immediately patch the in-memory cache so RUN_MATCHING sees 'approved'
+            // without waiting for a full re-fetch from the backend.
+            if (_swChecksCache) {
+              const cached = _swChecksCache.find(c => c.id === checkId || c.check_id === checkId);
+              if (cached) cached.status = 'approved';
+            }
+
             const s2 = await getSession();
             if (!s2?.access_token) return;
             const bootstrap2 = getBootstrapConfig();
@@ -1458,9 +1543,31 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             }
           }
 
+          // Persist approved QB txn to local storage so content script can
+          // auto-check the reconciliation page without another API round-trip.
+          const storeKyriqApproved = async () => {
+            try {
+              const stored = await chrome.storage.local.get('kyriqApproved');
+              const map = stored.kyriqApproved || {};
+              map[String(qbIntuitId)] = {
+                intuit_id: String(qbIntuitId),
+                txn_type: txnType,
+                doc_number: qbTxn.doc_number || null,
+                amount: parseFloat(qbTxn.amount) || null,
+                payee: qbTxn.payee || null,
+                txn_date: qbTxn.txn_date || null,
+                approved_at: new Date().toISOString(),
+              };
+              await chrome.storage.local.set({ kyriqApproved: map });
+            } catch (e) {
+              logErr('storeKyriqApproved: storage write failed (non-critical)', e);
+            }
+          };
+
           try {
-            await clearQBTransaction(txnType, qbIntuitId);
-            log(`APPROVE_AND_CLEAR: cleared ${txnType} #${qbIntuitId} in QB`);
+            const clearResult = await clearQBTransaction(txnType, qbIntuitId, msg.check || null, qbTxn);
+            const { confirmedNote, noteStamped } = clearResult;
+            log(`APPROVE_AND_CLEAR: cleared ${txnType} #${qbIntuitId} in QB`, { noteStamped });
             // #region agent log
             debugAgentLog({
               hypothesisId: 'H4',
@@ -1498,9 +1605,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             } catch (auditErr) {
               logErr('APPROVE_AND_CLEAR: audit log write failed (non-critical)', auditErr);
             }
+            await storeKyriqApproved();
             await saveCheckApproval(msg.checkId, msg.jobId);
+            const { realmId: rId } = await getValidQBToken().catch(() => ({}));
+            const qbUrl = rId ? qbTxnUrl(rId, txnType, qbIntuitId) : null;
             chrome.runtime.sendMessage({ type: 'CHECK_UPDATED', checkId: msg.checkId, jobId: msg.jobId, status: 'approved', cleared: true }).catch(() => {});
-            return { success: true, cleared: true };
+            return {
+              success: true,
+              cleared: true,
+              txnType,
+              qbUrl,
+              confirmedNote,
+              noteStamped,
+            };
           } catch (e) {
             logErr('APPROVE_AND_CLEAR QB clear failed — approving locally only', e);
             // #region agent log
@@ -1511,7 +1628,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               data: { txnType, err: String(e?.message || e) },
             });
             // #endregion
-            // Local-only approve: record status in DB but warn user that QB was not cleared
+            // Local-only approve: record status in DB but warn user that QB was not cleared.
+            // Still store in local map so the reconciliation page can auto-check the row.
+            await storeKyriqApproved().catch(() => {});
             await saveCheckApproval(msg.checkId, msg.jobId);
             chrome.runtime.sendMessage({ type: 'CHECK_UPDATED', checkId: msg.checkId, jobId: msg.jobId, status: 'approved', cleared: false }).catch(() => {});
             return { success: true, cleared: false, warning: `QB not cleared: ${e.message}`, qbRaw: e.qbRaw || null, qbStatus: e.qbStatus || null };
@@ -1527,6 +1646,75 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           ).catch(() => []);
           return { results: results || [] };
         }
+
+        // ── Return Kyriq-approved QB transactions for content script UI ──
+        // Used by qbo-overlay.js to auto-clear rows on the reconciliation page.
+        // Merges: (1) locally stored approvals from this session's APPROVE_AND_CLEAR calls,
+        //         (2) all qb_entries whose intuit_id or check_number matches an approved check.
+        case 'GET_KYRIQ_APPROVED': {
+          // (1) Local approvals stored during this/previous sessions
+          const stored = await chrome.storage.local.get('kyriqApproved').catch(() => ({}));
+          const localMap = stored.kyriqApproved || {};
+
+          // (2) Pull qb_entries for the active tenant so we can cross-ref with cached checks
+          const s = await getSession();
+          if (!s) return { approved: Object.values(localMap) };
+          const tenantId = await getTenantId(s.user.id).catch(() => null);
+          if (!tenantId) return { approved: Object.values(localMap) };
+
+          const [entries, checksRes] = await Promise.all([
+            supabaseRequest(
+              `qb_entries?tenant_id=eq.${tenantId}&select=id,intuit_id,check_number,date,amount,payee,qb_type&limit=5000`
+            ).catch(() => []),
+            // Re-use cached checks if available
+            Promise.resolve(_swChecksCache || []),
+          ]);
+
+          const approvedChecks = checksRes.filter(c => c.status === 'approved');
+
+          // Build lookup by check_number and amount for fast matching
+          const approvedByNum = {};
+          const approvedByAmt = {};
+          for (const c of approvedChecks) {
+            if (c.check_number) approvedByNum[String(c.check_number).replace(/^0+/, '')] = c;
+            if (c.amount) {
+              const key = Math.abs(parseFloat(c.amount)).toFixed(2);
+              if (!approvedByAmt[key]) approvedByAmt[key] = c;
+            }
+          }
+
+          // Merge: any qb_entry that matches an approved check gets added to the map
+          for (const e of (entries || [])) {
+            if (!e.intuit_id) continue;
+            const id = String(e.intuit_id);
+            if (localMap[id]) continue; // already have it from local store
+
+            const num = String(e.check_number || '').replace(/^0+/, '');
+            const amt = e.amount != null ? Math.abs(parseFloat(e.amount)).toFixed(2) : null;
+
+            const matched = approvedByNum[num] || (amt ? approvedByAmt[amt] : null);
+            if (matched) {
+              localMap[id] = {
+                intuit_id: id,
+                txn_type: e.qb_type || 'Purchase',
+                doc_number: e.check_number || null,
+                amount: parseFloat(e.amount) || null,
+                payee: e.payee || null,
+                txn_date: e.date || null,
+                approved_at: matched.check_date || null,
+              };
+            }
+          }
+
+          return { approved: Object.values(localMap) };
+        }
+
+        // ── Wipe local approval store (e.g. on logout / company switch) ──
+        case 'CLEAR_KYRIQ_APPROVED': {
+          await chrome.storage.local.remove('kyriqApproved').catch(() => {});
+          return { success: true };
+        }
+
         default:
           return { error: 'Unknown message type' };
       }

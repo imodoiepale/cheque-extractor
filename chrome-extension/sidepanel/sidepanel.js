@@ -314,6 +314,23 @@ document.addEventListener('DOMContentLoaded', () => {
       if (btn) { btn.textContent = '✓ Copied!'; setTimeout(() => { btn.textContent = '📋 Copy'; }, 2000); }
     }).catch(() => {});
   });
+
+  // Error dialog bindings
+  $('#error-dialog-close')?.addEventListener('click',  hideErrorDialog);
+  $('#error-dialog-close2')?.addEventListener('click', hideErrorDialog);
+  $('#error-dialog-overlay')?.addEventListener('click', e => {
+    if (e.target === $('#error-dialog-overlay')) hideErrorDialog();
+  });
+  $('#error-dialog-copy')?.addEventListener('click', () => {
+    const title = $('#error-dialog-title')?.textContent || '';
+    const msg   = $('#error-dialog-msg')?.textContent   || '';
+    const raw   = $('#error-dialog-raw')?.textContent   || '';
+    const parts = [`[Kyriq Error] ${title}`, msg, raw ? `--- Raw QB Response ---\n${raw}` : ''].filter(Boolean);
+    navigator.clipboard.writeText(parts.join('\n\n')).then(() => {
+      const btn = $('#error-dialog-copy');
+      if (btn) { btn.textContent = '✓ Copied!'; setTimeout(() => { btn.textContent = '📋 Copy'; }, 2000); }
+    }).catch(() => {});
+  });
   $('#approve-confirm-ok')?.addEventListener('click', async () => {
     const idx = _pendingApproveIdx;
     hideApproveConfirm();
@@ -790,7 +807,7 @@ async function approveAndClear(idx) {
     const checkId = match.check?.id;
     const jobId   = match.check?.job_id;
     if (match.qbTxn) {
-      const res = await sendMsg({ type: 'APPROVE_AND_CLEAR', qbTxn: match.qbTxn, checkId, jobId });
+      const res = await sendMsg({ type: 'APPROVE_AND_CLEAR', qbTxn: match.qbTxn, check: match.check || null, checkId, jobId });
       if (res?.error) {
         dbg(`Approve failed: ${res.error}`, 'error');
         showErrorDialog('QB Approve Failed', res.error, res.qbRaw || null);
@@ -804,7 +821,7 @@ async function approveAndClear(idx) {
         showErrorDialog('QB Not Cleared', `Approved in Kyriq — but QB was not updated:\n\n${res.warning}`, res.qbRaw || null);
       } else {
         dbg('Approved & cleared in QB', 'success');
-        showSuccessBanner('Approved & cleared in QuickBooks ✓');
+        showQBConfirmation(res);
       }
     } else {
       // No QB txn — persist status to DB then update UI
@@ -855,6 +872,49 @@ function showErrorDialog(title, msg, rawBody) {
 function hideErrorDialog() {
   const overlay = $('#error-dialog-overlay');
   if (overlay) overlay.style.display = 'none';
+}
+
+// ── QB confirmation toast — shows what was actually written + View in QB link ──
+function showQBConfirmation(res) {
+  const isPurchase  = res?.txnType === 'Purchase';
+  const noteStamped = res?.noteStamped === true;
+  const AUTO_MS     = 10000;
+
+  const title = isPurchase
+    ? (noteStamped ? 'Approved — PrivateNote stamped in QB' : 'Approved in Kyriq')
+    : (noteStamped ? 'Approved & Cleared in QuickBooks' : 'Approved in Kyriq');
+
+  const sub = isPurchase
+    ? 'Open QB Reconcile to tick the Cleared checkbox for this transaction.'
+    : (noteStamped ? 'ClearStatus set to Cleared. Transaction reconciled.' : 'QB was updated successfully.');
+
+  // Remove any existing toast
+  document.getElementById('kyriq-qb-toast')?.remove();
+
+  const toast = document.createElement('div');
+  toast.id = 'kyriq-qb-toast';
+  toast.className = 'kyriq-toast';
+  toast.innerHTML = `
+    <span class="kyriq-toast-icon">${noteStamped ? '✅' : '☑️'}</span>
+    <div class="kyriq-toast-body">
+      <div class="kyriq-toast-title">${escHtml(title)}</div>
+      <div class="kyriq-toast-sub">${escHtml(sub)}</div>
+      ${res?.qbUrl ? `<a class="kyriq-toast-link" href="${escHtml(res.qbUrl)}" target="_blank">View in QB →</a>` : ''}
+    </div>
+    <button class="kyriq-toast-close" title="Dismiss">✕</button>
+    <div class="kyriq-toast-progress" style="animation-duration:${AUTO_MS}ms;"></div>
+  `;
+
+  function dismiss() {
+    toast.classList.add('kyriq-toast-out');
+    toast.addEventListener('animationend', () => toast.remove(), { once: true });
+  }
+
+  toast.querySelector('.kyriq-toast-close').addEventListener('click', dismiss);
+  const timer = setTimeout(dismiss, AUTO_MS);
+  toast.querySelector('.kyriq-toast-close').addEventListener('click', () => clearTimeout(timer), { once: true });
+
+  document.body.appendChild(toast);
 }
 
 // ── Upload workflow (3-step) ──────────────────────────────────
@@ -1034,6 +1094,10 @@ async function runExtraction() {
       appendLog(`✓ Done — ${extractedChecks.length} cheques extracted from ${job.total_pages || '?'} pages`, 'ok');
       $('#progress-summary').textContent = `Complete — ${extractedChecks.length} cheques`;
       renderExtracted();
+
+      // Refresh docs cache so the new file appears in the Docs dropdown immediately
+      _cachedDocs = null;
+      loadDocuments(true).catch(() => {});
 
       // Refresh docs cache so the new file appears in the Docs dropdown immediately
       _cachedDocs = null;
@@ -1644,6 +1708,34 @@ function bindEvents() {
     }
   });
 
+  // ── Disconnect QB (profile panel) ──
+  $('#btn-qb-disconnect')?.addEventListener('click', async () => {
+    hide('#profile-panel');
+    dbg('Disconnecting QB...');
+    showLoading('Disconnecting QuickBooks...');
+    const res = await sendMsg({ type: 'DISCONNECT_QB' });
+    hideLoading();
+    if (res?.error) {
+      dbg(`Disconnect QB error: ${res.error}`, 'error');
+      return;
+    }
+    connections = [];
+    matches = [];
+    dbg('QB disconnected — returning to connect screen', 'info');
+    showView('qb-connect');
+  });
+
+  // ── Reconnect QB (company bar) ──
+  $('#btn-qb-reconnect')?.addEventListener('click', async () => {
+    dbg('Reconnect QB: opening OAuth flow');
+    const res = await sendMsg({ type: 'OPEN_QB_AUTH' });
+    if (res?.success) {
+      dbg('QB OAuth tab opened — complete auth and return here', 'success');
+    } else {
+      dbg(`QB reconnect error: ${res?.error || 'unknown'}`, 'error');
+    }
+  });
+
   // ── QB Connect ──
   $('#btn-qb-connect').addEventListener('click', async () => {
     dbg('QB Connect: opening OAuth flow via service worker');
@@ -1834,7 +1926,7 @@ function bindEvents() {
     showLoading(`Approving ${toApprove.length} matches in QuickBooks…`);
     let approved = 0, failed = 0, localOnly = 0;
     for (const m of toApprove) {
-      const res = await sendMsg({ type: 'APPROVE_AND_CLEAR', qbTxn: m.qbTxn, checkId: m.check?.id, jobId: m.check?.job_id });
+      const res = await sendMsg({ type: 'APPROVE_AND_CLEAR', qbTxn: m.qbTxn, check: m.check || null, checkId: m.check?.id, jobId: m.check?.job_id });
       if (res?.success) {
         m.status = 'approved';
         approved++;

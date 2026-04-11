@@ -24,7 +24,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: 'checkId is required' });
   }
 
-  const { status, qbEntryId } = req.body || {};
+  const { status, qbEntryId, checkData: clientCheckData } = req.body || {};
   if (!status || typeof status !== 'string') {
     return res.status(400).json({ error: 'status is required' });
   }
@@ -74,7 +74,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       let qbSync: { status: 'cleared' | 'failed' | 'skipped'; message?: string } = { status: 'skipped' };
       if (status === 'approved' && qbEntryId && typeof qbEntryId === 'string') {
         try {
-          const clearResult = await clearQBTransactionServer(supabase, qbEntryId);
+          const clearResult = await clearQBTransactionServer(supabase, qbEntryId, clientCheckData || null);
           qbSync = clearResult.cleared
             ? { status: 'cleared' }
             : { status: 'failed', message: clearResult.warning };
@@ -129,8 +129,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // QB clear — non-blocking: approval already saved; QB failure just sets qbSync.status = 'failed'
     let qbSync: { status: 'cleared' | 'failed' | 'skipped'; message?: string } = { status: 'skipped' };
     if (status === 'approved' && qbEntryId && typeof qbEntryId === 'string') {
+      // Extract OCR fields from the check's extraction data to enrich the QB PrivateNote.
+      // safeStr handles { value, confidence } objects, plain strings, numbers, and nulls.
+      const safeStr = (f: any): string | null => {
+        if (f == null) return null;
+        if (typeof f === 'string') return f.trim() || null;
+        if (typeof f === 'number') return String(f);
+        if (typeof f === 'object' && f.value != null) return String(f.value).trim() || null;
+        return null;
+      };
+      const ext = check?.extraction || {};
+      const extractedCheckData = {
+        check_number:   safeStr(ext.checkNumber)   ?? clientCheckData?.check_number   ?? null,
+        check_date:     safeStr(ext.checkDate)      ?? clientCheckData?.check_date     ?? null,
+        amount:         safeStr(ext.amount)         ?? clientCheckData?.amount         ?? null,
+        payee:          safeStr(ext.payee)          ?? clientCheckData?.payee          ?? null,
+        bank_name:      safeStr(ext.bankName)       ?? clientCheckData?.bank_name      ?? null,
+        memo:           safeStr(ext.memo)           ?? clientCheckData?.memo           ?? null,
+        account_number: safeStr(ext.accountNumber)  ?? clientCheckData?.account_number ?? null,
+        routing_number: safeStr(ext.routingNumber)  ?? clientCheckData?.routing_number ?? null,
+      };
       try {
-        const clearResult = await clearQBTransactionServer(supabase, qbEntryId);
+        const clearResult = await clearQBTransactionServer(supabase, qbEntryId, extractedCheckData);
         qbSync = clearResult.cleared
           ? { status: 'cleared' }
           : { status: 'failed', message: clearResult.warning };
