@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Settings, Loader2, AlertCircle, RefreshCw, Upload, Trash2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { QBCompanySwitcher } from '@/components/QBCompanySwitcher';
 import Link from 'next/link';
@@ -35,6 +35,9 @@ export default function QBComparisonsPage() {
   const [checkingConfig, setCheckingConfig] = useState(true);
   const [autoSyncAttempted, setAutoSyncAttempted] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  // Auto-open QB Reconcile tab once per session after the first successful
+  // queued_for_reconcile approval. Users still get a toast CTA after that.
+  const reconcileTabOpenedRef = useRef(false);
   const {
     searchQuery,
     setSearchQuery,
@@ -192,22 +195,34 @@ export default function QBComparisonsPage() {
     const data = await res.json();
     console.log('✅ Check approved:', checkId, data);
 
-    const qbSync = data.qbSync as { status: string; message?: string; attemptedField?: string | null } | undefined;
+    const qbSync = data.qbSync as { status: string; message?: string; readOnlyClearedStatus?: string | null } | undefined;
+    const RECONCILE_URL = 'https://app.qbo.intuit.com/app/reconcile';
     switch (qbSync?.status) {
-      case 'cleared':
-        showToast('success', `Approved & marked Cleared in QuickBooks ✓${qbSync.attemptedField ? ` (${qbSync.attemptedField})` : ''}`);
-        break;
       case 'already_cleared':
-        showToast('success', 'Approved — already Cleared in QuickBooks ✓');
+        showToast('success', 'Approved — QuickBooks already has this transaction cleared ✓');
+        break;
+      case 'queued_for_reconcile':
+        showToast(
+          'success',
+          'Approved — open QB Reconcile and click "Auto-Clear Kyriq Approved" (Chrome extension) to tick the C.'
+        );
+        // Auto-open Reconcile once per session on first queued approve.
+        if (!reconcileTabOpenedRef.current && typeof window !== 'undefined') {
+          reconcileTabOpenedRef.current = true;
+          window.open(RECONCILE_URL, '_blank', 'noopener');
+        }
         break;
       case 'manual_required':
-        showToast('warning', `Approved — ${qbSync.message || 'Bill Payment must be marked Cleared manually in QB reconciliation.'}`);
+        showToast(
+          'warning',
+          qbSync.message || 'Approved — Bill Payment must be ticked Cleared manually on QB Reconcile.'
+        );
         break;
-      case 'note_only':
-        showToast('warning', `Approved — Kyriq note stamped in QB, but cleared flag could not be set: ${qbSync.message || ''}`);
+      case 'inactive_entity':
+        showToast('warning', 'Approved in Kyriq ✓ — QB not stamped: a linked vendor or account is inactive in QuickBooks. Reactivate it and re-approve.');
         break;
       case 'failed':
-        showToast('warning', `Approved ⚠ QB not cleared: ${qbSync.message || 'unknown error'}`);
+        showToast('warning', `Approved in Kyriq ⚠ QB stamp failed: ${qbSync.message || 'unknown error'}`);
         break;
       case 'skipped':
       default:

@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --check chrome-extension/background/service-worker.js)",
+      "Bash(node --check chrome-extension/sidepanel/sidepanel.js)",
+      "Bash(node --check chrome-extension/content/qbo-overlay.js)",
+      "Bash(npx tsc *)",
+      "WebSearch",
+      "Bash(node --check /c/Users/inkno/Documents/GitHub/cheque-extractor/chrome-extension/content/qbo-overlay.js)"
+    ]
+  }
+}

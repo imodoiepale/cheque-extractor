@@ -133,6 +133,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
     log.push({ step: 'POST attempts', attempts });
 
+    const readOnlyClearedStatus =
+      entity.ClearedStatus ?? entity.TxnStatus ?? entity.ClearStatus ??
+      entity.CheckPayment?.ClearedStatus ?? entity.CheckPayment?.TxnStatus ?? entity.CheckPayment?.ClearStatus ?? null;
+
     return res.json({
       ok: true,
       log,
@@ -140,8 +144,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         txnType,
         txnId,
         realmId,
+        readOnlyClearedStatus,
         winningField: attempts.find(a => a.ok)?.field || null,
       },
+      note: 'Per Intuit docs + Satva Solutions research (satvasolutions.com/blog/reconciled-transactions-quickbooks-online-api), ClearedStatus / TxnStatus / ClearStatus are READ-ONLY in the QBO IDS API. Expect every POST candidate to return Fault 2010. The real "C" tick is performed by the extension content script qbo-overlay.js on /app/reconcile. This route exists to prove the limitation, not to work around it.',
     });
   } catch (err: any) {
     log.push({ step: 'error', message: err?.message, stack: err?.stack });

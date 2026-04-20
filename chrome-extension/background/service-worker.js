@@ -152,8 +152,86 @@ async function getSession() {
   return session;
 }
 
+// Track the last broadcast signed-in state so token-refresh writes don't
+// re-broadcast SESSION_CHANGED (which previously caused the sidepanel to
+// re-run loaders on every silent refresh — double-load bug root cause #2).
+let _lastBroadcastSignedIn = null;
+
+// ═════════════════════════════════════════════════════════════
+//  Overlay visibility — sidepanel-open liveness signal
+//
+//  The sidepanel opens a long-lived port 'kyriq-sidepanel' on load. While
+//  that port is connected, we treat Kyriq as "open" and broadcast
+//  KYRIQ_UI_STATE to every Intuit tab so the content script can decide
+//  whether to render the footer bar + floating buttons.
+//
+//  Visibility modes (persisted in chrome.storage.local.kyriqOverlayMode):
+//    - 'whenOpen' (default): show overlay only when the sidepanel is open
+//    - 'always':             always show, regardless of sidepanel state
+//    - 'never':              never show
+// ═════════════════════════════════════════════════════════════
+let _sidepanelOpen = false;
+const _sidepanelPorts = new Set();
+
+function getOverlayModeSync() {
+  return _cachedOverlayMode || 'whenOpen';
+}
+let _cachedOverlayMode = 'whenOpen';
+chrome.storage.local.get('kyriqOverlayMode').then(({ kyriqOverlayMode }) => {
+  if (kyriqOverlayMode) _cachedOverlayMode = kyriqOverlayMode;
+}).catch(() => {});
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === 'local' && changes.kyriqOverlayMode) {
+    _cachedOverlayMode = changes.kyriqOverlayMode.newValue || 'whenOpen';
+    broadcastOverlayState();
+  }
+});
+
+async function broadcastOverlayState() {
+  const payload = {
+    type: 'KYRIQ_UI_STATE',
+    sidepanelOpen: _sidepanelOpen,
+    overlayMode: getOverlayModeSync(),
+  };
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://*.intuit.com/*' });
+    for (const tab of tabs) {
+      if (tab.id != null) chrome.tabs.sendMessage(tab.id, payload).catch(() => {});
+    }
+  } catch (e) {
+    // No tabs-permission in some contexts — silent.
+  }
+}
+
+chrome.runtime.onConnect.addListener((port) => {
+  if (port.name !== 'kyriq-sidepanel') return;
+  _sidepanelPorts.add(port);
+  _sidepanelOpen = true;
+  broadcastOverlayState();
+  port.onDisconnect.addListener(() => {
+    _sidepanelPorts.delete(port);
+    _sidepanelOpen = _sidepanelPorts.size > 0;
+    broadcastOverlayState();
+  });
+});
+
 async function saveSession(session) {
+  const prevSignedIn = _lastBroadcastSignedIn;
+  const signedIn = !!session;
   await chrome.storage.local.set({ session });
+  if (prevSignedIn !== signedIn) {
+    _lastBroadcastSignedIn = signedIn;
+    chrome.runtime.sendMessage({ type: 'SESSION_CHANGED', signedIn }).catch(() => {});
+  }
+}
+
+async function clearSessionAndNotify() {
+  const prevSignedIn = _lastBroadcastSignedIn;
+  await chrome.storage.local.remove('session');
+  if (prevSignedIn !== false) {
+    _lastBroadcastSignedIn = false;
+    chrome.runtime.sendMessage({ type: 'SESSION_CHANGED', signedIn: false }).catch(() => {});
+  }
 }
 
 // ── Supabase helpers ─────────────────────────────────────────
@@ -379,145 +457,101 @@ function buildKyriqNote(entity, checkData, qbTxn) {
   return existing ? `${existing}\n---\n${kyriqBlock}` : kyriqBlock;
 }
 
-// ── QB Clear Transaction (mark as Cleared for reconciliation) ──
+// ── QB Clear Transaction (stamp PrivateNote + classify for Reconcile overlay) ──
 //
-// Property name for the cleared flag varies across QB entities / minor versions.
-// Try the documented name first, fall back to the historical names on fault 2010.
-const QB_CLEAR_FIELDS = ['TxnStatus', 'ClearedStatus', 'ClearStatus'];
+// The QBO IDS API's ClearedStatus / TxnStatus / ClearStatus fields are READ-ONLY
+// (Intuit docs + Satva Solutions research). No sparse update with any of those
+// names will set the cleared flag — every entity returns Fault 2010.
+//
+// The actual "C" tick happens via the content script qbo-overlay.js on the
+// /app/reconcile page. This function stamps a Kyriq PrivateNote as the audit
+// trail, reads ClearedStatus for classification, and returns a status the UI
+// can use to guide the user to QB Reconcile.
+const QB_CLEAR_READ_FIELDS = ['ClearedStatus', 'TxnStatus', 'ClearStatus'];
 
-function qbIsPropertyFault(err) {
-  const code = String(err?.qbFault?.Fault?.Error?.[0]?.code || '');
-  const msg  = err?.qbFault?.Fault?.Error?.[0]?.Message || '';
-  const det  = err?.qbFault?.Fault?.Error?.[0]?.Detail  || '';
-  return code === '2010' || /unsupported|invalid/i.test(msg) || /property/i.test(det);
-}
-
-function qbAlreadyCleared(entity) {
-  for (const f of QB_CLEAR_FIELDS) {
+function readClearedStatus(entity) {
+  for (const f of QB_CLEAR_READ_FIELDS) {
     const v = entity?.[f];
-    if (v === 'Cleared' || v === 'Reconciled') return v;
+    if (typeof v === 'string' && v) return v;
   }
   const cp = entity?.CheckPayment;
   if (cp) {
-    for (const f of QB_CLEAR_FIELDS) {
+    for (const f of QB_CLEAR_READ_FIELDS) {
       const v = cp[f];
-      if (v === 'Cleared' || v === 'Reconciled') return v;
+      if (typeof v === 'string' && v) return v;
     }
   }
   return null;
 }
 
-async function tryPostSparse(txnType, payload) {
-  try {
-    const r = await qbApiRequest(`${txnType.toLowerCase()}?minorversion=73`, 'POST', payload);
-    return { ok: true, result: r };
-  } catch (err) {
-    return { ok: false, err };
+function qbAlreadyCleared(entity) {
+  const v = readClearedStatus(entity);
+  return v === 'Cleared' || v === 'Reconciled' ? v : null;
+}
+
+function qbRequiredExtras(txnType, entity) {
+  const extra = {};
+  if (txnType === 'Purchase')    extra.PaymentType         = entity.PaymentType;
+  if (txnType === 'Payment')     extra.CustomerRef         = entity.CustomerRef;
+  if (txnType === 'Deposit')     extra.DepositToAccountRef = entity.DepositToAccountRef;
+  if (txnType === 'BillPayment') {
+    if (entity.VendorRef) extra.VendorRef = entity.VendorRef;
+    if (entity.PayType)   extra.PayType   = entity.PayType;
   }
+  return extra;
 }
 
 /**
- * Mark a QB transaction as Cleared. Returns:
- *   { status: 'cleared'|'already_cleared'|'manual_required'|'note_only'|'failed',
- *     attemptedField, confirmedNote, noteStamped, result }
+ * Stamp Kyriq PrivateNote on a QB transaction and classify for the overlay.
+ * Returns:
+ *   { status: 'already_cleared' | 'queued_for_reconcile' | 'manual_required',
+ *     readOnlyClearedStatus, confirmedNote, noteStamped, result }
  *
- * Throws only for hard network/auth errors; soft QB property faults resolve to
- * note_only / manual_required so the caller can render an accurate toast.
+ * Throws only for hard errors (network/auth/sync-token/invalid ID).
  */
 async function clearQBTransaction(txnType, txnId, checkData = null, qbTxn = null) {
   const readData = await qbApiRequest(`${txnType.toLowerCase()}/${txnId}?minorversion=73`);
   const entity = readData[txnType] || readData[Object.keys(readData)[0]];
   if (!entity) throw new Error('Transaction not found in QB');
 
+  const readOnlyClearedStatus = readClearedStatus(entity);
   const privateNote = buildKyriqNote(entity, checkData, qbTxn);
-  const basePayload = {
+  const payload = {
     Id: entity.Id,
     SyncToken: entity.SyncToken,
     sparse: true,
     PrivateNote: privateNote,
+    ...qbRequiredExtras(txnType, entity),
   };
+
+  let result;
+  try {
+    result = await qbApiRequest(`${txnType.toLowerCase()}?minorversion=73`, 'POST', payload);
+  } catch (e) {
+    const code = e?.qbFault?.Fault?.Error?.[0]?.code;
+    if (code === '610') {
+      return {
+        status: 'inactive_entity',
+        warning: 'A vendor, account, or other entity linked to this QB transaction has been made inactive. Reactivate it in QuickBooks, then re-approve. (QB error 610)',
+        readOnlyClearedStatus,
+        confirmedNote: null,
+        noteStamped: false,
+      };
+    }
+    throw e;
+  }
+  const updated = result[txnType] || result[Object.keys(result)[0]] || {};
+  const confirmedNote = updated.PrivateNote || null;
+  const noteStamped = (confirmedNote || '').includes('[Kyriq]');
 
   const already = qbAlreadyCleared(entity);
   if (already) {
-    const r = await tryPostSparse(txnType, basePayload);
-    const updated = r.ok ? (r.result[txnType] || r.result[Object.keys(r.result)[0]] || {}) : {};
-    return {
-      status: 'already_cleared',
-      attemptedField: null,
-      result: r.result,
-      confirmedNote: updated.PrivateNote || null,
-      noteStamped: (updated.PrivateNote || '').includes('[Kyriq]'),
-    };
+    return { status: 'already_cleared', readOnlyClearedStatus, result, confirmedNote, noteStamped };
   }
-
-  // BillPayment — QB IDS API does not support setting cleared via any known field.
-  // Stamp the note and return manual_required so the UI toast is truthful.
   if (txnType === 'BillPayment') {
-    const bpPayload = {
-      ...basePayload,
-      VendorRef: entity.VendorRef,
-      PayType:   entity.PayType,
-    };
-    const r = await tryPostSparse(txnType, bpPayload);
-    const updated = r.ok ? (r.result[txnType] || r.result[Object.keys(r.result)[0]] || {}) : {};
-    return {
-      status: 'manual_required',
-      attemptedField: null,
-      result: r.result,
-      confirmedNote: updated.PrivateNote || null,
-      noteStamped: (updated.PrivateNote || '').includes('[Kyriq]'),
-    };
+    return { status: 'manual_required', readOnlyClearedStatus, result, confirmedNote, noteStamped };
   }
-
-  // Required extras per entity (QB rejects sparse updates without these on some types).
-  const extra = {};
-  if (txnType === 'Purchase') extra.PaymentType        = entity.PaymentType;
-  if (txnType === 'Payment')  extra.CustomerRef        = entity.CustomerRef;
-  if (txnType === 'Deposit')  extra.DepositToAccountRef = entity.DepositToAccountRef;
-
-  let lastErr = null;
-  for (const field of QB_CLEAR_FIELDS) {
-    const payload = { ...basePayload, ...extra, [field]: 'Cleared' };
-    const r = await tryPostSparse(txnType, payload);
-    if (r.ok) {
-      const updated = r.result[txnType] || r.result[Object.keys(r.result)[0]] || {};
-      return {
-        status: 'cleared',
-        attemptedField: field,
-        result: r.result,
-        confirmedNote: updated.PrivateNote || null,
-        noteStamped: (updated.PrivateNote || '').includes('[Kyriq]'),
-      };
-    }
-    lastErr = r.err;
-    if (!qbIsPropertyFault(r.err)) {
-      // Non-property error (auth, sync token conflict, etc.) — surface it.
-      const e = new Error(r.err.message || 'QB clear failed');
-      e.qbFault  = r.err.qbFault;
-      e.qbStatus = r.err.qbStatus;
-      e.qbRaw    = r.err.qbRaw;
-      throw e;
-    }
-  }
-
-  // All field candidates rejected with property fault 2010 — stamp note only.
-  const r = await tryPostSparse(txnType, { ...basePayload, ...extra });
-  if (!r.ok) {
-    const e = new Error(r.err?.message || 'QB note stamp failed');
-    e.qbFault  = r.err?.qbFault  || lastErr?.qbFault;
-    e.qbStatus = r.err?.qbStatus || lastErr?.qbStatus;
-    e.qbRaw    = r.err?.qbRaw    || lastErr?.qbRaw;
-    throw e;
-  }
-  const updated = r.result[txnType] || r.result[Object.keys(r.result)[0]] || {};
-  return {
-    status: 'note_only',
-    attemptedField: null,
-    result: r.result,
-    confirmedNote: updated.PrivateNote || null,
-    noteStamped: (updated.PrivateNote || '').includes('[Kyriq]'),
-    lastFault: lastErr?.qbFault || null,
-  };
+  return { status: 'queued_for_reconcile', readOnlyClearedStatus, result, confirmedNote, noteStamped };
 }
 
 // ── OCR via Gemini API ───────────────────────────────────────
@@ -959,7 +993,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
         case 'LOGOUT': {
           log('LOGOUT');
-          await chrome.storage.local.remove('session');
+          await clearSessionAndNotify();
           return { success: true };
         }
         case 'GET_SESSION': {
@@ -1057,23 +1091,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             return { success: true, activeConnection };
           } catch (e) {
             logErr('SWITCH_COMPANY failed', e);
-            return { error: e.message };
-          }
-        }
-        case 'DISCONNECT_QB': {
-          log('DISCONNECT_QB');
-          const s = await getSession();
-          if (!s) return { error: 'Not logged in' };
-          try {
-            const tid = await getTenantId(s.user.id);
-            await supabaseRequest(`qb_connections?tenant_id=eq.${tid}`, {
-              method: 'PATCH',
-              body: JSON.stringify({ is_active: false }),
-            });
-            log('DISCONNECT_QB: all connections marked inactive', { tenantId: tid });
-            return { success: true };
-          } catch (e) {
-            logErr('DISCONNECT_QB failed', e);
             return { error: e.message };
           }
         }
@@ -1603,7 +1620,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             return { success: true, cleared: false, warning: 'File import entry — approval saved in Kyriq. No QB Online update needed.' };
           }
 
-          // BankTransaction (pending bank feed item) — create a Purchase in QB to confirm/categorize it
+          // BankTransaction (pending bank feed item) — create a Purchase in QB to confirm/categorize it.
+          // The newly-created Purchase is NOT yet cleared in QB; it must be ticked via the overlay
+          // on /app/reconcile (same as any other Purchase). Push its new intuit_id onto kyriqApproved
+          // so the overlay picks it up.
           const isBankFeed = txnType === 'BankTransaction';
           if (isBankFeed) {
             try {
@@ -1622,16 +1642,47 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   },
                 }],
               };
-              await qbApiRequest('purchase?minorversion=73', 'POST', purchasePayload);
-              log(`APPROVE_AND_CLEAR: created Purchase from BankTransaction ${qbIntuitId} in QB`);
+              const created = await qbApiRequest('purchase?minorversion=73', 'POST', purchasePayload);
+              const newPurchase = created?.Purchase || created?.[Object.keys(created)[0]] || {};
+              const newIntuitId = newPurchase.Id || null;
+              log(`APPROVE_AND_CLEAR: created Purchase from BankTransaction -> new intuit_id=${newIntuitId}`);
+
+              // Queue the new Purchase for the Reconcile overlay to auto-tick.
+              try {
+                const stored = await chrome.storage.local.get('kyriqApproved');
+                const map = stored.kyriqApproved || {};
+                if (newIntuitId) {
+                  map[String(newIntuitId)] = {
+                    intuit_id: String(newIntuitId),
+                    txn_type: 'Purchase',
+                    doc_number: qbTxn.doc_number || null,
+                    amount: bankAmt,
+                    payee: qbTxn.payee || null,
+                    txn_date: qbTxn.txn_date || null,
+                    approved_at: new Date().toISOString(),
+                    source: 'bank_feed_to_purchase',
+                  };
+                  await chrome.storage.local.set({ kyriqApproved: map });
+                }
+              } catch (storeErr) {
+                logErr('APPROVE_AND_CLEAR: failed to queue new Purchase for overlay', storeErr);
+              }
+
               await saveCheckApproval(msg.checkId, msg.jobId);
-              chrome.runtime.sendMessage({ type: 'CHECK_UPDATED', checkId: msg.checkId, jobId: msg.jobId, status: 'approved', cleared: true }).catch(() => {});
-              return { success: true, cleared: true };
+              chrome.runtime.sendMessage({ type: 'CHECK_UPDATED', checkId: msg.checkId, jobId: msg.jobId, status: 'approved', cleared: false, qbStatus: 'queued_for_reconcile' }).catch(() => {});
+              return {
+                success: true,
+                cleared: false,
+                qbStatus: 'queued_for_reconcile',
+                txnType: 'Purchase',
+                newIntuitId,
+                warning: 'Bank feed item converted to a Purchase in QB. Open QB Reconcile and click "Auto-Clear Kyriq Approved" to tick the C.',
+              };
             } catch (e) {
               logErr('APPROVE_AND_CLEAR: BankTransaction -> Purchase creation failed', e);
               await saveCheckApproval(msg.checkId, msg.jobId);
-              chrome.runtime.sendMessage({ type: 'CHECK_UPDATED', checkId: msg.checkId, jobId: msg.jobId, status: 'approved', cleared: false }).catch(() => {});
-              return { success: true, cleared: false, warning: `QB not updated: ${e.message}. Approved in Kyriq — manually categorize this bank transaction in QB.`, qbRaw: e.qbRaw || null };
+              chrome.runtime.sendMessage({ type: 'CHECK_UPDATED', checkId: msg.checkId, jobId: msg.jobId, status: 'approved', cleared: false, qbStatus: 'failed' }).catch(() => {});
+              return { success: true, cleared: false, qbStatus: 'failed', warning: `QB not updated: ${e.message}. Approved in Kyriq — manually categorize this bank transaction in QB.`, qbRaw: e.qbRaw || null };
             }
           }
 
@@ -1658,15 +1709,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
           try {
             const clearResult = await clearQBTransaction(txnType, qbIntuitId, msg.check || null, qbTxn);
-            const { confirmedNote, noteStamped, status: qbStatus, attemptedField } = clearResult;
-            const didClear = qbStatus === 'cleared' || qbStatus === 'already_cleared';
-            log(`APPROVE_AND_CLEAR: ${qbStatus} ${txnType} #${qbIntuitId} in QB`, { noteStamped, attemptedField });
+            const { confirmedNote, noteStamped, status: qbStatus, readOnlyClearedStatus } = clearResult;
+            const didClear = qbStatus === 'already_cleared';
+            log(`APPROVE_AND_CLEAR: ${qbStatus} ${txnType} #${qbIntuitId} in QB`, { noteStamped, readOnlyClearedStatus });
             // #region agent log
             debugAgentLog({
               hypothesisId: 'H4',
               location: 'service-worker.js:APPROVE_AND_CLEAR',
               message: `qb clear ${qbStatus}`,
-              data: { txnType, intuitIdLen: String(qbIntuitId).length, attemptedField },
+              data: { txnType, intuitIdLen: String(qbIntuitId).length, readOnlyClearedStatus },
             });
             // #endregion
             // Log QB clear action to audit_logs (general-purpose table, confirmed in live schema)
@@ -1690,7 +1741,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                         check_id: msg.checkId || null,
                         check_number: qbTxn.doc_number || null,
                         qb_status: qbStatus,
-                        attempted_field: attemptedField || null,
+                        read_only_cleared_status: readOnlyClearedStatus || null,
                         cleared_at: new Date().toISOString(),
                       },
                     }),
@@ -1706,14 +1757,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             const qbUrl = rId ? qbTxnUrl(rId, txnType, qbIntuitId) : null;
             chrome.runtime.sendMessage({ type: 'CHECK_UPDATED', checkId: msg.checkId, jobId: msg.jobId, status: 'approved', cleared: didClear, qbStatus }).catch(() => {});
             const warning =
-              qbStatus === 'manual_required' ? 'Bill Payment cleared-status cannot be set via API. Mark it Cleared manually in QB reconciliation.' :
-              qbStatus === 'note_only'       ? `QB rejected all cleared-flag property names for ${txnType}. Kyriq note stamped only — mark Cleared manually in QB reconciliation.` :
+              qbStatus === 'already_cleared'      ? 'QB already has this transaction cleared.' :
+              qbStatus === 'manual_required'      ? 'Bill Payment cleared-status cannot be set via API. Open QB Reconcile and tick it manually.' :
+              qbStatus === 'queued_for_reconcile' ? 'Open QB Reconcile and click "Auto-Clear Kyriq Approved" to tick the C.' :
               undefined;
             return {
               success: true,
               cleared: didClear,
               qbStatus,
-              attemptedField,
+              readOnlyClearedStatus,
               txnType,
               qbUrl,
               confirmedNote,
@@ -1747,6 +1799,36 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             `qb_entries?tenant_id=eq.${tid2}&or=(payee.ilike.%25${safeQuery}%25,check_number.ilike.%25${safeQuery}%25)&order=date.desc&limit=20`
           ).catch(() => []);
           return { results: results || [] };
+        }
+
+        // Content-script pulls the current UI visibility state on load
+        // (the broadcast `KYRIQ_UI_STATE` only fires on change; late-injected
+        // content scripts need an initial snapshot).
+        case 'GET_KYRIQ_UI_STATE': {
+          return {
+            sidepanelOpen: _sidepanelOpen,
+            overlayMode: getOverlayModeSync(),
+          };
+        }
+
+        // Open (or focus) the QB Online Reconcile page. Called by the sidepanel
+        // toast CTA and can be called from the content script overlay too.
+        case 'OPEN_QB_RECONCILE': {
+          const RECONCILE_URL = 'https://app.qbo.intuit.com/app/reconcile';
+          try {
+            // Focus an existing Reconcile tab if one is already open.
+            const tabs = await chrome.tabs.query({ url: 'https://app.qbo.intuit.com/app/reconcile*' });
+            if (tabs && tabs.length > 0) {
+              await chrome.tabs.update(tabs[0].id, { active: true });
+              if (tabs[0].windowId) await chrome.windows.update(tabs[0].windowId, { focused: true });
+              return { success: true, focused: true, tabId: tabs[0].id };
+            }
+            const tab = await chrome.tabs.create({ url: RECONCILE_URL });
+            return { success: true, focused: false, tabId: tab.id };
+          } catch (e) {
+            logErr('OPEN_QB_RECONCILE failed', e);
+            return { success: false, error: e?.message || String(e) };
+          }
         }
 
         // ── Return Kyriq-approved QB transactions for content script UI ──
@@ -1809,6 +1891,58 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
 
           return { approved: Object.values(localMap) };
+        }
+
+        // ── Return the matched Kyriq check for a given QB txnId (used by Smart Fill) ──
+        // Called from the content script on transaction-detail pages. Looks up
+        // the approved/matched Kyriq check by intuit_id (from kyriqApproved map
+        // first, then by joining qb_entries→checks on check_number/amount).
+        case 'GET_KYRIQ_MATCH_FOR_TXN': {
+          const intuitId = String(msg.intuitId || '').trim();
+          if (!intuitId) return { match: null };
+          try {
+            const stored = await chrome.storage.local.get('kyriqApproved');
+            const localMap = stored.kyriqApproved || {};
+            const localHit = localMap[intuitId];
+
+            const s = await getSession();
+            if (!s) return { match: localHit || null };
+            const tenantId = await getTenantId(s.user.id).catch(() => null);
+            if (!tenantId) return { match: localHit || null };
+
+            // Fetch the qb_entry to get check_number / amount for cross-joining
+            const entries = await supabaseRequest(
+              `qb_entries?tenant_id=eq.${tenantId}&intuit_id=eq.${intuitId}&select=intuit_id,check_number,amount,payee,account,memo,date,qb_type&limit=1`
+            ).catch(() => []);
+            const entry = (entries || [])[0];
+            if (!entry) return { match: localHit || null };
+
+            const checkNum = String(entry.check_number || '').replace(/^0+/, '');
+            const amtKey = entry.amount != null ? Math.abs(parseFloat(entry.amount)).toFixed(2) : null;
+            // Match against approved Kyriq checks (with full extraction fields)
+            const approvedFilters = [];
+            if (checkNum) approvedFilters.push(`check_number.eq.${encodeURIComponent(checkNum)}`);
+            if (amtKey)   approvedFilters.push(`amount.eq.${amtKey}`);
+            if (!approvedFilters.length) return { match: localHit || null };
+
+            const checks = await supabaseRequest(
+              `checks?tenant_id=eq.${tenantId}&status=eq.approved&or=(${approvedFilters.join(',')})&select=check_number,check_date,amount,payee,memo,bank_name,account_number,routing_number&limit=1`
+            ).catch(() => []);
+            const check = (checks || [])[0];
+
+            return {
+              match: {
+                intuit_id: intuitId,
+                qb_type: entry.qb_type,
+                qb_entry: entry,
+                kyriq_check: check || null,
+                local_approved: localHit || null,
+              },
+            };
+          } catch (e) {
+            logErr('GET_KYRIQ_MATCH_FOR_TXN failed', e);
+            return { match: null, error: e?.message || String(e) };
+          }
         }
 
         // ── Wipe local approval store (e.g. on logout / company switch) ──

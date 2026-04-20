@@ -31,6 +31,26 @@
   function log(...args)  { console.log('[Kyriq]', ...args); }
   function warn(...args) { console.warn('[Kyriq]', ...args); }
 
+  // ─── Extension context guard ──────────────────────────────────
+  // MV3 service workers are ephemeral; after an extension reload the content
+  // script's chrome.runtime context becomes permanently invalid. Detect that
+  // once and stop all polling so the console isn't flooded.
+  let _contextInvalidated = false;
+  async function safeSendMessage(msg) {
+    if (_contextInvalidated) return null;
+    try {
+      return await safeSendMessage(msg);
+    } catch (e) {
+      if (e?.message?.includes('Extension context invalidated') ||
+          e?.message?.includes('context invalidated')) {
+        _contextInvalidated = true;
+        stopStatusBarRefresh();
+        log('Extension reloaded — reload this QB page to reconnect Kyriq.');
+      }
+      return null;
+    }
+  }
+
   /** Wait for an element matching `selector` to appear in the DOM. */
   function waitForEl(selector, timeoutMs = 8000) {
     return new Promise((resolve, reject) => {
@@ -74,6 +94,55 @@
     return 'other';
   }
 
+  // ─── Overlay visibility (driven by sidepanel liveness + user setting) ──────
+  //
+  // The service worker tracks two things:
+  //   (1) whether the Kyriq sidepanel is currently open (port connected)
+  //   (2) the user's kyriqOverlayMode setting: 'whenOpen' | 'always' | 'never'
+  //
+  // We apply a `.kyriq-overlay-hidden` class on <html> to hide all overlay
+  // UI elements when they shouldn't be visible. Content stays in the DOM —
+  // cheap to show/hide.
+
+  let _uiState = { sidepanelOpen: false, overlayMode: 'whenOpen' };
+
+  function shouldShowOverlay(state) {
+    if (state.overlayMode === 'never')  return false;
+    if (state.overlayMode === 'always') return true;
+    return !!state.sidepanelOpen; // 'whenOpen' (default)
+  }
+
+  function applyOverlayVisibility() {
+    const show = shouldShowOverlay(_uiState);
+    document.documentElement.classList.toggle('kyriq-overlay-hidden', !show);
+    // Also release the body padding we added for the status bar when hidden.
+    if (!show) {
+      document.body.style.paddingBottom = '';
+    } else if (_statusBarEl) {
+      const existing = parseInt(getComputedStyle(document.body).paddingBottom) || 0;
+      if (existing < 28) document.body.style.paddingBottom = Math.max(existing, 28) + 'px';
+    }
+  }
+
+  async function fetchInitialUIState() {
+    try {
+      const res = await safeSendMessage({ type: 'GET_KYRIQ_UI_STATE' });
+      if (res) {
+        _uiState.sidepanelOpen = !!res.sidepanelOpen;
+        _uiState.overlayMode = res.overlayMode || 'whenOpen';
+      }
+    } catch { /* SW asleep — defaults are safe */ }
+    applyOverlayVisibility();
+  }
+
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg?.type === 'KYRIQ_UI_STATE') {
+      _uiState.sidepanelOpen = !!msg.sidepanelOpen;
+      _uiState.overlayMode   = msg.overlayMode || 'whenOpen';
+      applyOverlayVisibility();
+    }
+  });
+
   // ─── Service-worker bridge ────────────────────────────────────
 
   let _approvedCache = null;
@@ -85,7 +154,7 @@
       return _approvedCache;
     }
     try {
-      const res = await chrome.runtime.sendMessage({ type: 'GET_KYRIQ_APPROVED' });
+      const res = await safeSendMessage({ type: 'GET_KYRIQ_APPROVED' });
       const list = res?.approved || [];
       _approvedCache = buildLookup(list);
       _approvedFetchedAt = Date.now();
@@ -146,12 +215,12 @@
     const compEl   = document.getElementById('kyriq-sb-company');
     const statusEl = document.getElementById('kyriq-sb-status');
     try {
-      const sessRes = await chrome.runtime.sendMessage({ type: 'GET_SESSION' });
+      const sessRes = await safeSendMessage({ type: 'GET_SESSION' });
       if (!sessRes?.session) {
         if (compEl) { compEl.textContent = 'Sign in to Kyriq'; compEl.style.color = '#9ca3af'; }
         return;
       }
-      const connRes = await chrome.runtime.sendMessage({ type: 'GET_CONNECTIONS' });
+      const connRes = await safeSendMessage({ type: 'GET_CONNECTIONS' });
       const active  = (connRes?.connections || []).find(c => c.is_active);
       if (!active) {
         if (compEl) { compEl.textContent = 'No QB company connected'; compEl.style.color = '#f59e0b'; }
@@ -321,6 +390,126 @@
     row.dataset.kyriqHighlighted = '1';
   }
 
+  // ═══════════════════════════════════════════════════════════════
+  //  SMART FILL — populate QB transaction-detail fields from Kyriq OCR
+  // ═══════════════════════════════════════════════════════════════
+  //
+  // QB Online uses React; setting .value on an input doesn't update React's
+  // internal state. The canonical trick is to call the native setter via the
+  // property descriptor, then dispatch 'input' + 'change' so React sees it.
+
+  /** Set a value on a React-controlled input/textarea and notify React. */
+  function setReactInputValue(el, value) {
+    if (!el) return false;
+    const proto = el.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const descriptor = Object.getOwnPropertyDescriptor(proto, 'value');
+    const setter = descriptor && descriptor.set;
+    if (!setter) return false;
+    setter.call(el, value == null ? '' : String(value));
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return true;
+  }
+
+  /** Find the first input matching any of the candidate selectors. */
+  function findInputByLabel(...labelRegexes) {
+    const allInputs = document.querySelectorAll('input, textarea');
+    for (const el of allInputs) {
+      const label = (
+        el.getAttribute('aria-label') || el.getAttribute('placeholder') ||
+        el.getAttribute('name')       || el.getAttribute('data-automation-id') || ''
+      ).toLowerCase();
+      if (!label) continue;
+      for (const rx of labelRegexes) {
+        if (rx.test(label)) return el;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Attempt to select an option in a React-powered combobox/dropdown by typing
+   * its text. Works for QB's Payee/Vendor/Customer pickers which open on focus
+   * and filter as you type.
+   */
+  async function selectReactDropdownByText(el, text) {
+    if (!el || !text) return false;
+    el.focus();
+    setReactInputValue(el, text);
+    // Give QB's fuzzy matcher a moment to render options
+    await new Promise(r => setTimeout(r, 450));
+    const options = document.querySelectorAll(
+      '[role="option"], [role="listbox"] li, [data-automation-id*="option" i]'
+    );
+    const target = [...options].find(o => (o.textContent || '').trim().toLowerCase().includes(text.toLowerCase()));
+    if (target) {
+      target.click();
+      return true;
+    }
+    // Fallback: press Enter to accept first match
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    return false;
+  }
+
+  /** Main Smart-Fill entry point — called from the txn-detail banner button. */
+  async function smartFillFromKyriq(intuitId) {
+    const res = await safeSendMessage({ type: 'GET_KYRIQ_MATCH_FOR_TXN', intuitId });
+    const match = res?.match;
+    if (!match) throw new Error('No Kyriq match found for this transaction');
+
+    const k = match.kyriq_check || {};
+    const q = match.qb_entry || {};
+    const filled = [];
+    const skipped = [];
+
+    // Amount
+    const amtEl = findInputByLabel(/amount/i, /total/i);
+    const amt = k.amount ?? q.amount;
+    if (amtEl && amt != null) {
+      if (setReactInputValue(amtEl, parseFloat(amt).toFixed(2))) filled.push('Amount');
+      else skipped.push('Amount');
+    }
+
+    // Check # / Ref #
+    const refEl = findInputByLabel(/^ref/i, /check[ _]?(no|number|#)/i, /reference/i);
+    const checkNum = k.check_number || q.check_number;
+    if (refEl && checkNum) {
+      if (setReactInputValue(refEl, checkNum)) filled.push('Ref #');
+      else skipped.push('Ref #');
+    }
+
+    // Memo / Description
+    const memoEl = findInputByLabel(/memo/i, /description/i);
+    const memo = k.memo || q.memo;
+    if (memoEl && memo) {
+      if (setReactInputValue(memoEl, memo)) filled.push('Memo');
+      else skipped.push('Memo');
+    }
+
+    // Date (try native date input first, fall back to text MM/DD/YYYY)
+    const dateEl = findInputByLabel(/^date/i, /payment date/i, /txn date/i);
+    const dt = k.check_date || q.date;
+    if (dateEl && dt) {
+      const formatted = /^\d{4}-\d{2}-\d{2}$/.test(dt)
+        ? dt.slice(5, 7) + '/' + dt.slice(8, 10) + '/' + dt.slice(0, 4)
+        : dt;
+      if (setReactInputValue(dateEl, formatted)) filled.push('Date');
+      else skipped.push('Date');
+    }
+
+    // Payee / Vendor (dropdown — best-effort)
+    const payeeEl = findInputByLabel(/payee/i, /vendor/i, /customer/i, /who/i);
+    const payee = k.payee || q.payee;
+    if (payeeEl && payee) {
+      const ok = await selectReactDropdownByText(payeeEl, String(payee));
+      if (ok) filled.push('Payee');
+      else skipped.push('Payee (partial match only)');
+    }
+
+    log(`SmartFill: filled=${filled.join(', ') || 'none'}; skipped=${skipped.join(', ') || 'none'}`);
+    return { filled, skipped };
+  }
+
   function unhighlightAll() {
     document.querySelectorAll('[data-kyriq-highlighted]').forEach(el => {
       el.style.outline = '';
@@ -470,7 +659,10 @@
           <span class="kyriq-badge-pill">APPROVED</span>
         </div>
         ${fields.length ? `<div class="kyriq-fields">${fieldHTML}</div>` : ''}
-        <a class="kyriq-open-link" href="https://app.qbo.intuit.com/app/reconcile" target="_blank">Open QB Reconcile →</a>
+        <div class="kyriq-actions">
+          <button class="kyriq-smart-fill-btn" data-intuit-id="${id}">⚡ Smart Fill from Kyriq</button>
+          <a class="kyriq-open-link" href="https://app.qbo.intuit.com/app/reconcile" target="_blank">Open QB Reconcile →</a>
+        </div>
       </div>
       <button class="kyriq-close" title="Dismiss">✕</button>
       <div class="kyriq-progress" style="animation: kyriq-progress ${AUTO_DISMISS_MS / 1000}s linear forwards;"></div>
@@ -478,6 +670,26 @@
 
     // Close button
     banner.querySelector('.kyriq-close').addEventListener('click', () => dismissEl(banner));
+
+    // Smart-fill button
+    banner.querySelector('.kyriq-smart-fill-btn')?.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      btn.textContent = '⏳ Filling…';
+      try {
+        const summary = await smartFillFromKyriq(id);
+        btn.textContent = summary.filled.length
+          ? `✓ Filled ${summary.filled.length} field${summary.filled.length === 1 ? '' : 's'}`
+          : '⚠ No fields matched';
+        if (summary.filled.length) {
+          // Stop auto-dismiss so user can review
+          banner.querySelector('.kyriq-progress')?.remove();
+        }
+      } catch (err) {
+        btn.textContent = `⚠ ${err?.message || 'Fill failed'}`;
+      }
+    });
 
     // Auto-dismiss
     dismissEl(banner, AUTO_DISMISS_MS);
@@ -522,10 +734,46 @@
 
   // ─── Initialise ───────────────────────────────────────────────
 
+  // Visibility-gated status-bar refresh: skips refresh work when the tab is hidden.
+  let _refreshTimer = null;
+  function startStatusBarRefresh() {
+    if (_refreshTimer) return;
+    _refreshTimer = setInterval(() => {
+      if (document.visibilityState === 'visible') refreshStatusBar();
+    }, 60_000);
+  }
+  function stopStatusBarRefresh() {
+    if (_refreshTimer) { clearInterval(_refreshTimer); _refreshTimer = null; }
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') refreshStatusBar();
+  });
+  window.addEventListener('beforeunload', () => {
+    stopStatusBarRefresh();
+    try { _navObserver.disconnect(); } catch {}
+  });
+
+  function injectOverlayHideStyles() {
+    // One-time <style> injection so .kyriq-overlay-hidden hides our DOM.
+    // Using display:none prevents interaction and layout — cheaper than removing.
+    if (document.getElementById('kyriq-overlay-style')) return;
+    const s = document.createElement('style');
+    s.id = 'kyriq-overlay-style';
+    s.textContent = `
+      html.kyriq-overlay-hidden #kyriq-status-bar,
+      html.kyriq-overlay-hidden #kyriq-recon-btn-wrap,
+      html.kyriq-overlay-hidden #kyriq-txn-banner,
+      html.kyriq-overlay-hidden .kyriq-badge { display: none !important; }
+    `;
+    document.documentElement.appendChild(s);
+  }
+
   function init() {
+    injectOverlayHideStyles();
     createStatusBar();
     refreshStatusBar();
-    setInterval(refreshStatusBar, 60_000);
+    startStatusBarRefresh();
+    fetchInitialUIState(); // hide immediately if sidepanel is closed + mode is whenOpen
     _navObserver.observe(document.body, { childList: true, subtree: true });
     runPageAutomation();
     log('Content script loaded — page:', getPageType());

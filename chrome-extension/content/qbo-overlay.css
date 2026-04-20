@@ -139,6 +139,34 @@
 #kyriq-txn-banner .kyriq-open-link:hover {
   text-decoration: underline;
 }
+#kyriq-txn-banner .kyriq-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+#kyriq-txn-banner .kyriq-smart-fill-btn {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: transform 0.1s, box-shadow 0.12s, opacity 0.12s;
+  box-shadow: 0 1px 3px rgba(5, 150, 105, 0.4);
+}
+#kyriq-txn-banner .kyriq-smart-fill-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 5px rgba(5, 150, 105, 0.5);
+}
+#kyriq-txn-banner .kyriq-smart-fill-btn:disabled {
+  opacity: 0.8;
+  cursor: default;
+}
 
 /* ── Reconciliation auto-clear button ───────────────────────────── */
 

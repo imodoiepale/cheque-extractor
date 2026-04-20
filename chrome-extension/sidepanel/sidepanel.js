@@ -96,6 +96,24 @@ async function saveDateFormat(fmt) {
   if (_cachedDocs !== null) renderDocumentsList(_cachedDocs);
   if (_cachedHistory !== null) renderHistoryList(_cachedHistory);
 }
+
+// ── Overlay visibility setting (mirrors chrome.storage.local.kyriqOverlayMode) ──
+// Valid values: 'whenOpen' (default) | 'always' | 'never'
+async function loadOverlayModeSetting() {
+  try {
+    const { kyriqOverlayMode } = await chrome.storage.local.get('kyriqOverlayMode');
+    const mode = kyriqOverlayMode || 'whenOpen';
+    document.querySelectorAll('input[name="overlay-mode"]').forEach(r => {
+      r.checked = (r.value === mode);
+    });
+  } catch (_) {}
+}
+
+async function saveOverlayModeSetting(mode) {
+  if (!['whenOpen', 'always', 'never'].includes(mode)) return;
+  await chrome.storage.local.set({ kyriqOverlayMode: mode }).catch(() => {});
+  dbg(`Overlay visibility set to: ${mode}`, 'info');
+}
 function fmtSize(bytes) {
   if (!bytes) return '';
   if (bytes < 1024) return bytes + ' B';
@@ -194,6 +212,12 @@ let _qbDateFrom     = null;
 let _qbDateTo       = null;
 let _qbSourceFilter = '';  // qb_source value to filter QB Data tab ('' = all)
 let _cachedQB       = null; // null = not loaded yet; [] = loaded but empty
+// ── Single-flight guards (prevent duplicate concurrent loads) ──
+let _inflightChecksMatch = null;
+let _inflightQB          = null;
+let _inflightDocs        = null;
+let _inflightChecks      = null;
+let _loginInProgress     = false;
 // ── Document / account / source filter state ──
 let _docFilter        = ''; // job_id to filter matches by ('' = all)
 let _chequeDocFilter  = ''; // job_id to filter cheques by ('' = all)
@@ -231,47 +255,131 @@ function showQBReconnectBanner(msg) {
   });
 }
 
-// ── Runtime message listener (from service worker) ────────────
+// ── Centralised client-side state reset (called on logout / tenant switch) ──
+function resetClientState() {
+  _cachedQB = null;
+  _cachedDocs = null;
+  _cachedChecks = null;
+  _cachedHistory = null;
+  extractedChecks = [];
+  matches = [];
+  connections = [];
+  _accountFilter = '';
+  _matchSourceFilter = '';
+  _docFilter = '';
+  _chequeDocFilter = '';
+  _qbSearch = '';
+  _qbDateFrom = null;
+  _qbDateTo = null;
+  _qbSourceFilter = '';
+  // Reset single-flight guards (shouldn't be resolved but be safe)
+  _inflightChecksMatch = _inflightQB = _inflightDocs = _inflightChecks = null;
+  _loginInProgress = false;
+  // Clear rendered lists so no stale data lingers visually
+  const listSelectors = ['#qb-list', '#documents-list', '#checks-list', '#history-list', '#matches-list'];
+  listSelectors.forEach(sel => { const el = $(sel); if (el) el.innerHTML = ''; });
+}
+
+// ── Runtime message listener (single dispatcher) ─────────────
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.type === 'QB_OAUTH_COMPLETE') {
-    dbg(`QB OAuth completed${msg.company ? ' for ' + msg.company : ''} — auto-refreshing connections`, 'success');
-    const infoEl = $('#qb-connect-info');
-    if (infoEl) {
-      infoEl.textContent = `✅ Connected${msg.company ? ' to ' + msg.company : ''}! Loading your workspace…`;
-      infoEl.style.display = '';
-    }
-    // Auto-trigger the same flow as the manual "I've Connected" button
-    (async () => {
-      showLoading('Connecting QuickBooks...');
-      const res = await sendMsg({ type: 'GET_CONNECTIONS' });
-      connections = res?.connections || [];
-      if (connections.length > 0) {
-        renderCompanySelect();
-        showView('main');
-        showLoading('Syncing QuickBooks transactions...');
-        const pullRes = await sendMsg({ type: 'PULL_QB_TXNS' }).catch(() => ({}));
-        hideLoading();
-        if (pullRes?.endpointMissing) {
-          switchTab('matches');
-          showQBEndpointMissingBanner(pullRes.error);
-          dbg('QB refresh endpoint missing — frontend deploy needed', 'error');
-          return;
+  if (!msg || !msg.type) return;
+
+  switch (msg.type) {
+    case 'SESSION_CHANGED': {
+      dbg(`Session ${msg.signedIn ? 'established' : 'cleared'}`, 'info');
+      if (msg.signedIn) {
+        // Only invalidate the QB cache so the QB tab refreshes with the
+        // tenant-correct data (avoid nuking in-progress login flows).
+        _cachedQB = null;
+        if (typeof currentTab !== 'undefined' && currentTab === 'qb') {
+          loadQBTransactions(true).catch(() => {});
         }
-        if (pullRes?.reconnectNeeded) {
-          switchTab('matches');
-          showQBReconnectBanner(pullRes.error);
-          dbg('QB token expired on OAuth complete — reconnect required', 'error');
-          return;
-        }
-        await loadChecksIntoMatches();
-        dbg('QB auto-connect flow complete', 'success');
       } else {
-        hideLoading();
-        dbg('QB_OAUTH_COMPLETE: no connections found yet — user may need to click refresh', 'warn');
+        resetClientState();
       }
-    })();
+      return;
+    }
+
+    case 'CHECK_UPDATED': {
+      if (!msg.checkId) return;
+      const m = matches.find(x =>
+        x.check?.id === msg.checkId || x.check?.check_id === msg.checkId
+      );
+      if (m && m.status !== (msg.status || 'approved')) {
+        m.status = msg.status || 'approved';
+        renderMatches();
+        if (msg.cleared) {
+          dbg('Approved & cleared in QB ✓', 'success');
+        } else if (msg.qbStatus === 'queued_for_reconcile') {
+          dbg('Approved — queued for QB Reconcile', 'success');
+        } else {
+          dbg('Approved locally (QB sync pending)', 'warn');
+        }
+      }
+      return;
+    }
+
+    case 'QB_OAUTH_COMPLETE': {
+      handleQBOAuthComplete(msg);
+      return;
+    }
   }
 });
+
+async function handleQBOAuthComplete(msg) {
+  dbg(`QB OAuth completed${msg.company ? ' for ' + msg.company : ''} — auto-refreshing connections`, 'success');
+  const infoEl = $('#qb-connect-info');
+  if (infoEl) {
+    infoEl.textContent = `✅ Connected${msg.company ? ' to ' + msg.company : ''}! Loading your workspace…`;
+    infoEl.style.display = '';
+  }
+  try {
+    showLoading('Connecting QuickBooks...');
+    const res = await sendMsg({ type: 'GET_CONNECTIONS' });
+    connections = res?.connections || [];
+    if (connections.length === 0) {
+      hideLoading();
+      dbg('QB_OAUTH_COMPLETE: no connections found yet — user may need to click refresh', 'warn');
+      return;
+    }
+    renderCompanySelect();
+    showView('main');
+    showLoading('Syncing QuickBooks transactions...');
+    const pullRes = await sendMsg({ type: 'PULL_QB_TXNS' }).catch(() => ({}));
+    hideLoading();
+    if (pullRes?.endpointMissing) {
+      switchTab('matches');
+      showQBEndpointMissingBanner(pullRes.error);
+      dbg('QB refresh endpoint missing — frontend deploy needed', 'error');
+      return;
+    }
+    if (pullRes?.reconnectNeeded) {
+      switchTab('matches');
+      showQBReconnectBanner(pullRes.error);
+      dbg('QB token expired on OAuth complete — reconnect required', 'error');
+      return;
+    }
+    await loadChecksIntoMatches();
+    dbg('QB auto-connect flow complete', 'success');
+  } catch (e) {
+    hideLoading();
+    dbg(`QB_OAUTH_COMPLETE handler error: ${e?.message || e}`, 'error');
+  }
+}
+
+// ── Sidepanel-open liveness port (lets content scripts know when to show overlay) ──
+let _sidepanelPort = null;
+function openSidepanelPort() {
+  try {
+    _sidepanelPort = chrome.runtime.connect({ name: 'kyriq-sidepanel' });
+    _sidepanelPort.onDisconnect.addListener(() => { _sidepanelPort = null; });
+  } catch (e) {
+    // Service worker not ready yet — retry once.
+    setTimeout(() => {
+      try { _sidepanelPort = chrome.runtime.connect({ name: 'kyriq-sidepanel' }); } catch {}
+    }, 200);
+  }
+}
 
 // ── Init ──────────────────────────────────────────────────────
 async function init() {
@@ -289,30 +397,15 @@ async function init() {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  openSidepanelPort();
   bindEvents();
   loadDateFormat();
+  loadOverlayModeSetting();
   init();
   // Approve confirmation dialog bindings
   $('#approve-confirm-cancel')?.addEventListener('click', hideApproveConfirm);
   $('#approve-confirm-overlay')?.addEventListener('click', e => {
     if (e.target === $('#approve-confirm-overlay')) hideApproveConfirm();
-  });
-
-  // Error dialog bindings
-  $('#error-dialog-close')?.addEventListener('click',  hideErrorDialog);
-  $('#error-dialog-close2')?.addEventListener('click', hideErrorDialog);
-  $('#error-dialog-overlay')?.addEventListener('click', e => {
-    if (e.target === $('#error-dialog-overlay')) hideErrorDialog();
-  });
-  $('#error-dialog-copy')?.addEventListener('click', () => {
-    const title = $('#error-dialog-title')?.textContent || '';
-    const msg   = $('#error-dialog-msg')?.textContent   || '';
-    const raw   = $('#error-dialog-raw')?.textContent   || '';
-    const parts = [`[Kyriq Error] ${title}`, msg, raw ? `--- Raw QB Response ---\n${raw}` : ''].filter(Boolean);
-    navigator.clipboard.writeText(parts.join('\n\n')).then(() => {
-      const btn = $('#error-dialog-copy');
-      if (btn) { btn.textContent = '✓ Copied!'; setTimeout(() => { btn.textContent = '📋 Copy'; }, 2000); }
-    }).catch(() => {});
   });
 
   // Error dialog bindings
@@ -337,24 +430,8 @@ document.addEventListener('DOMContentLoaded', () => {
     if (idx !== null) await approveAndClear(idx);
   });
 
-  // Listen for CHECK_UPDATED broadcasts from service-worker after approve
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type !== 'CHECK_UPDATED') return;
-    if (!msg.checkId) return;
-    const m = matches.find(m =>
-      m.check?.id === msg.checkId ||
-      m.check?.check_id === msg.checkId
-    );
-    if (m && m.status !== (msg.status || 'approved')) {
-      m.status = msg.status || 'approved';
-      renderMatches();
-      if (msg.cleared) {
-        dbg('Approved & cleared in QB ✓', 'success');
-      } else {
-        dbg('Approved locally (QB sync pending)', 'warn');
-      }
-    }
-  });
+  // NOTE: CHECK_UPDATED handling moved to the single top-level
+  // chrome.runtime.onMessage dispatcher above — avoids duplicate listeners.
 });
 
 // ── View management ───────────────────────────────────────────
@@ -415,6 +492,8 @@ function setUserChip(email, user) {
 
 // ── Post-login: check QB connections ─────────────────────────
 async function postLoginFlow() {
+  if (_loginInProgress) { dbg('postLoginFlow: already in progress — skipping'); return; }
+  _loginInProgress = true;
   showLoading('Loading workspace...');
   dbg('postLoginFlow: fetching connections');
   try {
@@ -474,50 +553,59 @@ async function postLoginFlow() {
     dbg(`postLoginFlow error: ${e.message}`, 'error');
     hideLoading();
     showView('main');
+  } finally {
+    _loginInProgress = false;
   }
 }
 
 // ── Load checks from DB → extractedChecks → run matching ──
+// Single-flight guarded: concurrent callers share the same in-flight promise.
 async function loadChecksIntoMatches() {
-  dbg('loadChecksIntoMatches: fetching DB checks');
-  updateMatchesBanner('loading');
-  const res = await sendMsg({ type: 'GET_CHECKS' });
-  const dbChecks = res?.checks || [];
-  if (!dbChecks.length) {
-    dbg('loadChecksIntoMatches: no checks in DB yet');
-    updateMatchesBanner('empty');
-    renderMatches();
-    return;
+  if (_inflightChecksMatch) {
+    dbg('loadChecksIntoMatches: reusing in-flight load');
+    return _inflightChecksMatch;
   }
-  extractedChecks = dbChecks;
-  dbg(`loadChecksIntoMatches: ${extractedChecks.length} checks loaded`);
-  updateMatchesBanner('loaded', extractedChecks.length);
-  // Run matching algorithm
-  showLoading(`Matching ${extractedChecks.length} cheques…`);
-  const matchRes = await sendMsg({ type: 'RUN_MATCHING', checks: extractedChecks });
-  hideLoading();
-  if (matchRes?.matches) {
-    matches = matchRes.matches;
-    dbg(`Matching done: ${matches.length} results`, 'success');
-    // Refresh account select from matched QB data (accounts come from qb_entries via runFullMatch)
-    const matchAccounts = [...new Set(matches.filter(m => m.qbTxn?.account).map(m => m.qbTxn.account))].sort();
-    if (matchAccounts.length > 0) {
-      const sel = $('#account-select');
-      if (sel) {
-        const prev = sel.value;
-        while (sel.options.length > 1) sel.remove(1);
-        matchAccounts.forEach(a => {
-          const opt = document.createElement('option');
-          opt.value = a;
-          opt.textContent = a.slice(0, 28);
-          sel.appendChild(opt);
-        });
-        if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
-      }
-      dbg(`Account select refreshed: ${matchAccounts.length} accounts`);
+  _inflightChecksMatch = (async () => {
+    dbg('loadChecksIntoMatches: fetching DB checks');
+    updateMatchesBanner('loading');
+    const res = await sendMsg({ type: 'GET_CHECKS' });
+    const dbChecks = res?.checks || [];
+    if (!dbChecks.length) {
+      dbg('loadChecksIntoMatches: no checks in DB yet');
+      updateMatchesBanner('empty');
+      renderMatches();
+      return;
     }
-  }
-  renderMatches();
+    extractedChecks = dbChecks;
+    dbg(`loadChecksIntoMatches: ${extractedChecks.length} checks loaded`);
+    updateMatchesBanner('loaded', extractedChecks.length);
+    // Run matching algorithm
+    showLoading(`Matching ${extractedChecks.length} cheques…`);
+    const matchRes = await sendMsg({ type: 'RUN_MATCHING', checks: extractedChecks });
+    hideLoading();
+    if (matchRes?.matches) {
+      matches = matchRes.matches;
+      dbg(`Matching done: ${matches.length} results`, 'success');
+      const matchAccounts = [...new Set(matches.filter(m => m.qbTxn?.account).map(m => m.qbTxn.account))].sort();
+      if (matchAccounts.length > 0) {
+        const sel = $('#account-select');
+        if (sel) {
+          const prev = sel.value;
+          while (sel.options.length > 1) sel.remove(1);
+          matchAccounts.forEach(a => {
+            const opt = document.createElement('option');
+            opt.value = a;
+            opt.textContent = a.slice(0, 28);
+            sel.appendChild(opt);
+          });
+          if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+        }
+        dbg(`Account select refreshed: ${matchAccounts.length} accounts`);
+      }
+    }
+    renderMatches();
+  })().finally(() => { _inflightChecksMatch = null; });
+  return _inflightChecksMatch;
 }
 
 function updateMatchesBanner(state, count) {
@@ -815,27 +903,40 @@ async function approveAndClear(idx) {
         return;
       }
       match.status = 'approved';
-      // Truthful toast per qbStatus (cleared | already_cleared | manual_required | note_only | failed)
+      // Truthful toast per qbStatus (already_cleared | queued_for_reconcile | manual_required | failed)
       switch (res?.qbStatus) {
-        case 'cleared':
-          dbg(`Approved & marked Cleared in QB${res.attemptedField ? ` (${res.attemptedField})` : ''} ✓`, 'success');
+        case 'already_cleared':
+          dbg('Approved — QB already has this cleared ✓', 'success');
           showQBConfirmation(res);
           break;
-        case 'already_cleared':
-          dbg('Approved — already Cleared in QB ✓', 'success');
+        case 'queued_for_reconcile':
+          dbg('Approved — queued for QB Reconcile overlay', 'success');
           showQBConfirmation(res);
           break;
         case 'manual_required':
           dbg(`Approved — ${res.warning || 'mark manually in QB reconciliation'}`, 'warn');
-          showErrorDialog('Mark Cleared Manually in QB', res.warning || 'Bill Payment cleared-status cannot be set via the QuickBooks API. Open QB Reconciliation and tick the Cleared box for this transaction.', null);
+          showErrorDialog(
+            'Mark Cleared Manually in QB',
+            res.warning || 'Bill Payment cleared-status cannot be set via the QuickBooks API. Open QB Reconciliation and tick the Cleared box for this transaction.',
+            null
+          );
           break;
-        case 'note_only':
-          dbg(`Approved — note stamped, cleared flag not set`, 'warn');
-          showErrorDialog('QB Note Stamped — Mark Cleared Manually', res.warning || 'QB rejected the cleared-flag property. PrivateNote was stamped. Open QB Reconciliation to mark this cleared.', null);
+        case 'inactive_entity':
+          dbg('Approved in Kyriq ✓ — QB note skipped: linked entity is inactive', 'warn');
+          showToast(
+            'warn',
+            'Approved in Kyriq ✓ — QB not stamped',
+            'A vendor or account linked to this QB transaction has been made inactive. Reactivate it in QuickBooks, then re-approve to stamp the note.',
+            null
+          );
           break;
         case 'failed':
           dbg(`Approved locally only: ${res.warning || 'QB update failed'}`, 'error');
-          showErrorDialog('QB Not Cleared', `Approved in Kyriq — but QB was not updated:\n\n${res.warning || 'unknown error'}`, res.qbRaw || null);
+          showErrorDialog(
+            'QB PrivateNote Stamp Failed',
+            `Approved in Kyriq — but QB was not updated:\n\n${res.warning || 'unknown error'}`,
+            res.qbRaw || null
+          );
           break;
         default:
           if (res?.warning) {
@@ -901,24 +1002,25 @@ function hideErrorDialog() {
 function showQBConfirmation(res) {
   const noteStamped = res?.noteStamped === true;
   const qbStatus    = res?.qbStatus;
-  const AUTO_MS     = 10000;
+  const AUTO_MS     = 12000;
 
-  // Truthful title/subtext based on real qbStatus, not per-entity guesswork.
+  // Truthful title/subtext — no fabricated "cleared in QuickBooks" copy.
   const title =
-    qbStatus === 'cleared'         ? 'Approved & Cleared in QuickBooks'          :
-    qbStatus === 'already_cleared' ? 'Approved — already Cleared in QuickBooks'  :
-    qbStatus === 'manual_required' ? 'Approved — mark Cleared manually in QB'    :
-    qbStatus === 'note_only'       ? 'Approved — PrivateNote stamped in QB'      :
-    noteStamped                    ? 'Approved — PrivateNote stamped in QB'      :
-                                     'Approved in Kyriq';
+    qbStatus === 'already_cleared'      ? 'Approved — already Cleared in QuickBooks' :
+    qbStatus === 'queued_for_reconcile' ? 'Approved — awaiting QB Reconcile'         :
+    qbStatus === 'manual_required'      ? 'Approved — mark Cleared manually in QB'   :
+    noteStamped                         ? 'Approved — PrivateNote stamped in QB'     :
+                                          'Approved in Kyriq';
 
   const sub =
-    qbStatus === 'cleared'         ? `Cleared flag set via ${res?.attemptedField || 'QB API'}.` :
-    qbStatus === 'already_cleared' ? 'QB already had this transaction cleared.' :
-    qbStatus === 'manual_required' ? 'Bill Payment cleared-status cannot be set via QB API — tick it manually in Reconcile.' :
-    qbStatus === 'note_only'       ? 'Open QB Reconcile to tick the Cleared checkbox for this transaction.' :
-    noteStamped                    ? 'QB was updated successfully.' :
-                                     '';
+    qbStatus === 'already_cleared'      ? 'QB already had this transaction cleared.' :
+    qbStatus === 'queued_for_reconcile' ? 'Open QB Reconcile and click "Auto-Clear Kyriq Approved" to tick the C.' :
+    qbStatus === 'manual_required'      ? 'Bill Payment cleared-status cannot be set via the QB API — tick it in Reconcile.' :
+    noteStamped                         ? 'Kyriq audit note written to QuickBooks.' :
+                                          '';
+
+  const showReconcileCta =
+    qbStatus === 'queued_for_reconcile' || qbStatus === 'manual_required';
 
   // Remove any existing toast
   document.getElementById('kyriq-qb-toast')?.remove();
@@ -927,11 +1029,14 @@ function showQBConfirmation(res) {
   toast.id = 'kyriq-qb-toast';
   toast.className = 'kyriq-toast';
   toast.innerHTML = `
-    <span class="kyriq-toast-icon">${noteStamped ? '✅' : '☑️'}</span>
+    <span class="kyriq-toast-icon">${qbStatus === 'already_cleared' ? '✅' : '🏦'}</span>
     <div class="kyriq-toast-body">
       <div class="kyriq-toast-title">${escHtml(title)}</div>
       <div class="kyriq-toast-sub">${escHtml(sub)}</div>
-      ${res?.qbUrl ? `<a class="kyriq-toast-link" href="${escHtml(res.qbUrl)}" target="_blank">View in QB →</a>` : ''}
+      <div class="kyriq-toast-actions">
+        ${showReconcileCta ? `<button class="kyriq-toast-btn kyriq-toast-btn-primary" data-act="open-reconcile">Open QB Reconcile →</button>` : ''}
+        ${res?.qbUrl ? `<a class="kyriq-toast-link" href="${escHtml(res.qbUrl)}" target="_blank">View in QB →</a>` : ''}
+      </div>
     </div>
     <button class="kyriq-toast-close" title="Dismiss">✕</button>
     <div class="kyriq-toast-progress" style="animation-duration:${AUTO_MS}ms;"></div>
@@ -942,9 +1047,22 @@ function showQBConfirmation(res) {
     toast.addEventListener('animationend', () => toast.remove(), { once: true });
   }
 
-  toast.querySelector('.kyriq-toast-close').addEventListener('click', dismiss);
+  const closeBtn = toast.querySelector('.kyriq-toast-close');
   const timer = setTimeout(dismiss, AUTO_MS);
-  toast.querySelector('.kyriq-toast-close').addEventListener('click', () => clearTimeout(timer), { once: true });
+  closeBtn.addEventListener('click', () => { clearTimeout(timer); dismiss(); });
+
+  const reconBtn = toast.querySelector('[data-act="open-reconcile"]');
+  if (reconBtn) {
+    reconBtn.addEventListener('click', async () => {
+      clearTimeout(timer);
+      try {
+        await sendMsg({ type: 'OPEN_QB_RECONCILE' });
+      } catch (e) {
+        dbg(`OPEN_QB_RECONCILE failed: ${e?.message || e}`, 'warn');
+      }
+      dismiss();
+    });
+  }
 
   document.body.appendChild(toast);
 }
@@ -1130,10 +1248,6 @@ async function runExtraction() {
       // Refresh docs cache so the new file appears in the Docs dropdown immediately
       _cachedDocs = null;
       loadDocuments(true).catch(() => {});
-
-      // Refresh docs cache so the new file appears in the Docs dropdown immediately
-      _cachedDocs = null;
-      loadDocuments(true).catch(() => {});
     }
   }, 2000);
 }
@@ -1165,23 +1279,26 @@ function fileToBase64(file) {
 
 // ── QB Transactions (from Supabase qb_entries table) ────────────
 async function loadQBTransactions(force = false) {
-  dbg('loadQBTransactions' + (force ? ' (force)' : ''));
+  if (_inflightQB) { dbg('loadQBTransactions: reusing in-flight load'); return _inflightQB; }
   if (_cachedQB !== null && !force) { renderQBList(_cachedQB); return; }
-  const list = $('#qb-list');
-  if (list) list.innerHTML = '<div class="empty-state"><div class="empty-icon">⏳</div><p>Loading…</p></div>';
-  const res = await sendMsg({ type: 'GET_QB_TXNS' });
-  const txns = res?.txns || [];
-  const status = res?.status || 'ok';
-  dbg(`QB Transactions: ${txns.length} (${status})`);
+  _inflightQB = (async () => {
+    dbg('loadQBTransactions' + (force ? ' (force)' : ''));
+    const list = $('#qb-list');
+    if (list) list.innerHTML = '<div class="empty-state"><div class="empty-icon">⏳</div><p>Loading…</p></div>';
+    const res = await sendMsg({ type: 'GET_QB_TXNS' });
+    const txns = res?.txns || [];
+    const status = res?.status || 'ok';
+    dbg(`QB Transactions: ${txns.length} (${status})`);
 
-  // Do NOT cache when the fetch couldn't run (auth / tenant / network failure).
-  // Otherwise the list stays empty forever after a transient failure.
-  if (status === 'ok' || status === 'empty') {
-    _cachedQB = txns;
-  } else {
-    _cachedQB = null;
-  }
-  renderQBList(txns, status);
+    // Do NOT cache when the fetch couldn't run (auth / tenant / network failure).
+    if (status === 'ok' || status === 'empty') {
+      _cachedQB = txns;
+    } else {
+      _cachedQB = null;
+    }
+    renderQBList(txns, status);
+  })().finally(() => { _inflightQB = null; });
+  return _inflightQB;
 }
 
 function renderQBList(txns, status = 'ok') {
@@ -1280,16 +1397,20 @@ function renderQBList(txns, status = 'ok') {
 
 // ── Documents (from Supabase check_jobs table) ────────────────────────
 async function loadDocuments(force = false) {
-  dbg('loadDocuments' + (force ? ' (force)' : ''));
+  if (_inflightDocs) { dbg('loadDocuments: reusing in-flight load'); return _inflightDocs; }
   const list = $('#documents-list');
   if (_cachedDocs !== null && !force) { renderDocumentsList(_cachedDocs); return; }
-  list.innerHTML = '<div class="empty-state"><div class="empty-icon">⏳</div><p>Loading...</p></div>';
-  const res = await sendMsg({ type: 'GET_DOCUMENTS' });
-  const docs = res?.documents || [];
-  dbg(`Documents: ${docs.length}`);
-  _cachedDocs = docs;
-  populateDocFilter(docs);
-  renderDocumentsList(docs);
+  _inflightDocs = (async () => {
+    dbg('loadDocuments' + (force ? ' (force)' : ''));
+    if (list) list.innerHTML = '<div class="empty-state"><div class="empty-icon">⏳</div><p>Loading...</p></div>';
+    const res = await sendMsg({ type: 'GET_DOCUMENTS' });
+    const docs = res?.documents || [];
+    dbg(`Documents: ${docs.length}`);
+    _cachedDocs = docs;
+    populateDocFilter(docs);
+    renderDocumentsList(docs);
+  })().finally(() => { _inflightDocs = null; });
+  return _inflightDocs;
 }
 function renderDocumentsList(docs) {
   const list = $('#documents-list');
@@ -1343,15 +1464,19 @@ function renderDocumentsList(docs) {
 
 // ── Extracted Cheques (from Supabase checks table) ────────
 async function loadChecks(force = false) {
-  dbg('loadChecks' + (force ? ' (force)' : ''));
+  if (_inflightChecks) { dbg('loadChecks: reusing in-flight load'); return _inflightChecks; }
   if (_cachedChecks !== null && !force) { renderChecksList(_cachedChecks); return; }
-  const list = $('#checks-list');
-  list.innerHTML = '<div class="empty-state"><div class="empty-icon">⏳</div><p>Loading...</p></div>';
-  const res = await sendMsg({ type: 'GET_CHECKS' });
-  const checks = res?.checks || [];
-  dbg(`Checks: ${checks.length}`);
-  _cachedChecks = checks;
-  renderChecksList(checks);
+  _inflightChecks = (async () => {
+    dbg('loadChecks' + (force ? ' (force)' : ''));
+    const list = $('#checks-list');
+    if (list) list.innerHTML = '<div class="empty-state"><div class="empty-icon">⏳</div><p>Loading...</p></div>';
+    const res = await sendMsg({ type: 'GET_CHECKS' });
+    const checks = res?.checks || [];
+    dbg(`Checks: ${checks.length}`);
+    _cachedChecks = checks;
+    renderChecksList(checks);
+  })().finally(() => { _inflightChecks = null; });
+  return _inflightChecks;
 }
 function renderChecksList(checks) {
   const list = $('#checks-list');
@@ -1763,34 +1888,6 @@ function bindEvents() {
     }
   });
 
-  // ── Disconnect QB (profile panel) ──
-  $('#btn-qb-disconnect')?.addEventListener('click', async () => {
-    hide('#profile-panel');
-    dbg('Disconnecting QB...');
-    showLoading('Disconnecting QuickBooks...');
-    const res = await sendMsg({ type: 'DISCONNECT_QB' });
-    hideLoading();
-    if (res?.error) {
-      dbg(`Disconnect QB error: ${res.error}`, 'error');
-      return;
-    }
-    connections = [];
-    matches = [];
-    dbg('QB disconnected — returning to connect screen', 'info');
-    showView('qb-connect');
-  });
-
-  // ── Reconnect QB (company bar) ──
-  $('#btn-qb-reconnect')?.addEventListener('click', async () => {
-    dbg('Reconnect QB: opening OAuth flow');
-    const res = await sendMsg({ type: 'OPEN_QB_AUTH' });
-    if (res?.success) {
-      dbg('QB OAuth tab opened — complete auth and return here', 'success');
-    } else {
-      dbg(`QB reconnect error: ${res?.error || 'unknown'}`, 'error');
-    }
-  });
-
   // ── QB Connect ──
   $('#btn-qb-connect').addEventListener('click', async () => {
     dbg('QB Connect: opening OAuth flow via service worker');
@@ -1952,8 +2049,8 @@ function bindEvents() {
       showWarningBanner('QB sync: 0 transactions found. The connected company may not have check transactions recorded yet.');
     }
 
-    // Refresh QB Data tab if user is currently viewing it
-    if (currentTab === 'qbdata') loadQBTransactions(true);
+    // Refresh QB Data tab if user is currently viewing it (tab id is 'qb', not 'qbdata')
+    if (currentTab === 'qb') loadQBTransactions(true);
 
     // If no checks in memory yet, load from DB first
     if (!extractedChecks.length) {
@@ -2305,5 +2402,12 @@ function bindEvents() {
   // ── Date format selector (profile panel) ──
   $('#date-format-select')?.addEventListener('change', e => {
     saveDateFormat(e.target.value);
+  });
+
+  // ── Overlay visibility radio group (profile panel) ──
+  document.querySelectorAll('input[name="overlay-mode"]').forEach(r => {
+    r.addEventListener('change', e => {
+      if (e.target.checked) saveOverlayModeSetting(e.target.value);
+    });
   });
 }

@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { createAuthenticatedClient } from '@/lib/supabase/api';
 import { clearQBTransactionServer, type QBClearStatus } from '@/pages/api/qbo/clear-transaction';
 
-type QBSync = { status: QBClearStatus; message?: string; attemptedField?: string | null };
+type QBSync = { status: QBClearStatus; message?: string; readOnlyClearedStatus?: string | null };
 
 /**
  * PATCH /api/jobs/[id]/checks/[checkId]/status
@@ -80,7 +80,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           qbSync = {
             status: clearResult.status,
             message: clearResult.warning,
-            attemptedField: clearResult.attemptedField ?? null,
+            readOnlyClearedStatus: clearResult.readOnlyClearedStatus ?? null,
           };
         } catch (qbErr: any) {
           qbSync = { status: 'failed', message: qbErr.message };
@@ -158,7 +158,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         qbSync = {
           status: clearResult.status,
           message: clearResult.warning,
-          attemptedField: clearResult.attemptedField ?? null,
+          readOnlyClearedStatus: clearResult.readOnlyClearedStatus ?? null,
         };
       } catch (qbErr: any) {
         qbSync = { status: 'failed', message: qbErr.message };

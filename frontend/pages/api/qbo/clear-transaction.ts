@@ -102,28 +102,30 @@ interface CheckData {
 }
 
 export type QBClearStatus =
-  | 'cleared'          // QB confirmed ClearedStatus set
-  | 'already_cleared'  // QB already had it Cleared/Reconciled
-  | 'manual_required'  // Entity type (e.g. BillPayment) that QB API does not allow setting cleared on
-  | 'note_only'        // Fallback — PrivateNote stamped, no cleared flag set
-  | 'failed'           // QB rejected the update
-  | 'skipped';         // No QB link / file import
+  | 'already_cleared'       // QB GET returned ClearedStatus = Cleared / Reconciled (read-only detection)
+  | 'queued_for_reconcile'  // Kyriq PrivateNote stamped; extension overlay will tick Cleared on /app/reconcile
+  | 'manual_required'       // Entity type (e.g. BillPayment) that QB overlay cannot auto-tick reliably
+  | 'inactive_entity'       // QB error 610: transaction references an inactive vendor/account/employee
+  | 'failed'                // QB rejected the PrivateNote stamp (auth, sync token, etc.)
+  | 'skipped';              // No QB link / file import / QB not connected
 
 export interface QBClearResult {
-  cleared: boolean;
+  cleared: boolean;             // true only for already_cleared (the API can never *set* it)
   status: QBClearStatus;
   warning?: string;
   qbFault?: any;
-  attemptedField?: string | null;
+  readOnlyClearedStatus?: string | null; // value QB returned on GET, for audit / UI hinting
 }
 
 /**
- * Candidate property names QBO has accepted historically for the cleared flag.
- * QBO documentation is inconsistent across entities and minor versions; we try
- * the documented name first and fall back on the others if QB rejects with
- * fault 2010 (unsupported property).
+ * QBO IDS API fields that report the cleared state on GET.
+ * Per Intuit docs + Satva Solutions research, all of these are READ-ONLY —
+ * no sparse update with any of these names will set the flag; QB returns
+ * fault 2010 "unsupported property". The real clearing path is the extension
+ * content script `chrome-extension/content/qbo-overlay.js` which ticks the
+ * Cleared checkbox on /app/reconcile.
  */
-const CLEARED_FIELD_CANDIDATES = ['TxnStatus', 'ClearedStatus', 'ClearStatus'] as const;
+const CLEARED_READ_FIELDS = ['ClearedStatus', 'TxnStatus', 'ClearStatus'] as const;
 
 function buildKyriqNote(entity: any, entry: any, checkData: CheckData | null): string {
   const today = new Date().toISOString().split('T')[0];
@@ -171,20 +173,40 @@ function buildKyriqNote(entity: any, entry: any, checkData: CheckData | null): s
   return existingNote ? `${existingNote}\n---\n${kyriqBlock}` : kyriqBlock;
 }
 
-function isAlreadyCleared(entity: any): string | null {
-  for (const f of CLEARED_FIELD_CANDIDATES) {
+function readClearedStatus(entity: any): string | null {
+  for (const f of CLEARED_READ_FIELDS) {
     const v = entity?.[f];
-    if (v === 'Cleared' || v === 'Reconciled') return v;
+    if (typeof v === 'string' && v) return v;
   }
-  // BillPayment nests under CheckPayment
   const cp = entity?.CheckPayment;
   if (cp) {
-    for (const f of CLEARED_FIELD_CANDIDATES) {
+    for (const f of CLEARED_READ_FIELDS) {
       const v = cp[f];
-      if (v === 'Cleared' || v === 'Reconciled') return v;
+      if (typeof v === 'string' && v) return v;
     }
   }
   return null;
+}
+
+function isAlreadyCleared(entity: any): string | null {
+  const v = readClearedStatus(entity);
+  return v === 'Cleared' || v === 'Reconciled' ? v : null;
+}
+
+/**
+ * Per-entity required-fields for sparse updates. QB rejects sparse updates on
+ * certain entities (error 2020) unless these refs are echoed back.
+ */
+function requiredExtras(txnType: string, entity: any): Record<string, any> {
+  const extra: Record<string, any> = {};
+  if (txnType === 'Purchase')    extra.PaymentType        = entity.PaymentType;
+  if (txnType === 'Payment')     extra.CustomerRef        = entity.CustomerRef;
+  if (txnType === 'Deposit')     extra.DepositToAccountRef = entity.DepositToAccountRef;
+  if (txnType === 'BillPayment') {
+    if (entity.VendorRef) extra.VendorRef = entity.VendorRef;
+    if (entity.PayType)   extra.PayType   = entity.PayType;
+  }
+  return extra;
 }
 
 async function postSparseUpdate(params: {
@@ -210,13 +232,6 @@ async function postSparseUpdate(params: {
   try { parsed = JSON.parse(body); } catch {}
   const fault = parsed?.Fault || parsed?.fault;
   return { ok: res.ok && !fault, status: res.status, body, parsed };
-}
-
-function isPropertyFault(parsed: any): boolean {
-  const msg = parsed?.Fault?.Error?.[0]?.Message || '';
-  const detail = parsed?.Fault?.Error?.[0]?.Detail || '';
-  const code = String(parsed?.Fault?.Error?.[0]?.code || '');
-  return code === '2010' || /unsupported|invalid/i.test(msg) || /property/i.test(detail);
 }
 
 export async function clearQBTransactionServer(
@@ -254,6 +269,7 @@ export async function clearQBTransactionServer(
   const txnId = entry.intuit_id;
   const realmId = tokens.realm_id;
 
+  // ── 1. GET the current entity (needed for SyncToken + required refs + ClearedStatus read) ──
   const readUrl = `${base}/v3/company/${realmId}/${txnType.toLowerCase()}/${txnId}?minorversion=73`;
   const readRes = await fetch(readUrl, {
     headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
@@ -268,97 +284,69 @@ export async function clearQBTransactionServer(
   const entity: any = readData[txnType] || readData[Object.keys(readData)[0]];
   if (!entity) return { cleared: false, status: 'failed', warning: 'Transaction not found in QB response' };
 
-  // Short-circuit if QB already has it Cleared/Reconciled.
-  const already = isAlreadyCleared(entity);
-  if (already) {
-    // Still stamp the Kyriq note so the audit trail exists.
-    const privateNote = buildKyriqNote(entity, entry, checkData);
-    await postSparseUpdate({
-      base, realmId, txnType, accessToken,
-      payload: { Id: entity.Id, SyncToken: entity.SyncToken, sparse: true, PrivateNote: privateNote },
-    });
-    return { cleared: true, status: 'already_cleared', warning: `Already ${already} in QuickBooks` };
-  }
+  const readOnlyClearedStatus = readClearedStatus(entity);
 
+  // ── 2. Build the sparse-update payload: PrivateNote + per-entity required refs ──
+  // NOTE: ClearedStatus / TxnStatus / ClearStatus are READ-ONLY in the QBO IDS
+  // API (Intuit docs + Satva reconciliation write-up). We never attempt to
+  // write them here; the actual "C" tick happens via the extension content
+  // script `qbo-overlay.js` on /app/reconcile.
   const privateNote = buildKyriqNote(entity, entry, checkData);
-  const basePayload: any = {
+  const payload: any = {
     Id: entity.Id,
     SyncToken: entity.SyncToken,
     sparse: true,
     PrivateNote: privateNote,
+    ...requiredExtras(txnType, entity),
   };
 
-  // ── Per-entity dispatcher ──────────────────────────────────────────────
-  // BillPayment: QB IDS API does NOT allow setting the cleared flag.
-  // Honest status rather than a silent no-op false positive.
-  if (txnType === 'BillPayment') {
-    // Still stamp the PrivateNote so Kyriq has an audit trail.
-    const bpPayload = {
-      ...basePayload,
-      // BillPayment sparse updates require these for validation in some cases.
-      VendorRef: entity.VendorRef,
-      PayType: entity.PayType,
+  const stamp = await postSparseUpdate({ base, realmId, txnType, accessToken, payload });
+  if (!stamp.ok) {
+    const faultCode = stamp.parsed?.Fault?.Error?.[0]?.code;
+    if (faultCode === '610') {
+      return {
+        cleared: false,
+        status: 'inactive_entity',
+        warning: 'A linked vendor/account on this QB transaction is inactive. Reactivate it in QuickBooks, then re-approve. (QB error 610)',
+        readOnlyClearedStatus,
+      };
+    }
+    return {
+      cleared: false,
+      status: 'failed',
+      warning: `QB PrivateNote stamp failed (${stamp.status}): ${stamp.body.slice(0, 200)}`,
+      qbFault: stamp.parsed?.Fault,
+      readOnlyClearedStatus,
     };
-    await postSparseUpdate({ base, realmId, txnType, accessToken, payload: bpPayload });
+  }
+
+  // ── 3. Classify outcome using the read-only ClearedStatus field ──
+  const already = isAlreadyCleared(entity);
+  if (already) {
+    return {
+      cleared: true,
+      status: 'already_cleared',
+      warning: `QB already has this transaction marked ${already}.`,
+      readOnlyClearedStatus,
+    };
+  }
+
+  // BillPayment can't be auto-cleared by the overlay reliably (the reconcile
+  // page renders them differently). Tell the user to tick it by hand.
+  if (txnType === 'BillPayment') {
     return {
       cleared: false,
       status: 'manual_required',
       warning: 'Bill Payment cleared-status cannot be set via the QuickBooks API. Mark it Cleared manually in QB reconciliation.',
+      readOnlyClearedStatus,
     };
   }
 
-  // Deposit requires DepositToAccountRef on every sparse update; cleared flag historically rejected.
-  if (txnType === 'Deposit') {
-    const depPayload = {
-      ...basePayload,
-      DepositToAccountRef: entity.DepositToAccountRef,
-    };
-    // Try with cleared flag candidates first; if all fail, stamp note only.
-    for (const field of CLEARED_FIELD_CANDIDATES) {
-      const r = await postSparseUpdate({
-        base, realmId, txnType, accessToken,
-        payload: { ...depPayload, [field]: 'Cleared' },
-      });
-      if (r.ok) return { cleared: true, status: 'cleared', attemptedField: field };
-      if (!isPropertyFault(r.parsed)) {
-        return { cleared: false, status: 'failed', warning: `QB clear failed (${r.status}): ${r.body.slice(0, 200)}`, qbFault: r.parsed?.Fault };
-      }
-    }
-    // All candidates rejected → stamp note only.
-    const r = await postSparseUpdate({ base, realmId, txnType, accessToken, payload: depPayload });
-    if (!r.ok) return { cleared: false, status: 'failed', warning: `QB note stamp failed (${r.status}): ${r.body.slice(0, 200)}`, qbFault: r.parsed?.Fault };
-    return { cleared: false, status: 'note_only', warning: 'Deposit cleared flag not settable via API — Kyriq note stamped only.' };
-  }
-
-  // Purchase, Check, Payment, SalesReceipt, JournalEntry → try property-name candidates.
-  // Purchase also requires PaymentType in sparse updates.
-  const extra: any = {};
-  if (txnType === 'Purchase') extra.PaymentType = entity.PaymentType;
-  if (txnType === 'Payment')  extra.CustomerRef = entity.CustomerRef;
-
-  let lastFault: any;
-  for (const field of CLEARED_FIELD_CANDIDATES) {
-    const r = await postSparseUpdate({
-      base, realmId, txnType, accessToken,
-      payload: { ...basePayload, ...extra, [field]: 'Cleared' },
-    });
-    if (r.ok) return { cleared: true, status: 'cleared', attemptedField: field };
-    lastFault = r.parsed?.Fault;
-    if (!isPropertyFault(r.parsed)) {
-      return { cleared: false, status: 'failed', warning: `QB clear failed (${r.status}): ${r.body.slice(0, 200)}`, qbFault: lastFault };
-    }
-  }
-
-  // All property-name candidates rejected → stamp PrivateNote only, return note_only.
-  const r = await postSparseUpdate({ base, realmId, txnType, accessToken, payload: { ...basePayload, ...extra } });
-  if (!r.ok) {
-    return { cleared: false, status: 'failed', warning: `QB note stamp failed (${r.status}): ${r.body.slice(0, 200)}`, qbFault: r.parsed?.Fault };
-  }
   return {
     cleared: false,
-    status: 'note_only',
-    warning: `QB rejected all cleared-flag property names (${CLEARED_FIELD_CANDIDATES.join(', ')}) for ${txnType}. Kyriq note stamped only.`,
-    qbFault: lastFault,
+    status: 'queued_for_reconcile',
+    warning: 'Kyriq approval note stamped in QB. Open QuickBooks → Reconcile and click "Auto-Clear Kyriq Approved" to tick the Cleared box.',
+    readOnlyClearedStatus,
   };
 }
 
