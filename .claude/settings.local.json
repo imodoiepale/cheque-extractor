@@ -6,7 +6,8 @@
       "Bash(node --check chrome-extension/content/qbo-overlay.js)",
       "Bash(npx tsc *)",
       "WebSearch",
-      "Bash(node --check /c/Users/inkno/Documents/GitHub/cheque-extractor/chrome-extension/content/qbo-overlay.js)"
+      "Bash(node --check /c/Users/inkno/Documents/GitHub/cheque-extractor/chrome-extension/content/qbo-overlay.js)",
+      "Bash(node --check /c/Users/inkno/Documents/GitHub/cheque-extractor/chrome-extension/background/service-worker.js)"
     ]
   }
 }

@@ -923,12 +923,7 @@ async function approveAndClear(idx) {
           break;
         case 'inactive_entity':
           dbg('Approved in Kyriq ✓ — QB note skipped: linked entity is inactive', 'warn');
-          showToast(
-            'warn',
-            'Approved in Kyriq ✓ — QB not stamped',
-            'A vendor or account linked to this QB transaction has been made inactive. Reactivate it in QuickBooks, then re-approve to stamp the note.',
-            null
-          );
+          showQBConfirmation(res);
           break;
         case 'failed':
           dbg(`Approved locally only: ${res.warning || 'QB update failed'}`, 'error');
@@ -1009,6 +1004,7 @@ function showQBConfirmation(res) {
     qbStatus === 'already_cleared'      ? 'Approved — already Cleared in QuickBooks' :
     qbStatus === 'queued_for_reconcile' ? 'Approved — awaiting QB Reconcile'         :
     qbStatus === 'manual_required'      ? 'Approved — mark Cleared manually in QB'   :
+    qbStatus === 'inactive_entity'      ? 'Approved in Kyriq ✓ — QB not stamped'     :
     noteStamped                         ? 'Approved — PrivateNote stamped in QB'     :
                                           'Approved in Kyriq';
 
@@ -1016,6 +1012,7 @@ function showQBConfirmation(res) {
     qbStatus === 'already_cleared'      ? 'QB already had this transaction cleared.' :
     qbStatus === 'queued_for_reconcile' ? 'Open QB Reconcile and click "Auto-Clear Kyriq Approved" to tick the C.' :
     qbStatus === 'manual_required'      ? 'Bill Payment cleared-status cannot be set via the QB API — tick it in Reconcile.' :
+    qbStatus === 'inactive_entity'      ? 'A vendor or account linked to this QB transaction has been made inactive. Reactivate it in QuickBooks, then re-approve to stamp the note.' :
     noteStamped                         ? 'Kyriq audit note written to QuickBooks.' :
                                           '';
 
@@ -1029,7 +1026,7 @@ function showQBConfirmation(res) {
   toast.id = 'kyriq-qb-toast';
   toast.className = 'kyriq-toast';
   toast.innerHTML = `
-    <span class="kyriq-toast-icon">${qbStatus === 'already_cleared' ? '✅' : '🏦'}</span>
+    <span class="kyriq-toast-icon">${qbStatus === 'already_cleared' ? '✅' : qbStatus === 'inactive_entity' ? '⚠️' : '🏦'}</span>
     <div class="kyriq-toast-body">
       <div class="kyriq-toast-title">${escHtml(title)}</div>
       <div class="kyriq-toast-sub">${escHtml(sub)}</div>

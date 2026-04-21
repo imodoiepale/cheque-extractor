@@ -387,6 +387,31 @@ async function qbApiRequest(endpoint, method = 'GET', body = null) {
   return res.json();
 }
 
+/**
+ * Paginated QB IDS query helper. Walks STARTPOSITION in 1000-row pages.
+ * Returns { ok, status, detail, txns } — the shape pullQBTransactions expects.
+ */
+async function qboQueryAll(baseQuery, entityKey) {
+  const PAGE_SIZE = 1000;
+  const all = [];
+  let startPosition = 1;
+  try {
+    while (true) {
+      const paged = `${baseQuery} STARTPOSITION ${startPosition} MAXRESULTS ${PAGE_SIZE}`;
+      const data = await qbApiRequest(`query?query=${encodeURIComponent(paged)}&minorversion=73`);
+      const rows = data?.QueryResponse?.[entityKey] || [];
+      all.push(...rows);
+      if (rows.length < PAGE_SIZE) break;
+      startPosition += PAGE_SIZE;
+    }
+    return { ok: true, status: 200, detail: null, txns: all };
+  } catch (e) {
+    const status = e?.qbStatus || 500;
+    const detail = e?.qbFault?.Fault?.Error?.[0]?.Detail || e?.message || 'unknown';
+    return { ok: false, status, detail, txns: [] };
+  }
+}
+
 // QB Online page path by transaction type (used to build "View in QB" links)
 const QB_TXN_PATH = {
   Purchase:    'expense',
@@ -510,29 +535,50 @@ function qbRequiredExtras(txnType, entity) {
  * Throws only for hard errors (network/auth/sync-token/invalid ID).
  */
 async function clearQBTransaction(txnType, txnId, checkData = null, qbTxn = null) {
-  const readData = await qbApiRequest(`${txnType.toLowerCase()}/${txnId}?minorversion=73`);
-  const entity = readData[txnType] || readData[Object.keys(readData)[0]];
-  if (!entity) throw new Error('Transaction not found in QB');
-
-  const readOnlyClearedStatus = readClearedStatus(entity);
-  const privateNote = buildKyriqNote(entity, checkData, qbTxn);
-  const payload = {
-    Id: entity.Id,
-    SyncToken: entity.SyncToken,
-    sparse: true,
-    PrivateNote: privateNote,
-    ...qbRequiredExtras(txnType, entity),
-  };
-
-  let result;
+  let readOnlyClearedStatus = null;
   try {
-    result = await qbApiRequest(`${txnType.toLowerCase()}?minorversion=73`, 'POST', payload);
+    // 1. GET current entity — can itself fail with 610 if the txn was deleted/inactive.
+    const readData = await qbApiRequest(`${txnType.toLowerCase()}/${txnId}?minorversion=73`);
+    const entity = readData[txnType] || readData[Object.keys(readData)[0]];
+    if (!entity) throw new Error('Transaction not found in QB');
+    readOnlyClearedStatus = readClearedStatus(entity);
+
+    // 2. Build payload + POST sparse update — can fail with 610 if a referenced entity is inactive.
+    const privateNote = buildKyriqNote(entity, checkData, qbTxn);
+    const payload = {
+      Id: entity.Id,
+      SyncToken: entity.SyncToken,
+      sparse: true,
+      PrivateNote: privateNote,
+      ...qbRequiredExtras(txnType, entity),
+    };
+    const result = await qbApiRequest(`${txnType.toLowerCase()}?minorversion=73`, 'POST', payload);
+
+    // QB occasionally returns HTTP 200 with a Fault body — route it through the same catch below.
+    if (result?.Fault) {
+      throw Object.assign(
+        new Error(result.Fault?.Error?.[0]?.Detail || result.Fault?.Error?.[0]?.Message || 'QB fault'),
+        { qbFault: result, qbRaw: JSON.stringify(result) }
+      );
+    }
+
+    const updated = result[txnType] || result[Object.keys(result)[0]] || {};
+    const confirmedNote = updated.PrivateNote || null;
+    const noteStamped = (confirmedNote || '').includes('[Kyriq]');
+    const already = qbAlreadyCleared(entity);
+    if (already)                   return { status: 'already_cleared',      readOnlyClearedStatus, result, confirmedNote, noteStamped };
+    if (txnType === 'BillPayment') return { status: 'manual_required',      readOnlyClearedStatus, result, confirmedNote, noteStamped };
+    return                                { status: 'queued_for_reconcile', readOnlyClearedStatus, result, confirmedNote, noteStamped };
+
   } catch (e) {
-    const code = e?.qbFault?.Fault?.Error?.[0]?.code;
-    if (code === '610') {
+    // 610 can come from EITHER the GET (txn deleted) or the POST (linked entity inactive).
+    const faultCode = e?.qbFault?.Fault?.Error?.[0]?.code;
+    const msgHint   = e?.message && (e.message.includes('made inactive') || e.message.includes('Object Not Found'));
+    if (faultCode === '610' || msgHint) {
+      log('clearQBTransaction: 610 inactive entity — returning inactive_entity', { txnType, txnId });
       return {
         status: 'inactive_entity',
-        warning: 'A vendor, account, or other entity linked to this QB transaction has been made inactive. Reactivate it in QuickBooks, then re-approve. (QB error 610)',
+        warning: 'A vendor, account, or other entity linked to this QB transaction has been made inactive in QuickBooks. Reactivate it and re-approve. (QB error 610)',
         readOnlyClearedStatus,
         confirmedNote: null,
         noteStamped: false,
@@ -540,18 +586,6 @@ async function clearQBTransaction(txnType, txnId, checkData = null, qbTxn = null
     }
     throw e;
   }
-  const updated = result[txnType] || result[Object.keys(result)[0]] || {};
-  const confirmedNote = updated.PrivateNote || null;
-  const noteStamped = (confirmedNote || '').includes('[Kyriq]');
-
-  const already = qbAlreadyCleared(entity);
-  if (already) {
-    return { status: 'already_cleared', readOnlyClearedStatus, result, confirmedNote, noteStamped };
-  }
-  if (txnType === 'BillPayment') {
-    return { status: 'manual_required', readOnlyClearedStatus, result, confirmedNote, noteStamped };
-  }
-  return { status: 'queued_for_reconcile', readOnlyClearedStatus, result, confirmedNote, noteStamped };
 }
 
 // ── OCR via Gemini API ───────────────────────────────────────
@@ -1760,6 +1794,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               qbStatus === 'already_cleared'      ? 'QB already has this transaction cleared.' :
               qbStatus === 'manual_required'      ? 'Bill Payment cleared-status cannot be set via API. Open QB Reconcile and tick it manually.' :
               qbStatus === 'queued_for_reconcile' ? 'Open QB Reconcile and click "Auto-Clear Kyriq Approved" to tick the C.' :
+              qbStatus === 'inactive_entity'      ? 'A linked vendor or account is inactive in QuickBooks. Reactivate it and re-approve to stamp the note.' :
               undefined;
             return {
               success: true,
