@@ -1217,6 +1217,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 });
               }
             }
+            // Cross-reference the `checks` table to pick up terminal statuses set by
+            // the web app (approve/reject) that aren't reflected in check_jobs.checks_data yet.
+            // This makes extension matches respect web-app approvals without a full re-sync.
+            if (checks.length) {
+              try {
+                const checkIdList = checks.map(c => c.id).filter(Boolean).join(',');
+                const terminalRows = await supabaseRequest(
+                  `checks?select=check_id,status&check_id=in.(${checkIdList})&status=in.(approved,rejected,exported)`
+                );
+                if (terminalRows?.length) {
+                  const overrideMap = {};
+                  for (const row of terminalRows) {
+                    if (row.check_id && row.status) overrideMap[row.check_id] = row.status;
+                  }
+                  for (const c of checks) {
+                    if (overrideMap[c.id]) c.status = overrideMap[c.id];
+                  }
+                }
+              } catch (_) {
+                // Non-critical — checks_data status is still a reasonable fallback
+              }
+            }
+
             log('GET_CHECKS result', { count: checks.length });
             _swChecksCache = checks;
             return { checks };
@@ -1391,6 +1414,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               } catch (qbErr) {
                 logErr('SAVE_QB_TXN: QB update failed (Supabase still saved)', qbErr);
                 return { success: true, qbWarning: qbErr.message, qbRaw: qbErr.qbRaw || null, qbStatus: qbErr.qbStatus || null };
+              }
+
+              // 3. Mirror edits to qb_transactions so the web app MatchRow reflects changes
+              //    without needing a full QB re-sync. txn_id format: "{type}-{intuitId}"
+              const qbTxnRowId = `${txnType.toLowerCase()}-${qbIntuitId}`;
+              const qbTxnPatch = {};
+              if (msg.fields.txn_date)       qbTxnPatch.txn_date   = msg.fields.txn_date;
+              if (msg.fields.doc_number)     qbTxnPatch.doc_number = msg.fields.doc_number;
+              if (msg.fields.amount != null) qbTxnPatch.amount     = msg.fields.amount;
+              if (msg.fields.payee)          qbTxnPatch.payee      = msg.fields.payee;
+              if (Object.keys(qbTxnPatch).length) {
+                await supabaseRequest(
+                  `qb_transactions?txn_id=eq.${encodeURIComponent(qbTxnRowId)}&tenant_id=eq.${tenantId}`,
+                  { method: 'PATCH', body: JSON.stringify(qbTxnPatch) }
+                ).catch(e => logErr('SAVE_QB_TXN: qb_transactions mirror skipped', e));
               }
             }
 

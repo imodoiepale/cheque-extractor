@@ -8,7 +8,8 @@
       "WebSearch",
       "Bash(node --check /c/Users/inkno/Documents/GitHub/cheque-extractor/chrome-extension/content/qbo-overlay.js)",
       "Bash(node --check /c/Users/inkno/Documents/GitHub/cheque-extractor/chrome-extension/background/service-worker.js)",
-      "Bash(xargs grep *)"
+      "Bash(xargs grep *)",
+      "Bash(grep -E \"\\\\.\\(sql|ts\\)$\")"
     ]
   }
 }

@@ -20,17 +20,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       .single();
     if (!match) return res.status(404).json({ error: 'Match not found' });
 
+    const now = new Date().toISOString();
     const { error } = await supabase
       .from('matches')
       .update({
         status: 'approved',
         approved_by: userId,
-        approved_at: new Date().toISOString(),
+        approved_at: now,
         notes: notes || match.notes,
       })
       .eq('id', id);
 
     if (error) return res.status(500).json({ error: error.message });
+
+    // Sync the parent check so the matching algorithm won't re-process it.
+    if (match.check_id) {
+      await supabase
+        .from('checks')
+        .update({ status: 'approved' })
+        .eq('id', match.check_id);
+    }
 
     await audit(supabase, id as string, userId, 'approved', match.status, 'approved', { notes });
 

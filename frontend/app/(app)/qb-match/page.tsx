@@ -38,7 +38,7 @@ function QBMatchPageContent() {
   const {
     matches, statusCounts, isLoading, isSyncing, error,
     refresh, syncQB, approveSingle, bulkApprove, flagMatch,
-    addNote, resolveDiscrepancy, remapMatch, undoApproval, createInQB,
+    addNote, resolveDiscrepancy, remapMatch, undoApproval, createInQB, updateQBTransaction,
   } = useMatches({ status: statusFilter, search: searchQuery, sort: sortBy });
 
   const toggleSelect = (id: string) => {
@@ -234,6 +234,7 @@ function QBMatchPageContent() {
               onSearchQB={() => setSearchModal({ check: match.check, matchId: match.id })}
               onUndoApproval={() => undoApproval(match.id)}
               onCreateInQB={() => createInQB(match.check?.id)}
+              onUpdateQBTransaction={(qbTxnId, fields) => updateQBTransaction(qbTxnId, fields)}
             />
           ))}
         </div>

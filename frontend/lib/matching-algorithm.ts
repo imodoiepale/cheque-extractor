@@ -250,13 +250,26 @@ export async function runMatching(
 
   console.log(`[Matching] Starting for tenant ${tenantId}, realm ${realmId}`);
 
-  // Fetch unmatched/pending checks for this realm
-  const { data: checks, error: checksErr } = await supabase
+  // Fetch check_ids that are already approved — skip re-matching them.
+  const { data: approvedMatches } = await supabase
+    .from('matches')
+    .select('check_id')
+    .eq('tenant_id', tenantId)
+    .eq('realm_id', realmId)
+    .eq('status', 'approved');
+  const approvedCheckIds = new Set((approvedMatches || []).map((r: any) => r.check_id));
+
+  // Fetch unmatched/pending checks for this realm (excluding already-approved ones).
+  let checksQuery = supabase
     .from('checks')
     .select('*')
     .eq('tenant_id', tenantId)
     .eq('realm_id', realmId)
     .in('status', ['pending_review', 'pending', 'unmatched']);
+  if (approvedCheckIds.size > 0) {
+    checksQuery = checksQuery.not('id', 'in', `(${[...approvedCheckIds].join(',')})`);
+  }
+  const { data: checks, error: checksErr } = await checksQuery;
 
   if (checksErr) throw checksErr;
   if (!checks?.length) return { matched: 0, unmatched: 0, total: 0 };
@@ -350,10 +363,13 @@ export async function runMatching(
     }
   }
 
+  // Never overwrite a match that was already approved (defense-in-depth).
+  const safeResults = matchResults.filter((r: any) => !approvedCheckIds.has(r.check_id));
+
   // Upsert all match results
   const { error: upsertErr } = await supabase
     .from('matches')
-    .upsert(matchResults, { onConflict: 'check_id' });
+    .upsert(safeResults, { onConflict: 'check_id' });
 
   if (upsertErr) throw upsertErr;
 

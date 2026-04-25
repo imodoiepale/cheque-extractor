@@ -89,7 +89,8 @@
   function getPageType() {
     const p = location.pathname + location.search;
     if (/\/reconcile/i.test(p))                                              return 'reconcile';
-    if (/\/banking|\/bank-transactions|\/register/i.test(p))                 return 'bankfeed';
+    if (/\/register/i.test(p))                                               return 'register';
+    if (/\/banking|\/bank-transactions/i.test(p))                            return 'bankfeed';
     if (/\/expense|\/check|\/billpayment|\/payment|\/deposit/i.test(p))      return 'txndetail';
     return 'other';
   }
@@ -582,7 +583,108 @@
   }
 
   // ═══════════════════════════════════════════════════════════════
-  //  2. BANK FEED / REGISTER PAGE
+  //  2. BANK REGISTER PAGE  (/app/register)
+  //
+  //  Directly clicks the "C" (Cleared) status cell in each transaction row.
+  //  This persists ClearedStatus='Cleared' to QB's backend immediately —
+  //  unlike the Reconcile page, which only persists on "Finish Reconciling".
+  //
+  //  QB's register has a fixed column order:
+  //   DATE | REF/TYPE | PAYEE/ACCT | MEMO | PAYMENT | DEPOSIT | <C> | BALANCE
+  //  The "C" cell is the second-to-last <td> per row.
+  // ═══════════════════════════════════════════════════════════════
+
+  /**
+   * Find the cleared-status cell in a register row.
+   * QB renders it as a clickable <td> that cycles: blank → C → R → blank.
+   * We look for a cell containing exactly "C" or "R", or use the column-index
+   * heuristic (second-to-last <td> before the BALANCE column).
+   */
+  function findRegisterClearedCell(row) {
+    const cells = Array.from(row.querySelectorAll('td'));
+    if (cells.length < 3) return null;
+
+    // First try: find a <td> that visually shows a cleared status
+    for (const cell of cells) {
+      const text = (cell.textContent || '').trim();
+      if (text === 'C' || text === 'R') return cell;
+      // Some QB versions use a span/button inside the cell
+      const inner = cell.querySelector('[class*="clear"],[class*="Clear"],[aria-label*="leared"],[data-testid*="lear"]');
+      if (inner) return cell;
+    }
+
+    // Fallback: second-to-last <td> (BALANCE is last, C is before it)
+    const secondToLast = cells[cells.length - 2];
+    return secondToLast || null;
+  }
+
+  function isRegisterRowCleared(row) {
+    const cell = findRegisterClearedCell(row);
+    if (!cell) return false;
+    const text = (cell.textContent || '').trim();
+    return text === 'C' || text === 'R';
+  }
+
+  async function initRegisterPage() {
+    try {
+      await waitForEl('table tbody tr', 10000);
+    } catch {
+      log('Register: no transaction rows found yet');
+      return;
+    }
+
+    const lookup = await getApproved();
+    if (!lookup.list.length) return;
+
+    const allRows = findReconRows();
+    const matched = [];
+
+    for (const row of allRows) {
+      if (isRegisterRowCleared(row)) continue;
+      const txn = matchReconRow(row, lookup);
+      if (txn) matched.push({ row, txn });
+    }
+
+    log(`Register: ${allRows.length} rows, ${lookup.list.length} approved, ${matched.length} to mark cleared`);
+    if (!matched.length) return;
+
+    const { wrap: regWrap, autoBtn: regAutoBtn } = injectReconButton(
+      matched.length,
+      lookup.list.length,
+      // Auto-clear handler — clicks the "C" cell for each matched row
+      () => {
+        let cleared = 0;
+        unhighlightAll();
+        for (const { row } of matched) {
+          const cell = findRegisterClearedCell(row);
+          if (cell) {
+            // QB register's cleared cell responds to mousedown + click
+            cell.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+            cell.click();
+            cell.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+            highlightRow(row, '#059669');
+            cleared++;
+          }
+        }
+        if (regAutoBtn) {
+          regAutoBtn.textContent = `Marked ${cleared}`;
+          regAutoBtn.className = 'kyriq-recon-action-btn done';
+          regAutoBtn.disabled = true;
+        }
+        dismissEl(regWrap, 5000);
+        log(`Register: marked cleared on ${cleared} rows`);
+      },
+      // Preview handler
+      () => {
+        const highlighted = document.querySelectorAll('[data-kyriq-highlighted]');
+        if (highlighted.length) { unhighlightAll(); return; }
+        for (const { row } of matched) highlightRow(row, '#f59e0b');
+      }
+    );
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  4. BANK FEED PAGE  (/app/banking, /app/bank-transactions)
   // ═══════════════════════════════════════════════════════════════
 
   function injectBadge(row, txn) {
@@ -614,7 +716,7 @@
   }
 
   // ═══════════════════════════════════════════════════════════════
-  //  3. TRANSACTION DETAIL PAGE
+  //  5. TRANSACTION DETAIL PAGE
   // ═══════════════════════════════════════════════════════════════
 
   async function initTransactionDetailPage() {
@@ -713,7 +815,8 @@
     if (page === _currentPage) return; // already ran for this page
     _currentPage = page;
 
-    if (page === 'reconcile')  { await initReconcilePage(); }
+    if (page === 'reconcile')       { await initReconcilePage(); }
+    else if (page === 'register')   { await initRegisterPage(); }
     else if (page === 'bankfeed')   { await initBankFeedPage(); }
     else if (page === 'txndetail')  { await initTransactionDetailPage(); }
   }

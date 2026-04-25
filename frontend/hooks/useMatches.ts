@@ -222,6 +222,38 @@ export function useMatches({ status = 'all', search = '', sort = 'confidence' }:
     [fetchMatches]
   );
 
+  const updateQBTransaction = useCallback(
+    async (qbTxnId: string, fields: { txnDate?: string; docNumber?: string; memo?: string }) => {
+      setError(null);
+      try {
+        const result = await apiFetch('/api/qbo/update-transaction', {
+          method: 'PATCH',
+          body: JSON.stringify({ qbTxnId, fields }),
+        });
+        // Optimistically patch the local qb_txn data on the matching match row.
+        setMatches((prev) =>
+          prev.map((m) => {
+            if (!m.qb_txn || m.qb_txn.id !== qbTxnId) return m;
+            return {
+              ...m,
+              qb_txn: {
+                ...m.qb_txn,
+                ...(fields.txnDate   ? { txn_date: fields.txnDate }   : {}),
+                ...(fields.docNumber ? { doc_number: fields.docNumber } : {}),
+                ...(fields.memo      ? { memo: fields.memo }           : {}),
+              },
+            };
+          })
+        );
+        return result;
+      } catch (e: any) {
+        setError(e.message);
+        throw e;
+      }
+    },
+    []
+  );
+
   return {
     matches,
     statusCounts,
@@ -238,5 +270,6 @@ export function useMatches({ status = 'all', search = '', sort = 'confidence' }:
     remapMatch,
     undoApproval,
     createInQB,
+    updateQBTransaction,
   };
 }

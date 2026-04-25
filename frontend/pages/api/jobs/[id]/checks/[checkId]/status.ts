@@ -117,6 +117,35 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(500).json({ error: patchErr.message });
     }
 
+    // Keep checks table and matches table in sync so the web-app match page
+    // reflects the extension's approval without requiring a full re-sync.
+    const terminalStatus = ['approved', 'rejected'].includes(status) ? status : null;
+    if (terminalStatus) {
+      try {
+        await supabase
+          .from('checks')
+          .update({ status: terminalStatus })
+          .eq('check_id', checkId);
+
+        // If a matches row exists for this check, approve it too so the web app
+        // match page stops showing the "Approve" button.
+        const { data: checkRow } = await supabase
+          .from('checks')
+          .select('id')
+          .eq('check_id', checkId)
+          .maybeSingle();
+        if (checkRow?.id) {
+          await supabase
+            .from('matches')
+            .update({ status: terminalStatus, approved_at: terminalStatus === 'approved' ? new Date().toISOString() : null })
+            .eq('check_id', checkRow.id)
+            .neq('status', terminalStatus);
+        }
+      } catch (_) {
+        // Non-critical — check_jobs update already succeeded
+      }
+    }
+
     // Best-effort audit log — check_id must be UUID; use metadata for text check_id
     try {
       await supabase.from('audit_logs').insert({

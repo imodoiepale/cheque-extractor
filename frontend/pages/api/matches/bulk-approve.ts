@@ -40,6 +40,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       .update({ status: 'approved', approved_by: userId, approved_at: now })
       .in('id', ids);
 
+    // Sync parent checks so the matching algorithm won't re-process them.
+    const validCheckIds = checkIds.filter(Boolean);
+    if (validCheckIds.length) {
+      await supabase
+        .from('checks')
+        .update({ status: 'approved' })
+        .in('id', validCheckIds);
+    }
+
     // Audit log
     await supabase.from('match_audit_log').insert(
       ids.map((id: string) => ({

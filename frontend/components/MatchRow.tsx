@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Check, Flag, FileText, ChevronDown, ChevronUp, Search, Plus, Undo2, AlertTriangle } from 'lucide-react';
+import { Check, Flag, FileText, ChevronDown, ChevronUp, Search, Plus, Undo2, AlertTriangle, Pencil } from 'lucide-react';
 
 const STATUS_COLORS: Record<string, { bg: string; text: string; dot: string; border: string }> = {
   matched:     { bg: 'bg-emerald-50', text: 'text-emerald-800', dot: 'bg-emerald-500', border: 'border-emerald-500' },
@@ -53,6 +53,7 @@ interface MatchRowProps {
   onSearchQB: () => void;
   onUndoApproval: () => void;
   onCreateInQB: () => void;
+  onUpdateQBTransaction: (qbTxnId: string, fields: { txnDate?: string; docNumber?: string; memo?: string }) => Promise<any>;
 }
 
 export default function MatchRow({
@@ -66,11 +67,13 @@ export default function MatchRow({
   onSearchQB,
   onUndoApproval,
   onCreateInQB,
+  onUpdateQBTransaction,
 }: MatchRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [showFlagMenu, setShowFlagMenu] = useState(false);
   const [showNoteInput, setShowNoteInput] = useState(false);
   const [showResolvePanel, setShowResolvePanel] = useState(false);
+  const [showEditPanel, setShowEditPanel] = useState(false);
   const [noteText, setNoteText] = useState(match.notes || '');
   const [isCreatingInQB, setIsCreatingInQB] = useState(false);
 
@@ -211,6 +214,11 @@ export default function MatchRow({
             <button onClick={() => setShowNoteInput((v) => !v)} title="Note" className="p-1 text-gray-400 hover:text-indigo-600 border border-gray-200 rounded transition-colors">
               <FileText className="w-3 h-3" />
             </button>
+            {qb_txn && (
+              <button onClick={() => setShowEditPanel((v) => !v)} title="Edit QB transaction" className="p-1 text-gray-400 hover:text-emerald-600 border border-gray-200 rounded transition-colors">
+                <Pencil className="w-3 h-3" />
+              </button>
+            )}
             <button onClick={() => setExpanded((v) => !v)} title="Details" className="p-1 text-gray-400 hover:text-gray-600 border border-gray-200 rounded transition-colors">
               {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
             </button>
@@ -254,6 +262,18 @@ export default function MatchRow({
           match={match}
           onResolve={(resolution, amount, notes) => { onResolveDiscrepancy(resolution, amount, notes); setShowResolvePanel(false); }}
           onClose={() => setShowResolvePanel(false)}
+        />
+      )}
+
+      {/* Edit QB transaction panel */}
+      {showEditPanel && qb_txn && (
+        <EditQBPanel
+          qbTxn={qb_txn}
+          onSave={async (fields) => {
+            await onUpdateQBTransaction(qb_txn.id, fields);
+            setShowEditPanel(false);
+          }}
+          onClose={() => setShowEditPanel(false)}
         />
       )}
 
@@ -365,6 +385,92 @@ function ResolvePanel({ match, onResolve, onClose }: {
       <div className="flex gap-2 mt-2">
         <button onClick={() => onResolve(resolution, null, notes)} className="px-3 py-1 text-xs font-semibold bg-emerald-600 text-white rounded-md hover:bg-emerald-700">
           Resolve & Approve
+        </button>
+        <button onClick={onClose} className="px-3 py-1 text-xs font-semibold bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50">
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function EditQBPanel({
+  qbTxn,
+  onSave,
+  onClose,
+}: {
+  qbTxn: any;
+  onSave: (fields: { txnDate?: string; docNumber?: string; memo?: string }) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [txnDate, setTxnDate] = useState<string>(qbTxn.txn_date?.split('T')[0] || '');
+  const [docNumber, setDocNumber] = useState<string>(qbTxn.doc_number || '');
+  const [memo, setMemo] = useState<string>(qbTxn.memo || '');
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  async function handleSave() {
+    const fields: { txnDate?: string; docNumber?: string; memo?: string } = {};
+    if (txnDate && txnDate !== qbTxn.txn_date?.split('T')[0]) fields.txnDate = txnDate;
+    if (docNumber !== (qbTxn.doc_number || '')) fields.docNumber = docNumber;
+    if (memo !== (qbTxn.memo || '')) fields.memo = memo;
+    if (!Object.keys(fields).length) { onClose(); return; }
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      await onSave(fields);
+    } catch (e: any) {
+      setSaveError(e.message || 'Failed to update');
+      setIsSaving(false);
+    }
+  }
+
+  return (
+    <div className="border-t border-gray-100 bg-gray-50 px-6 py-3">
+      <div className="text-xs font-bold text-gray-700 mb-3">✏️ Edit QB Transaction</div>
+      <div className="text-[11px] text-gray-500 mb-3">Updates date, check #, and memo directly in QuickBooks.</div>
+      <div className="flex flex-col gap-2 mb-3">
+        <label className="flex flex-col gap-0.5">
+          <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Date</span>
+          <input
+            type="date"
+            value={txnDate}
+            onChange={(e) => setTxnDate(e.target.value)}
+            className="border border-gray-300 rounded-md px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-emerald-200"
+          />
+        </label>
+        <label className="flex flex-col gap-0.5">
+          <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Check # / Ref No.</span>
+          <input
+            type="text"
+            value={docNumber}
+            onChange={(e) => setDocNumber(e.target.value)}
+            placeholder={qbTxn.doc_number || 'e.g. 800001'}
+            className="border border-gray-300 rounded-md px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-emerald-200"
+          />
+        </label>
+        <label className="flex flex-col gap-0.5">
+          <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Memo</span>
+          <input
+            type="text"
+            value={memo}
+            onChange={(e) => setMemo(e.target.value)}
+            placeholder={qbTxn.memo || 'Add memo…'}
+            className="border border-gray-300 rounded-md px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-emerald-200"
+          />
+        </label>
+      </div>
+      {saveError && (
+        <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1 mb-2">{saveError}</div>
+      )}
+      <div className="text-[10px] text-gray-400 mb-2">Amount and payee changes require editing directly in QuickBooks.</div>
+      <div className="flex gap-2">
+        <button
+          onClick={handleSave}
+          disabled={isSaving}
+          className="px-3 py-1 text-xs font-semibold bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-60"
+        >
+          {isSaving ? 'Saving…' : 'Save to QB'}
         </button>
         <button onClick={onClose} className="px-3 py-1 text-xs font-semibold bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50">
           Cancel
