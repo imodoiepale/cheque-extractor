@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Kyriq — Check Reconciliation, Simplified</title>
+  <meta name="description" content="Kyriq displays every processed check, identifies how each one matches QuickBooks, and clears approved checks in the QuickBooks reconciliation.">
+  <style>
+    :root{--nav:#201b35;--purple:#7357e8;--green:#40c997;--ink:#171428;--muted:#706d80;--line:#e7e3ef;--bg:#f6f5fa}*{box-sizing:border-box}body{margin:0;color:var(--ink);font:16px/1.5 Inter,system-ui,sans-serif}a{text-decoration:none}.nav{height:78px;background:var(--nav);display:flex;align-items:center;justify-content:space-between;padding:0 clamp(22px,7vw,100px)}.logo{color:#fff;font-size:24px;font-weight:850}.logo b{display:inline-grid;place-items:center;width:34px;height:34px;margin-right:8px;border-radius:10px;background:linear-gradient(135deg,var(--purple),var(--green))}.btn{display:inline-block;border-radius:10px;padding:12px 17px;font-weight:800;background:linear-gradient(105deg,var(--purple),#8d67ef);color:#fff}.btn.alt{background:#fff;color:var(--ink);border:1px solid var(--line)}.hero{background:var(--nav);color:#fff;padding:75px clamp(22px,7vw,100px) 95px;display:grid;grid-template-columns:1.15fr .85fr;gap:55px;align-items:center}.eyebrow{color:#65dfb1;font-size:13px;font-weight:900;letter-spacing:1.4px}.hero h1{font-size:clamp(46px,6vw,74px);line-height:1.02;letter-spacing:-3px;margin:18px 0}.hero p{font-size:19px;color:#beb8ce;max-width:680px}.buttons{display:flex;gap:10px;flex-wrap:wrap;margin:28px 0}.summary{background:#fff;color:var(--ink);padding:26px;border-radius:20px;box-shadow:0 25px 75px #0004}.result{display:flex;justify-content:space-between;gap:20px;padding:15px 0;border-bottom:1px solid var(--line)}.result span{color:var(--muted)}.pill{padding:5px 10px;border-radius:99px;font-size:12px;font-weight:850}.ready{background:#e7faf2;color:#197c5c}.review{background:#fff1d7;color:#8d5b05}.section{padding:75px clamp(22px,7vw,100px)}.section.alt{background:var(--bg)}h2{font-size:clamp(34px,4vw,50px);line-height:1.08;letter-spacing:-2px;max-width:780px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}.card{border:1px solid var(--line);border-radius:16px;padding:22px;background:#fff}.card b{color:var(--purple)}.plans{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.plan{border:1px solid var(--line);border-radius:16px;padding:24px;background:#fff}.plan.featured{border:2px solid var(--purple)}.price{font-size:36px;font-weight:850}.plan ul{color:var(--muted);padding-left:20px}.fine{font-size:13px;color:var(--muted)}.cta{margin:0 clamp(22px,7vw,100px) 75px;padding:50px;border-radius:22px;background:linear-gradient(110deg,var(--purple),#4d2da9);color:#fff;text-align:center}.cta h2{margin:0 auto 12px}.footer{background:var(--nav);color:#aaa5b8;padding:28px clamp(22px,7vw,100px);display:flex;justify-content:space-between}@media(max-width:850px){.hero{grid-template-columns:1fr}.grid{grid-template-columns:1fr 1fr}.plans{grid-template-columns:1fr}}@media(max-width:560px){.grid{grid-template-columns:1fr}.nav .alt{display:none}}
+  </style>
+</head>
+<body>
+  <nav class="nav">
+<a class="logo" href="website.html">
+<b>K</b>kyriq</a>
+<div>
+<a class="btn alt" href="#pricing">Pricing</a> <a class="btn" href="index.html">View app</a>
+</div>
+</nav>
+  <header class="hero">
+    <div>
+<span class="eyebrow">CHECK RECONCILIATION, SIMPLIFIED</span>
+<h1>See every check. Approve exact matches together.</h1>
+<p>Kyriq displays every processed check, identifies how each one matches QuickBooks, lets users approve all 100% matches at once, and provides individual review for lower-confidence matches and discrepancies. Approved checks are then cleared in the QuickBooks reconciliation.</p>
+<div class="buttons">
+<a class="btn" href="index.html">View the interactive app</a>
+<a class="btn alt" href="#how">See how it works</a>
+</div>
+<p class="fine" style="color:#aaa5b8">Two-week trial · Up to 200 checks · No credit card required</p>
+</div>
+    <div class="summary">
+<h3>September check batch</h3>
+<p>428 processed checks compared with QuickBooks</p>
+<div class="result">
+<div>
+<strong>100% matches</strong>
+<br>
+<span>Approve all at once</span>
+</div>
+<i class="pill ready">391</i>
+</div>
+<div class="result">
+<div>
+<strong>Lower-confidence matches</strong>
+<br>
+<span>Review individually</span>
+</div>
+<i class="pill review">24</i>
+</div>
+<div class="result">
+<div>
+<strong>Discrepancies</strong>
+<br>
+<span>Resolve before approval</span>
+</div>
+<i class="pill review">13</i>
+</div>
+<a class="btn" style="display:block;text-align:center;margin-top:20px" href="reconcile.html">Open reconciliation review</a>
+</div>
+  </header>
+  <section class="section" id="how">
+<span class="eyebrow" style="color:var(--purple)">ONE CLEAR WORKFLOW</span>
+<h2>From check images to a completed QuickBooks reconciliation.</h2>
+<div class="grid">
+<div class="card">
+<b>01 · UPLOAD</b>
+<h3>Add check images</h3>
+<p>Upload PDF, JPG, or PNG files. Multiple checks per page are supported.</p>
+</div>
+<div class="card">
+<b>02 · COMPARE</b>
+<h3>Match every check</h3>
+<p>Kyriq compares each processed check with the selected QuickBooks register.</p>
+</div>
+<div class="card">
+<b>03 · REVIEW</b>
+<h3>Handle exceptions</h3>
+<p>Review lower-confidence matches, possible duplicates, and discrepancies one at a time.</p>
+</div>
+<div class="card">
+<b>04 · APPROVE</b>
+<h3>Clear approved checks</h3>
+<p>Approve all 100% matches together. Approved checks are cleared in QuickBooks.</p>
+</div>
+</div>
+</section>
+  <section class="section alt">
+<h2>Built for bookkeeping and accounting firms.</h2>
+<div class="plans">
+<div class="card">
+<h3>Every check remains visible</h3>
+<p>Users can view exact matches, lower-confidence matches, duplicates, and discrepancies in the same batch.</p>
+</div>
+<div class="card">
+<h3>Your team controls approval</h3>
+<p>Nothing is cleared automatically. An authorized user approves the result first.</p>
+</div>
+<div class="card">
+<h3>Unlimited companies and users</h3>
+<p>Pricing is based on processed-check volume—not the number of QuickBooks companies or team members.</p>
+</div>
+</div>
+</section>
+  <section class="section" id="pricing">
+<span class="eyebrow" style="color:var(--purple)">SIMPLE MONTHLY PRICING</span>
+<h2>Choose a plan based on the number of checks processed.</h2>
+<div class="plans">
+<div class="plan">
+<h3>Starter</h3>
+<div class="price">$147<small>/month</small>
+</div>
+<p>1,200 checks per month</p>
+<ul>
+<li>Unlimited companies</li>
+<li>Unlimited users</li>
+<li>All core features</li>
+</ul>
+<a class="btn alt" href="index.html">Start trial</a>
+</div>
+<div class="plan featured">
+<h3>Firm</h3>
+<div class="price">$497<small>/month</small>
+</div>
+<p>4,500 checks per month</p>
+<ul>
+<li>Unlimited companies</li>
+<li>Unlimited users</li>
+<li>Priority support</li>
+</ul>
+<a class="btn" href="index.html">Start trial</a>
+</div>
+<div class="plan">
+<h3>High Volume</h3>
+<div class="price">$997<small>/month</small>
+</div>
+<p>10,000 checks per month</p>
+<ul>
+<li>Unlimited companies</li>
+<li>Unlimited users</li>
+<li>Onboarding assistance</li>
+</ul>
+<a class="btn alt" href="index.html">Start trial</a>
+</div>
+</div>
+<p class="fine">A check counts when it is processed from an upload. If the same check is uploaded and processed again, it counts again toward monthly usage.</p>
+</section>
+  <section class="cta">
+<h2>Review smarter. Reconcile faster.</h2>
+<p>See every result, approve exact matches together, and focus individual review where it is actually needed.</p>
+<a class="btn alt" href="index.html">Explore the app prototype</a>
+</section>
+  <footer class="footer">
+<span>© 2026 Kyriq</span>
+<span>QuickBooks check reconciliation</span>
+</footer>
+</body>
+</html>

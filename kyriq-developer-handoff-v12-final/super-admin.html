@@ -1,0 +1,160 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kyriq — Super Admin</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+<aside class="sidebar">
+<div class="brand">
+<span class="brandmark">
+</span>KYRIQ</div>
+<nav class="nav">
+<a href="reconcile.html" class="">
+<span class="ico">▤</span>Reconcile</a>
+<a href="history.html" class="">
+<span class="ico">◴</span>History</a>
+<a href="reports.html" class="">
+<span class="ico">▥</span>Reports</a>
+<a href="companies.html" class="">
+<span class="ico">▣</span>Companies</a>
+<a href="connections.html" class="">
+<span class="ico">↔</span>Connections</a>
+<a href="users.html" class="">
+<span class="ico">♙</span>Users</a>
+<a href="settings.html" class="">
+<span class="ico">⚙</span>Settings</a>
+<a href="billing.html" class="">
+<span class="ico">▤</span>Billing</a>
+</nav>
+<div class="divider">
+</div>
+<div class="admin-label">ADMIN</div>
+<nav class="nav">
+<a href="firm-admin.html" class="">
+<span class="ico">⬡</span>Firm Admin</a>
+<a href="super-admin.html" class="active">
+<span class="ico">◎</span>Super Admin</a>
+</nav>
+<div class="helpbox">
+<div class="helporb">?</div>
+<div>
+<b>Need help?</b>
+<small>Visit our help center</small>
+</div>
+</div>
+</aside>
+<main class="main">
+<header class="topbar">
+<div class="selectbox">
+<span class="glyph">▥</span>
+<div class="selecttext">
+<small>Company</small>
+<b>Cedar Ridge Builders LLC</b>
+</div>
+<span class="chev">⌄</span>
+</div>
+<div class="selectbox account">
+<span class="glyph">♜</span>
+<div class="selecttext">
+<small>Account</small>
+<b>Operating Checking •••4821</b>
+</div>
+<span class="chev">⌄</span>
+</div>
+<div class="topspacer">
+</div>
+<div class="topaction">? Help</div>
+<div class="topaction notif">♧<span class="badge">3</span>
+</div>
+<div class="profile">
+<div class="avatar">AM</div>
+<div>
+<b>Alex Morgan</b>
+<small>Super Admin</small>
+</div>
+<span>⌄</span>
+</div>
+</header>
+<div class="content">
+<h1>Super Admin Dashboard</h1>
+<p class="subtitle">Kyriq platform-wide oversight. Visible only to Kyriq administrators.</p>
+<div class="cards">
+<div class="stat">
+<div class="stat-ico purple">▣</div>
+<div>
+<small>Active firms</small>
+<br>
+<strong>84</strong>
+</div>
+</div>
+<div class="stat">
+<div class="stat-ico green">▤</div>
+<div>
+<small>Checks / 30 days</small>
+<br>
+<strong>61,240</strong>
+</div>
+</div>
+<div class="stat">
+<div class="stat-ico orange">$</div>
+<div>
+<small>MRR</small>
+<br>
+<strong>$38.6k</strong>
+</div>
+</div>
+<div class="stat">
+<div class="stat-ico red">!</div>
+<div>
+<small>Integration errors</small>
+<br>
+<strong>7</strong>
+</div>
+</div>
+</div>
+<div class="panel-grid">
+<div class="panel">
+<h3>Platform health</h3>
+<div class="listrow">
+<div class="grow">
+<b>OCR queue</b>
+<span class="sub">Median processing 18 sec</span>
+</div>
+<span class="tag green">Healthy</span>
+</div>
+<div class="listrow">
+<div class="grow">
+<b>QuickBooks API</b>
+<span class="sub">7 auth/reconnect errors</span>
+</div>
+<span class="tag orange">Monitor</span>
+</div>
+<div class="listrow">
+<div class="grow">
+<b>Storage auto-delete</b>
+<span class="sub">30-day retention job</span>
+</div>
+<span class="tag green">Healthy</span>
+</div>
+</div>
+<div class="panel">
+<h3>Admin shortcuts</h3>
+<button class="btn" style="width:100%;margin-bottom:10px" data-demo-action="Open firms management">Manage Firms</button>
+<button class="btn" style="width:100%;margin-bottom:10px" data-demo-action="Open usage and billing exceptions">Usage & Billing</button>
+<button class="btn" style="width:100%;margin-bottom:10px" data-demo-action="Open integration error log">Integration Logs</button>
+<button class="btn" style="width:100%" data-demo-action="Open feature flags">Feature Flags</button>
+<div class="devhint">
+<b>Connect:</b> SaaS-wide administration only. Keep this route protected by a Super Admin authorization check.</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+<script src="app.js">
+</script>
+</body>
+</html>

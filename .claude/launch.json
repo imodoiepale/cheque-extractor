@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "prototype",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "3095", "--directory", "kyriq-developer-handoff-v12-final"],
+      "port": 3095
+    }
+  ]
+}

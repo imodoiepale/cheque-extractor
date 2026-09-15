@@ -1,0 +1,132 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kyriq — All Checks</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+<aside class="sidebar">
+<div class="brand">
+<span class="brandmark">
+</span>KYRIQ</div>
+<nav class="nav">
+<a href="reconcile.html" class="active">
+<span class="ico">▤</span>Reconcile</a>
+<a href="history.html" class="">
+<span class="ico">◴</span>History</a>
+<a href="reports.html" class="">
+<span class="ico">▥</span>Reports</a>
+<a href="companies.html" class="">
+<span class="ico">▣</span>Companies</a>
+<a href="connections.html" class="">
+<span class="ico">↔</span>Connections</a>
+<a href="users.html" class="">
+<span class="ico">♙</span>Users</a>
+<a href="settings.html" class="">
+<span class="ico">⚙</span>Settings</a>
+<a href="billing.html" class="">
+<span class="ico">▤</span>Billing</a>
+</nav>
+<div class="divider">
+</div>
+<div class="admin-label">ADMIN</div>
+<nav class="nav">
+<a href="firm-admin.html" class="">
+<span class="ico">⬡</span>Firm Admin</a>
+<a href="super-admin.html" class="">
+<span class="ico">◎</span>Super Admin</a>
+</nav>
+<div class="helpbox">
+<div class="helporb">?</div>
+<div>
+<b>Need help?</b>
+<small>Visit our help center</small>
+</div>
+</div>
+</aside>
+<main class="main">
+<header class="topbar">
+<div class="selectbox">
+<span class="glyph">▥</span>
+<div class="selecttext">
+<small>Company</small>
+<b>Cedar Ridge Builders LLC</b>
+</div>
+<span class="chev">⌄</span>
+</div>
+<div class="selectbox account">
+<span class="glyph">♜</span>
+<div class="selecttext">
+<small>Account</small>
+<b>Operating Checking •••4821</b>
+</div>
+<span class="chev">⌄</span>
+</div>
+<div class="topspacer">
+</div>
+<div class="topaction">? Help</div>
+<div class="topaction notif">♧<span class="badge">3</span>
+</div>
+<div class="profile">
+<div class="avatar">AM</div>
+<div>
+<b>Alex Morgan</b>
+<small>Super Admin</small>
+</div>
+<span>⌄</span>
+</div>
+</header>
+<div class="content">
+<div class="steps">
+<a class="step done" href="upload.html">
+<div class="circle">✓</div>
+<div class="stepmeta">
+<b>1&nbsp; Upload</b>
+<small>Completed</small>
+</div>
+</a>
+<div class="step-line done">
+</div>
+<a class="step done" href="match.html">
+<div class="circle">✓</div>
+<div class="stepmeta">
+<b>2&nbsp; Match</b>
+<small>Completed</small>
+</div>
+</a>
+<div class="step-line done">
+</div>
+<a class="step current" href="reconcile.html">
+<div class="circle">3</div>
+<div class="stepmeta">
+<b>3&nbsp; Review</b>
+<small>In Progress</small>
+</div>
+</a>
+<div class="step-line ">
+</div>
+<a class="step " href="approve.html">
+<div class="circle">4</div>
+<div class="stepmeta">
+<b>4&nbsp; Approve</b>
+<small>Pending</small>
+</div>
+</a>
+</div>
+<h1>All Checks</h1><p class="subtitle">See every processed check and exactly how it matched to QuickBooks.</p>
+<div class="toolbar"><div class="tabs"><a href="reconcile.html">Needs Attention (37)</a><a href="matched.html">100% Matches (391)</a><a class="active" href="all-checks.html">All Checks (428)</a></div><div class="grow"></div><div class="search">⌕ <input placeholder="Search all checks"></div><button class="btn" data-demo-action="Filter all checks by status">⌯ Status</button></div>
+<div class="tablewrap"><table class="table"><thead><tr><th>CHECK</th><th>PAYEE</th><th>AMOUNT</th><th>QUICKBOOKS MATCH</th><th>SCORE</th><th>STATUS</th><th>ACTION</th></tr></thead><tbody>
+<tr><td><span class="checknum">#1037</span><span class="sub">08/11/2026</span></td><td>Evergreen Materials</td><td class="money">$1,284.20</td><td>Check #1037</td><td><div class="score good">100%</div></td><td><span class="tag green">Exact match</span></td><td><button class="btn" data-demo-action="Open check #1037">View</button></td></tr>
+<tr><td><span class="checknum">#1042</span><span class="sub">08/14/2026</span></td><td>Harbor Supply Co.</td><td class="money">$2,450.00</td><td>Check #1042 · date differs</td><td><div class="score warn">86%</div></td><td><span class="tag orange">Review</span></td><td><button class="btn purple" data-demo-action="Review check #1042">Review</button></td></tr>
+<tr><td><span class="checknum">#1045</span><span class="sub">08/16/2026</span></td><td>Pioneer Electric</td><td class="money">$1,250.00</td><td>Not found</td><td><div class="score bad">—</div></td><td><span class="tag red">No match</span></td><td><button class="btn purple" data-demo-action="Resolve check #1045">Resolve</button></td></tr>
+</tbody></table></div><div class="tablefooter"><span class="smallnote">Showing sample rows from 428 checks</span><div class="pager"><button class="pagebtn">‹</button><button class="pagebtn active">1</button><button class="pagebtn" data-demo-action="Show the next page of checks">2</button><button class="pagebtn" data-demo-action="Show the next page of checks">›</button></div><a href="approve.html" class="cta" style="display:grid;place-items:center">Continue to Approval →</a></div>
+</div>
+</main>
+</div>
+<script src="app.js">
+</script>
+</body>
+</html>
