@@ -16,7 +16,7 @@ Three numbers worth knowing up front:
 
 | | Count |
 |---|---|
-| Emails whose trigger data already exists in the database | 9 |
+| Emails whose trigger data already exists in the database | 6 |
 | Emails that are Stripe-native, so configuration only | 4 |
 | Emails blocked on a trial clock and usage counter that do not exist yet | 10 |
 
@@ -24,34 +24,44 @@ Three numbers worth knowing up front:
 
 ## 1. Starting position
 
-There is no email infrastructure in the application today. Verified:
+There is no Kyriq-branded email infrastructure in the application today. Verified:
 
 - No Resend, nodemailer, SendGrid or Postmark in any `package.json`.
 - No Stripe library either.
-- No `/api/team/*` routes exist, so the existing Team settings page is already non-functional.
+- No `/api/team/*` routes exist, so the existing Team settings page posts into a 404 and is already non-functional.
 - `supabase/config.toml` has `enable_confirmations = false`, so no verification email is sent at signup today.
+- There is no custom SMTP configured. This matters more than it sounds, see section 5.
 
-So every Kyriq-branded email in both documents is net-new sending. What varies is whether the *event* that should trigger it is already recorded.
+Exactly one email is sent today: the password reset, on the authentication provider's default template, from the forgot-password page. Everything else in both documents is net-new sending. What varies is whether the *event* that should trigger it is already recorded.
 
 ---
 
 ## 2. What already has its trigger data
 
-These nine can be wired as soon as a sender exists, because the database already records the event. All tables are in `supabase/migrations/001_schema.sql`.
+These six can be wired as soon as a sender exists, because the database already records the event. Both tables are in `supabase/migrations/001_schema.sql`.
 
 | Email | Existing trigger |
 |---|---|
-| 01 Team invitation | `team_invitations` table, with token and expiry |
+| 01 Team invitation | `team_invitations` table, with token and 7-day expiry |
 | 02 Invitation accepted | `team_invitations.status` → accepted |
 | 03 Invitation expired | `team_invitations.expires_at` |
 | 09 Team member removed | `profiles` row removal |
 | 10 Role changed | `profiles.role`, already admin / member / viewer |
-| 11 QBO connected | `accounting_connections.status` → active |
-| 12 QBO needs attention | `accounting_connections.status` → expired or error |
-| 13 QBO disconnected | `accounting_connections.status` → revoked |
 | 14 Processing failed | `check_jobs.status` → error, with `error_message` |
 
-An `audit_logs` table also already exists and can carry the security trail behind emails 05, 07 and 08.
+The invitation table was clearly designed for an invite email that was never built: it already carries a single-use token and an expiry. No application code references it yet, and there is no page to accept an invitation.
+
+An `audit_logs` table also exists, but it is currently used only for document field edits, not for authentication events.
+
+### The three QuickBooks emails need a small amount of backend work first
+
+Emails 11, 12 and 13 look like they should be ready, but they are not. Connection health is not stored anywhere.
+
+The live QuickBooks table, `qb_connections`, has no status column. It tracks `is_active`, which means "the company currently selected", not "the connection is working". An older `accounting_connections` table does have a proper status column, but it is legacy and no application code reads or writes it.
+
+Today, when a token refresh fails, both refresh paths write a line to the server log and return an HTTP error. Nothing is persisted. So a dead QuickBooks connection is invisible until a user happens to click something.
+
+To send these three emails, three things are needed: a status column on `qb_connections`, failure-path writes in both refresh locations, and a scheduled health check so a broken connection is noticed before the customer trips over it. That last item is worth having regardless of the emails.
 
 ---
 
@@ -155,10 +165,16 @@ The specification's own implementation note already hedges on the location line.
 
 ## 5. Prerequisites the specifications do not name
 
-- **DNS before any sending.** SPF, DKIM and DMARC records on `updates.kyriq.com`. This needs doing early because propagation takes time.
+- **DNS before any sending.** SPF, DKIM and DMARC records on `updates.kyriq.com`. Do this early, propagation takes time.
 - **A Resend account.** Not currently set up.
-- **Custom SMTP wired into Supabase**, so emails 04 and 06 go out with the approved copy rather than the provider defaults.
+- **Custom SMTP wired into the auth provider.** This is a hard blocker, not a nicety. Without it, authentication emails go through the provider's shared default sender, which is rate limited to a handful of messages per hour. Password reset and verification would fail at real volume.
 - **Stripe retry configuration.** Email 14 triggers "after the retry window", which requires Smart Retries configured and a webhook keyed on either attempt count or subscription status.
+
+### Two existing problems that touch this work
+
+**The privacy policy already promises an unsubscribe link that does not exist.** The published privacy page tells users they can opt out of marketing emails via an unsubscribe link or by updating preferences in account settings. Neither exists. There is no preferences store and no unsubscribe mechanism anywhere in the codebase. This becomes a compliance exposure the moment any non-transactional email ships, so an unsubscribe route and token need building alongside the first marketing or digest email.
+
+**Partial sync failures are currently reported as success.** The QuickBooks pull endpoint collects errors into a list and returns them inside an HTTP 200 response. So a sync that partly failed looks successful to the caller. Worth fixing while connection health is being added, since it affects what email 12 should say.
 
 ---
 
@@ -166,7 +182,7 @@ The specification's own implementation note already hedges on the location line.
 
 **Build now, alongside the current work**
 
-The nine emails in section 2, whose triggers already exist, plus the four Stripe-native notices (12, 13, 23, 24) which need configuration rather than code. This covers every invitation, every QuickBooks connection state, processing failures, and all official billing documents.
+The six emails in section 2, whose triggers already exist, plus the three QuickBooks emails once connection health is tracked, plus the four Stripe-native notices (12, 13, 23, 24) which need configuration rather than code. This covers every invitation, every QuickBooks connection state, processing failures, and all official billing documents.
 
 **Build with the Stripe and usage work**
 

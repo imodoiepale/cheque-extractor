@@ -12,9 +12,9 @@ Issued 2 October 2026.
 |---|---|---|
 | Phase 1: core workflow (shell, stepper, review consolidation, Approve and Clear) | 2 | $500 |
 | Phase 2: companies, connections, users and roles, Stripe billing, history, reports, firm admin | 3 to 5 | $700 |
-| Phase 3: operational and billing emails | 1.5 | $350 |
+| Phase 3: operational and billing emails | 2 | $450 |
 | Bank statement handling: detection accuracy and per-page selection | 1 | $150 |
-| **Total** | **8.5** | **$1,700** |
+| **Total** | **9** | **$1,800** |
 
 Each phase is invoiced on delivery. Phases 3 and the bank statement item are optional and can be dropped without affecting the first two.
 
@@ -24,11 +24,15 @@ Each phase is invoiced on delivery. Phases 3 and the bank statement item are opt
 
 Covers the email specification supplied on 23 September. Full analysis is in `docs/EMAIL-SPEC-REVIEW.md`.
 
-**Included at $350**
+**Included at $450**
 
-- The nine operational emails whose triggers already exist in the database: team invitations (sent, accepted, expired), member removed, role changed, QuickBooks connected, QuickBooks needs attention, QuickBooks disconnected, and processing failed.
+- The six operational emails whose triggers already exist in the database: team invitations (sent, accepted and expired), member removed, role changed, and processing failed.
+- The three QuickBooks emails (connected, needs attention, disconnected). These need a connection health status stored against each QuickBooks company first, because nothing records it today. A failed token refresh currently writes a log line and nothing else, so a dead connection is invisible until a user trips over it. This includes a scheduled health check, which is worth having whether or not the emails ship.
 - The four Stripe-native billing notices (payment successful, payment failed, refund issued, payment method expiring), which need configuring with Kyriq branding rather than building.
-- Resend account setup, sending domain authentication (SPF, DKIM, DMARC on the sending subdomain), and the send infrastructure every later email will reuse.
+- Resend account setup, sending domain authentication (SPF, DKIM and DMARC on the sending subdomain), custom SMTP wired into the login system, and the send infrastructure every later email reuses.
+- Building the missing team invitation endpoints. The Team settings page already exists but its four API calls were never built, so inviting a user currently fails. The database table, token and expiry are already there.
+
+The price moved from an initial $350 estimate because connection health is not tracked today. That was found during the detailed review.
 
 **Included in the existing Phase 2 price, not charged again**
 
@@ -44,6 +48,8 @@ The ten trial and usage emails depend on a trial clock and a per-period check co
 | Company added | Duplicates the QuickBooks connected email unless the two-step company model is built | Depends on decision 4 below |
 
 **Seven decisions block parts of this work.** They are listed in section 7 of the review document. The two that block the most are the trial allowance (200 or 250 checks, which two documents currently disagree on) and the per-check overage rate, which seven emails reference but which has never been set.
+
+**One item to raise separately.** The published privacy policy already tells users they can unsubscribe from marketing emails via a link or through account settings. Neither exists. This is not a problem while only transactional email is sent, but it needs building before any marketing or digest email ships. Flagged here because it is a compliance point rather than a feature request.
 
 ---
 
