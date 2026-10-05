@@ -1,285 +1,343 @@
 'use client';
 
-import { useState, useEffect, useRef, ReactNode } from 'react';
+/**
+ * Kyriq landing page — parcel I.
+ *
+ * Two things govern this file:
+ *
+ * 1. CHECKLIST 12. The fabricated social proof is gone (watch-demo button,
+ *    "trusted by 500+ accounting firms", every testimonial), every CTA reads
+ *    "Start Free Trial" and routes to /signup, the hero leads with the bank
+ *    statement, and pricing is the Essential / Professional / Scale table
+ *    with the monthly-annual toggle, overage rates and annual terms.
+ *
+ * 2. DESIGN-SYSTEM. Colour comes from tokens only — no hex, no raw Tailwind
+ *    palette class. Entrances are CSS keyframes (`animate-glass-rise` +
+ *    `.stagger`), never JS tweens, because requestAnimationFrame is frozen in
+ *    a hidden document and a framer-motion entrance can land mid-tween and
+ *    stick. framer-motion is kept only where the motion is genuinely
+ *    interactive — the mobile menu and the carousel — and both consult
+ *    `useReducedMotion()`, which Parcel A's CSS media query cannot reach.
+ *
+ * scripts/check-landing.ts fails if any of that regresses.
+ */
+
+import { useState, useEffect, ReactNode } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
-import { motion, useInView, AnimatePresence } from 'framer-motion';
+import { useRouter } from 'next/navigation';
+import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
 import {
-  CheckCircle2, Zap, Shield, Users, BarChart3,
-  ArrowRight, Star, Upload, Search,
-  Sparkles, RefreshCw, X, Menu, Check, ArrowDown,
-  ScanLine, GitCompare, ClipboardCheck, Chrome, Flag, Eye
+  Zap, Users, ArrowRight, Upload, Search,
+  X, Menu, Check, ScanLine, GitCompare, ClipboardCheck, Flag, FileText,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { buttonVariants } from '@/components/ui';
+import { KyriqIcon, KyriqIconWhite } from './KyriqMark';
 import { Marquee } from '@/components/ui/marquee';
 import { NumberTicker } from '@/components/ui/number-ticker';
 import { BorderBeam } from '@/components/ui/border-beam';
 import { ShimmerButton } from '@/components/ui/shimmer-button';
 
-/* ── Kyriq inline SVG icon ── */
-function KyriqIcon({ size = 36, className }: { size?: number; className?: string }) {
+/* =========================================================================
+   TODO(copy) — the approved wording for this page lives in
+   `Kyriq-Developer-Handoff-v17.zip` and on the client's redesign site, and
+   NEITHER is in this repo (only the v12 handoff is extracted, at
+   kyriq-developer-handoff-v12-final/, and its website.html has no FAQ).
+   The two hero sentences below are quoted from CHECKLIST 12 and are exact.
+   Everything else that is customer-facing claim or billing wording is either
+   restated from the CHECKLIST pricing table or left as a TODO — see FAQS and
+   the per-tier feature note in Pricing. Do not invent replacements: this is
+   copy about billing and data handling.
+   ========================================================================= */
+
+/** The single CTA label and destination. Both are asserted by the check. */
+const CTA_LABEL = 'Start Free Trial';
+const CTA_HREF = '/signup';
+
+/**
+ * Entrance. CSS keyframes, not a JS tween — see the file header. `.stagger`
+ * caps the delay at the fifth child so a long list never makes the reader
+ * wait, and `prefers-reduced-motion` retargets glass-rise to a short fade in
+ * globals.css, so there is nothing to branch on here.
+ */
+function Rise({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cn('animate-glass-rise', className)}>{children}</div>;
+}
+
+/** The one primary action on the page. Anchor, so it is crawlable. */
+function CtaLink({ className, size = 'lg' }: { className?: string; size?: 'md' | 'lg' }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 100 100" fill="none" className={className}>
-      <defs>
-        <linearGradient id="kStem" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
-          <stop offset="0%" stopColor="#10b981" />
-          <stop offset="100%" stopColor="#6366f1" />
-        </linearGradient>
-      </defs>
-      <rect width="100" height="100" rx="22" fill="#1a1a2e" />
-      <rect x="22" y="20" width="11" height="60" rx="5.5" fill="url(#kStem)" />
-      <line x1="33" y1="50" x2="68" y2="20" stroke="#10b981" strokeWidth="11" strokeLinecap="round" />
-      <line x1="33" y1="50" x2="68" y2="80" stroke="#6366f1" strokeWidth="11" strokeLinecap="round" />
-    </svg>
+    <Link href={CTA_HREF} className={cn(buttonVariants({ variant: 'primary', size }), className)}>
+      {CTA_LABEL} <ArrowRight size={16} aria-hidden />
+    </Link>
   );
 }
 
-function KyriqIconWhite({ size = 22 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 100 100" fill="none">
-      <defs>
-        <linearGradient id="kStemW" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
-          <stop offset="0%" stopColor="#34d399" />
-          <stop offset="100%" stopColor="#818cf8" />
-        </linearGradient>
-      </defs>
-      <rect width="100" height="100" rx="22" fill="rgba(255,255,255,0.07)" />
-      <rect x="22" y="20" width="11" height="60" rx="5.5" fill="url(#kStemW)" />
-      <line x1="33" y1="50" x2="68" y2="20" stroke="#34d399" strokeWidth="11" strokeLinecap="round" />
-      <line x1="33" y1="50" x2="68" y2="80" stroke="#818cf8" strokeWidth="11" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function FadeIn({ children, className, delay = 0, direction = 'up' }: {
-  children: ReactNode; className?: string; delay?: number; direction?: 'up' | 'down' | 'left' | 'right';
-}) {
-  const ref = useRef(null);
-  const isInView = useInView(ref, { once: true, margin: "-80px" });
-  const axis = direction === 'left' || direction === 'right' ? 'x' : 'y';
-  const offset = direction === 'down' || direction === 'right' ? -40 : 40;
-  return (
-    <motion.div
-      ref={ref}
-      initial={{ opacity: 0, [axis]: offset }}
-      animate={isInView ? { opacity: 1, [axis]: 0 } : {}}
-      transition={{ duration: 0.7, delay, ease: [0.21, 0.47, 0.32, 0.98] }}
-      className={className}
-    >{children}</motion.div>
-  );
-}
-
-function GradientBg() {
-  return (
-    <div className="absolute inset-0 -z-10 overflow-hidden">
-      <div className="absolute top-[-50%] left-[-20%] w-[70%] h-[100%] rounded-full opacity-30 blur-3xl animate-float" style={{ background: 'radial-gradient(circle, rgba(99,102,241,0.15) 0%, transparent 70%)' }} />
-      <div className="absolute bottom-[-30%] right-[-10%] w-[60%] h-[80%] rounded-full opacity-20 blur-3xl animate-float" style={{ background: 'radial-gradient(circle, rgba(16,185,129,0.12) 0%, transparent 70%)', animationDelay: '-3s' }} />
-      <div className="absolute top-[20%] right-[10%] w-[40%] h-[40%] rounded-full opacity-10 blur-3xl animate-glow-pulse" style={{ background: 'radial-gradient(circle, rgba(139,92,246,0.15) 0%, transparent 70%)' }} />
-      <div className="absolute inset-0 opacity-[0.015]" style={{ backgroundImage: 'linear-gradient(rgba(0,0,0,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,0.1) 1px, transparent 1px)', backgroundSize: '60px 60px' }} />
-    </div>
-  );
-}
+const NAV_LINKS = [
+  { label: 'Features', href: '#features' },
+  { label: 'How It Works', href: '#how' },
+  { label: 'Extension', href: '#extension' },
+  { label: 'Pricing', href: '#pricing' },
+];
 
 function Nav() {
   const [scrolled, setScrolled] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const reduced = useReducedMotion();
+
   useEffect(() => {
     const handler = () => setScrolled(window.scrollY > 20);
     window.addEventListener('scroll', handler, { passive: true });
     return () => window.removeEventListener('scroll', handler);
   }, []);
-  const navLinks = [
-    { label: 'Features', href: '#features' },
-    { label: 'How It Works', href: '#how' },
-    { label: 'Extension', href: '#extension' },
-    { label: 'Pricing', href: '#pricing' },
-  ];
+
   return (
-    <motion.nav initial={{ y: -20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} transition={{ duration: 0.5 }}
-      className={cn('fixed top-0 inset-x-0 z-50 transition-all duration-500', scrolled ? 'bg-white/82 backdrop-blur-xl saturate-[1.8] shadow-[0_1px_3px_rgba(0,0,0,0.06)] border-b border-gray-200/50' : 'bg-transparent')}>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-14 lg:h-[56px]">
-        <Link href="/" className="flex items-center gap-2.5 group">
+    <nav
+      className={cn(
+        'fixed top-0 inset-x-0 z-50 transition-[background-color,box-shadow,border-color] duration-settle ease-settle',
+        scrolled ? 'glass-chrome border-b shadow-contact' : 'border-b border-transparent'
+      )}
+    >
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between h-14">
+        <Link href="/" className="flex items-center gap-2.5">
           <KyriqIcon size={30} className="rounded-lg" />
-          <span className="text-[20px] font-extrabold tracking-[-0.8px] text-[#1a1a2e]">kyriq</span>
+          <span className="text-xl font-extrabold tracking-wordmark text-ink-strong">kyriq</span>
         </Link>
+
         <div className="hidden lg:flex items-center gap-8">
-          {navLinks.map((l) => (
-            <a key={l.href} href={l.href} className="text-[13px] font-medium text-gray-500 hover:text-gray-900 transition-colors">{l.label}</a>
+          {NAV_LINKS.map((l) => (
+            <a key={l.href} href={l.href} className="text-[13px] font-medium text-ink-faint hover:text-ink-strong transition-colors duration-quick">
+              {l.label}
+            </a>
           ))}
         </div>
+
         <div className="hidden lg:flex items-center gap-3">
-          <Link href="/login" className="text-[13px] font-medium text-gray-500 hover:text-gray-900 transition-colors">Sign in</Link>
-          <Link href="/signup" className="px-[18px] py-2 text-[13px] font-semibold text-white bg-[#1a1a2e] hover:bg-[#2d2d4a] rounded-full hover:scale-[1.02] transition-all">
-            Get started free
+          <Link href="/login" className="text-[13px] font-medium text-brand-deep hover:text-brand-dark transition-colors duration-quick">
+            Sign in
           </Link>
+          <CtaLink size="md" className="px-5 min-h-tap text-[13px]" />
         </div>
-        <button onClick={() => setMobileOpen(!mobileOpen)} className="lg:hidden p-2 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors" aria-label="Toggle menu">
+
+        <button
+          onClick={() => setMobileOpen(!mobileOpen)}
+          className="lg:hidden press rounded-input p-2 text-ink-body hover:bg-ink-strong/[0.06]"
+          aria-label="Toggle menu"
+          aria-expanded={mobileOpen}
+        >
           {mobileOpen ? <X size={22} /> : <Menu size={22} />}
         </button>
       </div>
-      <AnimatePresence>
+
+      {/* Interactive motion, so framer-motion earns its place here — but the
+          height tween is dropped outright when reduced motion is requested. */}
+      <AnimatePresence initial={false}>
         {mobileOpen && (
-          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.3 }} className="lg:hidden overflow-hidden bg-white/95 backdrop-blur-xl border-t border-gray-100">
+          <motion.div
+            initial={reduced ? { opacity: 0 } : { opacity: 0, height: 0 }}
+            animate={reduced ? { opacity: 1 } : { opacity: 1, height: 'auto' }}
+            exit={reduced ? { opacity: 0 } : { opacity: 0, height: 0 }}
+            transition={{ duration: reduced ? 0.16 : 0.28, ease: [0.23, 1, 0.32, 1] }}
+            className="lg:hidden overflow-hidden glass-modal border-t"
+          >
             <div className="px-4 py-4 space-y-1">
-              {navLinks.map((l) => (
-                <a key={l.href} href={l.href} onClick={() => setMobileOpen(false)} className="block px-4 py-3 text-base font-medium text-gray-700 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all">{l.label}</a>
+              {NAV_LINKS.map((l) => (
+                <a
+                  key={l.href}
+                  href={l.href}
+                  onClick={() => setMobileOpen(false)}
+                  className="block px-4 py-3 text-base font-medium text-ink-body rounded-input hover:bg-brand-wash hover:text-brand-deep transition-colors duration-quick"
+                >
+                  {l.label}
+                </a>
               ))}
-              <div className="pt-4 mt-2 border-t border-gray-100 grid grid-cols-2 gap-3">
-                <Link href="/login" onClick={() => setMobileOpen(false)} className="text-center py-3 text-sm font-semibold text-gray-700 border border-gray-200 rounded-xl hover:border-gray-300 transition-colors">Sign in</Link>
-                <Link href="/signup" onClick={() => setMobileOpen(false)} className="text-center py-3 text-sm font-semibold text-white bg-[#1a1a2e] rounded-xl">Get started free</Link>
+              <div className="pt-4 mt-2 border-t hairline grid gap-3">
+                <CtaLink className="w-full" />
+                <Link
+                  href="/login"
+                  onClick={() => setMobileOpen(false)}
+                  className={cn(buttonVariants({ variant: 'ghost', size: 'md', block: true }))}
+                >
+                  Sign in
+                </Link>
               </div>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
-    </motion.nav>
+    </nav>
   );
 }
 
+/* ── Hero. Leads with the bank statement (CHECKLIST 12, Michael: "a BIG deal"). ── */
 function Hero() {
   return (
-    <section className="relative pt-28 sm:pt-36 lg:pt-44 pb-16 sm:pb-24 px-4 sm:px-6 overflow-hidden">
-      <GradientBg />
-      <div className="max-w-5xl mx-auto text-center relative">
-        <FadeIn>
-          <motion.div className="inline-flex items-center gap-2 px-4 py-1.5 bg-indigo-50/80 backdrop-blur-sm border border-indigo-200/60 rounded-full text-[12px] font-semibold text-indigo-700 mb-6 sm:mb-8 tracking-wide" whileHover={{ scale: 1.03 }}>
-            <span className="relative flex h-1.5 w-1.5"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" /><span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500" /></span>
+    <section className="relative pt-28 sm:pt-36 lg:pt-44 pb-16 sm:pb-24 px-4 sm:px-6">
+      <div className="max-w-5xl mx-auto text-center">
+        <Rise>
+          <span className="inline-flex items-center gap-2 px-4 py-1.5 mb-6 sm:mb-8 rounded-full bg-brand-wash border border-brand-tint text-xs font-semibold text-brand-deep tracking-wide">
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accentEmerald opacity-75" />
+              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accentEmerald" />
+            </span>
             Now with Chrome extension for QuickBooks
-          </motion.div>
-        </FadeIn>
-        <FadeIn delay={0.1}>
-          <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-[80px] font-extrabold tracking-[-3px] leading-[1.02] text-[#1d1d1f] mb-6">
-            Check reconciliation<br />
-            <span className="bg-gradient-to-r from-indigo-500 via-violet-500 to-emerald-500 bg-clip-text text-transparent">finally automated.</span>
+          </span>
+        </Rise>
+
+        {/* Both sentences are quoted verbatim from CHECKLIST 12. */}
+        <Rise>
+          <h1 className="text-4xl sm:text-5xl md:text-6xl lg:text-[80px] font-extrabold tracking-[-0.03em] leading-[1.02] text-ink-strong mb-6">
+            Start with the bank statement{' '}
+            <span className="bg-gradient-to-r from-brand via-brand-light to-accentEmerald bg-clip-text text-transparent">
+              you already download.
+            </span>
           </h1>
-        </FadeIn>
-        <FadeIn delay={0.2}>
-          <p className="text-base sm:text-lg md:text-[21px] text-[#6e6e73] max-w-[560px] mx-auto mb-10 sm:mb-12 leading-relaxed tracking-[-0.2px] px-4">
-            Kyriq matches your checks against QuickBooks in seconds — with AI confidence scoring, one-click approval, and automatic clearing.
+        </Rise>
+        <Rise>
+          <p className="text-base sm:text-lg md:text-xl text-ink-soft max-w-[560px] mx-auto mb-10 sm:mb-12 leading-relaxed px-4">
+            Typed or handwritten — Kyriq can read both.
           </p>
-        </FadeIn>
-        <FadeIn delay={0.3}>
-          <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center mb-16 sm:mb-20 px-4">
-            <Link href="/signup" className="px-7 sm:px-8 py-3.5 text-[15px] font-semibold text-white bg-gradient-to-r from-indigo-500 to-violet-500 rounded-full shadow-xl shadow-indigo-500/35 hover:shadow-indigo-500/50 hover:-translate-y-0.5 transition-all flex items-center justify-center gap-2">
-              Start free trial <ArrowRight size={16} />
-            </Link>
-            <motion.a href="#how" whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} className="px-7 sm:px-8 py-3.5 text-[15px] font-medium text-[#1d1d1f] bg-transparent border-[1.5px] border-gray-200 rounded-full hover:border-gray-300 hover:bg-[#f5f5f7] transition-all flex items-center justify-center gap-2">
-              Watch demo
-            </motion.a>
+        </Rise>
+
+        <Rise>
+          <div className="flex justify-center mb-16 sm:mb-20 px-4">
+            <CtaLink />
           </div>
-        </FadeIn>
-        <FadeIn delay={0.5}>
-          <div className="max-w-[960px] mx-auto relative">
-            <BorderBeam size={300} duration={12} colorFrom="#6366f1" colorTo="#10b981" />
-            <div className="rounded-2xl overflow-hidden shadow-[0_32px_80px_rgba(0,0,0,0.14),0_8px_24px_rgba(99,102,241,0.1)] border border-gray-200/50">
-              {/* Browser chrome */}
-              <div className="bg-[#f0f0f0] px-3 sm:px-4 py-2.5 sm:py-3 flex items-center gap-2 border-b border-gray-200/50">
-                <div className="flex gap-1.5"><span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-[#ff5f57]" /><span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-[#ffbd2e]" /><span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-[#28c840]" /></div>
-                <div className="ml-2 flex-1 bg-white rounded-md px-3 py-1 text-[10px] sm:text-xs text-gray-400 font-mono truncate flex items-center gap-1.5 border border-gray-100">
-                  <KyriqIcon size={10} /><span>app.kyriq.com/matches</span>
-                </div>
-              </div>
-              {/* Mini app */}
-              <div className="flex min-h-[320px] sm:min-h-[380px]">
-                {/* Sidebar */}
-                <div className="hidden sm:flex flex-col w-[180px] md:w-[200px] bg-[#1a1a2e] p-3 gap-1">
-                  <div className="flex items-center gap-2 px-3 py-2 mb-3">
-                    <KyriqIconWhite size={22} />
-                    <span className="text-[14px] font-extrabold text-white tracking-[-0.5px]">kyriq</span>
-                  </div>
-                  {['Dashboard','Upload','QB Match','Analytics','Settings'].map((item, i) => (
-                    <div key={item} className={cn('px-3 py-2 rounded-lg text-[12px] font-medium flex items-center gap-2', i === 2 ? 'bg-indigo-500/25 text-white' : 'text-white/50')}>
-                      <span className="w-4 h-4 rounded bg-white/10 text-[9px] flex items-center justify-center">
-                        {['📊','⬆️','🔗','📈','⚙️'][i]}
-                      </span>
-                      {item}
-                    </div>
-                  ))}
-                </div>
-                {/* Content */}
-                <div className="flex-1 bg-[#f8f7ff] p-3 sm:p-4">
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-[13px] font-bold text-[#1e2235]">QB Match</span>
-                    <div className="flex gap-1.5">
-                      <span className="bg-emerald-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full">Sync QB</span>
-                      <span className="bg-indigo-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full">Approve All</span>
-                    </div>
-                  </div>
-                  <div className="flex gap-1.5 mb-3">
-                    {[{l:'All 24',a:true},{l:'Matched 18',a:false},{l:'Pending 4',a:false},{l:'Discrepancy 2',a:false}].map(p => (
-                      <span key={p.l} className={cn('text-[10px] font-semibold px-2.5 py-1 rounded-full border', p.a ? 'bg-indigo-500 text-white border-indigo-500' : 'bg-white text-gray-500 border-gray-200')}>{p.l}</span>
-                    ))}
-                  </div>
-                  <div className="space-y-1.5">
-                    {[
-                      {am:'$2,450.00',py:'Acme Supply Co.',dt:'Check #1042 · Mar 12',st:'approved',sc:'98'},
-                      {am:'$870.50',py:'Metro Office Solutions',dt:'Check #1043 · Mar 13',st:'matched',sc:'94'},
-                      {am:'$3,100.00',py:'Riverside Contractors',dt:'Check #1044 · Mar 14',st:'pending',sc:'72'},
-                      {am:'$560.25',py:'City Utilities LLC',dt:'Check #1045 · Mar 15',st:'matched',sc:'97'},
-                    ].map(r => (
-                      <motion.div key={r.am} initial={{ opacity: 0, x: -10 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: true }} transition={{ duration: 0.4 }}
-                        className="flex items-center gap-2.5 bg-white rounded-[10px] px-3 py-2.5 border border-gray-100 shadow-[0_1px_3px_rgba(0,0,0,0.04)]">
-                        <span className="text-[12px] font-bold text-[#1d1d1f] min-w-[72px]">{r.am}</span>
-                        <div className="flex-1 min-w-0">
-                          <div className="text-[11px] font-semibold text-[#334155] truncate">{r.py}</div>
-                          <div className="text-[10px] text-[#94a3b8]">{r.dt}</div>
-                        </div>
-                        <span className={cn('text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wide',
-                          r.st === 'approved' ? 'bg-violet-100 text-violet-700' :
-                          r.st === 'matched' ? 'bg-emerald-100 text-emerald-700' :
-                          'bg-amber-100 text-amber-700'
-                        )}>{r.st === 'approved' ? '✓ Approved' : r.st === 'matched' ? 'Matched' : 'Pending'}</span>
-                        <span className={cn('text-[10px] font-bold min-w-[24px] text-right', Number(r.sc) >= 90 ? 'text-emerald-500' : 'text-amber-500')}>{r.sc}</span>
-                      </motion.div>
-                    ))}
-                  </div>
-                </div>
-              </div>
+        </Rise>
+
+        <Rise>
+          <div className="max-w-[960px] mx-auto relative rounded-card">
+            {/* Magic-UI: border-beam keyframe + --duration. */}
+            <BorderBeam size={300} duration={12} />
+            <div className="rounded-card overflow-hidden shadow-glass-modal border border-glass-hairline">
+              <AppMock />
             </div>
           </div>
-        </FadeIn>
+        </Rise>
       </div>
     </section>
   );
 }
 
-/* ── Stats Bar ── */
-function StatsBar() {
-  const stats = [
-    { value: 98, suffix: '%', label: 'Average match accuracy', color: 'text-emerald-400' },
-    { value: 4, suffix: 'min', label: 'Average reconciliation time', color: 'text-emerald-400' },
-    { value: 10, suffix: 'x', label: 'Faster than manual review', color: 'text-emerald-400' },
-    { value: 0, suffix: '', label: 'Missed checks per month', color: 'text-emerald-400' },
+/** A still of the product. Deliberately flat: glass over glass goes muddy. */
+function AppMock() {
+  const rows = [
+    { am: '$2,450.00', py: 'Acme Supply Co.', dt: 'Check #1042 · Mar 12', st: 'approved', sc: 98 },
+    { am: '$870.50', py: 'Metro Office Solutions', dt: 'Check #1043 · Mar 13', st: 'matched', sc: 94 },
+    { am: '$3,100.00', py: 'Riverside Contractors', dt: 'Check #1044 · Mar 14', st: 'pending', sc: 72 },
+    { am: '$560.25', py: 'City Utilities LLC', dt: 'Check #1045 · Mar 15', st: 'matched', sc: 97 },
   ];
   return (
-    <section className="bg-[#1a1a2e] py-10 sm:py-12">
-      <div className="max-w-5xl mx-auto grid grid-cols-2 sm:grid-cols-4 gap-6 sm:gap-0 px-6">
-        {stats.map((s, i) => (
-          <FadeIn key={s.label} delay={i * 0.1}>
-            <div className={cn('text-center', i < 3 && 'sm:border-r sm:border-white/[0.08]')}>
-              <div className="text-3xl sm:text-4xl font-extrabold text-white tracking-[-1.5px] mb-1">
-                <span className={s.color}><NumberTicker value={s.value} /></span>{s.suffix}
-              </div>
-              <div className="text-[13px] text-white/45">{s.label}</div>
+    <>
+      <div className="bg-surface-sunken px-3 sm:px-4 py-2.5 sm:py-3 flex items-center gap-2 border-b border-glass-hairline">
+        <div className="flex gap-1.5">
+          <span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-error" />
+          <span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-warning" />
+          <span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-success" />
+        </div>
+        <div className="ml-2 flex-1 bg-surface rounded-md px-3 py-1 text-[10px] sm:text-xs text-ink-faint font-mono truncate flex items-center gap-1.5 border border-glass-hairline">
+          <KyriqIcon size={10} /><span>app.kyriq.com/matches</span>
+        </div>
+      </div>
+      <div className="flex min-h-[320px] sm:min-h-[380px]">
+        <div className="hidden sm:flex flex-col w-[180px] md:w-[200px] bg-shell-solid p-3 gap-1">
+          <div className="flex items-center gap-2 px-3 py-2 mb-3">
+            <KyriqIconWhite size={22} />
+            <span className="text-sm font-extrabold text-shell-text tracking-wordmark">kyriq</span>
+          </div>
+          {['Dashboard', 'Upload', 'QB Match', 'Analytics', 'Settings'].map((item, i) => (
+            <div key={item} className={cn('px-3 py-2 rounded-input text-xs font-medium', i === 2 ? 'bg-brand/25 text-shell-text' : 'text-shell-muted')}>
+              {item}
             </div>
-          </FadeIn>
+          ))}
+        </div>
+        <div className="flex-1 bg-surface-tint p-3 sm:p-4">
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-[13px] font-bold text-ink-strong">QB Match</span>
+            <div className="flex gap-1.5">
+              <span className="bg-success text-white text-[9px] font-bold px-2 py-0.5 rounded-full">Sync QB</span>
+              <span className="bg-brand text-white text-[9px] font-bold px-2 py-0.5 rounded-full">Approve All</span>
+            </div>
+          </div>
+          <div className="flex gap-1.5 mb-3">
+            {[{ l: 'All 24', a: true }, { l: 'Matched 18', a: false }, { l: 'Pending 4', a: false }, { l: 'Discrepancy 2', a: false }].map((p) => (
+              <span key={p.l} className={cn('text-[10px] font-semibold px-2.5 py-1 rounded-full border', p.a ? 'bg-brand text-white border-brand' : 'bg-surface text-ink-faint border-glass-hairline')}>
+                {p.l}
+              </span>
+            ))}
+          </div>
+          <div className="space-y-1.5">
+            {rows.map((r) => (
+              <div key={r.am} className="flex items-center gap-2.5 bg-surface rounded-input px-3 py-2.5 border border-glass-hairline shadow-contact">
+                <span className="text-xs font-bold text-ink-strong min-w-[72px] nums">{r.am}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-[11px] font-semibold text-ink-body truncate">{r.py}</div>
+                  <div className="text-[10px] text-ink-faint">{r.dt}</div>
+                </div>
+                <span
+                  className={cn(
+                    'text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase tracking-wide',
+                    r.st === 'approved' ? 'bg-info-bg text-info-text' : r.st === 'matched' ? 'bg-success-bg text-success-text' : 'bg-warning-bg text-warning-text'
+                  )}
+                >
+                  {r.st}
+                </span>
+                <span className={cn('text-[10px] font-bold min-w-[24px] text-right nums', r.sc >= 90 ? 'text-success-text' : 'text-warning-text')}>{r.sc}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+/**
+ * The facts bar. Every number here is specified — the 14-day / 250-check
+ * trial comes from the client's list, the four steps from CHECKLIST 12 — so
+ * nothing on it is a performance claim nobody can stand behind. That is also
+ * why the old "98% accuracy / 0 missed checks" bar is gone.
+ */
+function FactsBar() {
+  const facts = [
+    { value: 14, suffix: '-day', label: 'Free trial, no card required' },
+    { value: 250, suffix: '', label: 'Checks included in the trial' },
+    { value: 4, suffix: ' steps', label: 'Upload, match, approve, cleared' },
+  ];
+  return (
+    <section className="bg-shell-solid py-10 sm:py-12">
+      <div className="max-w-5xl mx-auto grid grid-cols-1 sm:grid-cols-3 gap-6 sm:gap-0 px-6 stagger">
+        {facts.map((s, i) => (
+          <div key={s.label} className={cn('animate-glass-rise text-center', i < 2 && 'sm:border-r sm:border-glass-hairline-dark')}>
+            <div className="text-3xl sm:text-4xl font-extrabold text-shell-text tracking-[-0.025em] mb-1 nums">
+              <span className="text-accentEmerald"><NumberTicker value={s.value} /></span>
+              {s.suffix}
+            </div>
+            <div className="text-[13px] text-shell-muted">{s.label}</div>
+          </div>
         ))}
       </div>
     </section>
   );
 }
 
-const firmLogos = ['Rodriguez & Associates','Thompson Tax Group','Pacific Bookkeeping','Summit Financial','Cascade Accounting','Pinnacle CPA Group','Harbor Tax Services','Evergreen Advisors','Atlas Bookkeeping','NorthStar Financial','Clearview Accounting','Redwood Tax Partners'];
+/**
+ * Export formats. A marquee of things the product actually does — the old
+ * strip was twelve invented firm names under "Trusted by 500+ accounting
+ * firms", which is exactly what item 1 of the client's list removes.
+ */
+const EXPORT_TARGETS = ['QuickBooks Online', 'Xero', 'Sage', 'Zoho Books', 'CSV', 'IIF', 'QBO', 'Chrome extension'];
 
-function LogoMarquee() {
+function ExportMarquee() {
   return (
-    <section className="py-10 sm:py-16 border-y border-gray-100 bg-gray-50/40">
-      <FadeIn><p className="text-center text-xs font-semibold uppercase tracking-widest text-gray-400 mb-6 sm:mb-8 px-4">Trusted by 500+ accounting firms worldwide</p></FadeIn>
+    <section className="py-10 sm:py-16 border-y hairline bg-surface/40">
+      <p className="text-center text-eyebrow text-ink-faint mb-6 sm:mb-8 px-4">Reconcile in QuickBooks, export anywhere</p>
+      {/* Magic-UI: marquee keyframe + --duration / --gap. */}
       <Marquee pauseOnHover className="[--duration:35s]" gap="1rem">
-        {firmLogos.map((name) => (
-          <div key={name} className="flex items-center gap-2 px-4 sm:px-5 py-2 bg-white rounded-lg border border-gray-100 shadow-sm whitespace-nowrap">
-            <div className="w-6 h-6 bg-gradient-to-br from-gray-200 to-gray-300 rounded-md flex items-center justify-center text-[8px] font-bold text-gray-500">{name.split(' ').map(w => w[0]).join('').slice(0, 2)}</div>
-            <span className="text-xs sm:text-sm font-semibold text-gray-600">{name}</span>
+        {EXPORT_TARGETS.map((name) => (
+          <div key={name} className="flex items-center gap-2 px-4 sm:px-5 py-2 glass-card rounded-pill whitespace-nowrap">
+            <FileText size={14} className="text-brand" aria-hidden />
+            <span className="text-xs sm:text-sm font-semibold text-ink-body">{name}</span>
           </div>
         ))}
       </Marquee>
@@ -287,34 +345,72 @@ function LogoMarquee() {
   );
 }
 
+function SectionHead({ eyebrow, title, blurb, dark }: { eyebrow: string; title: string; blurb?: string; dark?: boolean }) {
+  return (
+    <div className="text-center mb-12 sm:mb-16">
+      <span className={cn('text-eyebrow mb-3 block', dark ? 'text-accentEmerald' : 'text-brand')}>{eyebrow}</span>
+      <h2 className={cn('text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-[-0.025em] leading-[1.08] mb-5', dark ? 'text-shell-text' : 'text-ink-strong')}>
+        {title}
+      </h2>
+      {blurb && <p className={cn('text-lg max-w-[520px] mx-auto leading-relaxed', dark ? 'text-shell-muted' : 'text-ink-soft')}>{blurb}</p>}
+    </div>
+  );
+}
+
 function Features() {
   const features = [
-    { icon: <Search className="w-5 h-5" />, title: 'AI Confidence Scoring', desc: 'Every match is scored by amount, check number, date, and payee — so you know exactly how confident the system is before you approve.', color: 'from-emerald-500 to-emerald-600', bg: 'bg-emerald-50' },
-    { icon: <Zap className="w-5 h-5" />, title: 'One-Click Approval', desc: 'Approve a single check or bulk-approve an entire batch. Kyriq automatically sets ClearingStatus in QuickBooks.', color: 'from-indigo-500 to-violet-500', bg: 'bg-indigo-50' },
-    { icon: <Users className="w-5 h-5" />, title: 'Multi-Company Support', desc: 'Switch between all your QuickBooks companies from one dashboard. Each company has its own token and reconciliation history.', color: 'from-amber-500 to-amber-600', bg: 'bg-amber-50' },
-    { icon: <Eye className="w-5 h-5" />, title: 'OCR Check Extraction', desc: 'Upload check images and Kyriq automatically extracts the check number, date, payee, and amount — even from handwritten amounts.', color: 'from-sky-500 to-sky-600', bg: 'bg-sky-50' },
-    { icon: <Flag className="w-5 h-5" />, title: 'Flag & Resolve Discrepancies', desc: 'Flag suspicious matches with preset or custom reasons. Resolve with write-off, split, or remap options.', color: 'from-red-500 to-red-600', bg: 'bg-red-50' },
-    { icon: <ClipboardCheck className="w-5 h-5" />, title: 'Full Audit Trail', desc: 'Every approval, flag, note, and remap is logged with a timestamp and user. Complete compliance for your review processes.', color: 'from-indigo-500 to-indigo-600', bg: 'bg-indigo-50' },
+    {
+      icon: <ScanLine className="w-5 h-5" />,
+      title: 'Bank statements, typed or handwritten',
+      desc: 'Start with the statement you already download. Kyriq reads both typed and handwritten entries, so nothing has to be keyed in twice.',
+      tone: 'bg-gradient-to-br from-accentEmerald to-accentEmerald-dark',
+    },
+    {
+      icon: <Search className="w-5 h-5" />,
+      title: 'AI confidence scoring',
+      desc: 'Every match is scored by amount, check number, date, and payee — so you know exactly how confident the system is before you approve.',
+      tone: 'bg-gradient-to-br from-brand to-brand-dark',
+    },
+    {
+      icon: <Zap className="w-5 h-5" />,
+      title: 'One-click approval',
+      desc: 'Approve a single check or bulk-approve an entire batch. Kyriq sets the clearing status in QuickBooks for you.',
+      tone: 'bg-gradient-to-br from-brand-light to-brand',
+    },
+    {
+      icon: <Users className="w-5 h-5" />,
+      title: 'Multi-company support',
+      desc: 'Switch between all your QuickBooks companies from one dashboard. Each company keeps its own connection and reconciliation history.',
+      tone: 'bg-gradient-to-br from-brand-dark to-brand-deep',
+    },
+    {
+      icon: <Flag className="w-5 h-5" />,
+      title: 'Flag and resolve discrepancies',
+      desc: 'Flag anything that looks off with a preset or custom reason, then resolve with a write-off, split, or remap.',
+      tone: 'bg-gradient-to-br from-warning to-warning-dark',
+    },
+    {
+      icon: <ClipboardCheck className="w-5 h-5" />,
+      title: 'Full audit trail',
+      desc: 'Every approval, flag, note and remap is logged with a timestamp and a user, so a review can always be reconstructed.',
+      tone: 'bg-gradient-to-br from-accentEmerald-dark to-brand-deep',
+    },
   ];
   return (
-    <section id="features" className="py-16 sm:py-24 px-4 sm:px-6 bg-[#f5f5f7]">
+    <section id="features" className="py-16 sm:py-24 px-4 sm:px-6">
       <div className="max-w-[1100px] mx-auto">
-        <FadeIn>
-          <div className="text-center mb-12 sm:mb-16">
-            <span className="text-[12px] font-bold tracking-[0.12em] uppercase text-indigo-500 mb-3 block">Features</span>
-            <h2 className="text-3xl sm:text-4xl md:text-[52px] font-extrabold tracking-[-2px] leading-[1.08] text-[#1d1d1f] mb-5">Everything your team needs to reconcile faster</h2>
-            <p className="text-[17px] text-[#6e6e73] max-w-[520px] mx-auto leading-relaxed">Built for accounting firms handling multiple QuickBooks companies at once.</p>
-          </div>
-        </FadeIn>
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-[2px] rounded-[20px] overflow-hidden bg-gray-200/60">
-          {features.map((f, i) => (
-            <FadeIn key={f.title} delay={i * 0.08}>
-              <motion.div whileHover={{ y: -2 }} className="bg-white p-8 sm:p-10 h-full transition-transform duration-200">
-                <div className={cn('w-12 h-12 rounded-[14px] flex items-center justify-center text-white mb-5', `bg-gradient-to-br ${f.color}`)}>{f.icon}</div>
-                <h3 className="text-[17px] font-bold tracking-[-0.3px] text-[#1d1d1f] mb-2.5">{f.title}</h3>
-                <p className="text-[14px] text-[#6e6e73] leading-[1.65]">{f.desc}</p>
-              </motion.div>
-            </FadeIn>
+        <SectionHead
+          eyebrow="Features"
+          title="Everything your team needs to reconcile faster"
+          blurb="Built for accounting firms handling multiple QuickBooks companies at once."
+        />
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 stagger">
+          {features.map((f) => (
+            <div key={f.title} className="animate-glass-rise glass-card rounded-card p-8 hover-lift">
+              <div className={cn('w-12 h-12 rounded-input flex items-center justify-center text-white mb-5', f.tone)}>{f.icon}</div>
+              <h3 className="text-lg font-bold tracking-display text-ink-strong mb-2.5">{f.title}</h3>
+              <p className="text-sm text-ink-body leading-relaxed">{f.desc}</p>
+            </div>
           ))}
         </div>
       </div>
@@ -324,33 +420,29 @@ function Features() {
 
 function HowItWorks() {
   const steps = [
-    { num: 1, icon: <Upload className="w-6 h-6" />, title: 'Upload checks', desc: 'Drag and drop check images. OCR extracts all fields automatically.', color: 'from-indigo-500 to-violet-500' },
-    { num: 2, icon: <ScanLine className="w-6 h-6" />, title: 'Kyriq matches', desc: 'AI compares your checks against live QuickBooks data with a confidence score per match.', color: 'from-violet-500 to-purple-500' },
-    { num: 3, icon: <Check className="w-6 h-6" />, title: 'Review & approve', desc: 'Approve matches one by one or in bulk. Flag anything that looks off.', color: 'from-purple-500 to-indigo-500' },
-    { num: 4, icon: <GitCompare className="w-6 h-6" />, title: 'Auto-cleared in QB', desc: 'Approved checks are automatically marked Cleared in QuickBooks — ready for reconciliation.', color: 'from-emerald-500 to-emerald-600' },
+    { num: 1, icon: <Upload className="w-6 h-6" />, title: 'Upload', desc: 'Drop in the bank statement or the check images. Kyriq extracts every field.' },
+    { num: 2, icon: <ScanLine className="w-6 h-6" />, title: 'Kyriq matches', desc: 'Each entry is compared against live QuickBooks data with a confidence score.' },
+    { num: 3, icon: <Check className="w-6 h-6" />, title: 'Review and approve', desc: 'Approve one at a time or in bulk. Flag anything that needs a second look.' },
+    { num: 4, icon: <GitCompare className="w-6 h-6" />, title: 'Cleared in QuickBooks', desc: 'Approved checks are marked cleared, ready for the monthly reconciliation.' },
   ];
   return (
     <section id="how" className="py-16 sm:py-24 px-4 sm:px-6">
       <div className="max-w-[1000px] mx-auto">
-        <FadeIn>
-          <div className="text-center mb-12 sm:mb-16">
-            <span className="text-[12px] font-bold tracking-[0.12em] uppercase text-indigo-500 mb-3 block">How it works</span>
-            <h2 className="text-3xl sm:text-4xl md:text-[52px] font-extrabold tracking-[-2px] leading-[1.08] text-[#1d1d1f] mb-5">From check to cleared in 4 steps</h2>
-            <p className="text-[17px] text-[#6e6e73] max-w-[520px] mx-auto leading-relaxed">No more manual cross-referencing. Kyriq does the matching — you just review and approve.</p>
-          </div>
-        </FadeIn>
-        <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-6 sm:gap-8 relative">
-          <div className="hidden md:block absolute top-7 left-[12%] w-[76%] h-px bg-gradient-to-r from-transparent via-indigo-400 to-transparent opacity-30" />
-          {steps.map((s, i) => (
-            <FadeIn key={s.num} delay={i * 0.12}>
-              <motion.div whileHover={{ y: -4 }} className="text-center relative">
-                <div className={cn('w-14 h-14 rounded-full bg-gradient-to-br flex items-center justify-center text-white mx-auto mb-5 shadow-lg shadow-indigo-500/30 relative z-10', s.color)}>
-                  <span className="text-[18px] font-extrabold">{s.num}</span>
-                </div>
-                <h3 className="text-[15px] font-bold tracking-[-0.3px] text-[#1d1d1f] mb-2">{s.title}</h3>
-                <p className="text-[13px] text-[#6e6e73] leading-relaxed">{s.desc}</p>
-              </motion.div>
-            </FadeIn>
+        <SectionHead
+          eyebrow="How it works"
+          title="From statement to cleared in four steps"
+          blurb="No manual cross-referencing. Kyriq does the matching — you review and approve."
+        />
+        <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-6 sm:gap-8 relative stagger">
+          <div className="hidden md:block absolute top-7 left-[12%] w-[76%] h-px bg-gradient-to-r from-transparent via-brand to-transparent opacity-30" aria-hidden />
+          {steps.map((s) => (
+            <div key={s.num} className="animate-glass-rise text-center relative">
+              <div className="w-14 h-14 rounded-full bg-gradient-to-br from-brand to-brand-dark flex items-center justify-center text-white mx-auto mb-5 shadow-brand-glow relative z-10">
+                <span className="text-lg font-extrabold">{s.num}</span>
+              </div>
+              <h3 className="text-[15px] font-bold tracking-display text-ink-strong mb-2">{s.title}</h3>
+              <p className="text-[13px] text-ink-body leading-relaxed">{s.desc}</p>
+            </div>
           ))}
         </div>
       </div>
@@ -358,91 +450,64 @@ function HowItWorks() {
   );
 }
 
-/* ── Combined Carousel Section (Extension + Comparison) ── */
 function CarouselSection() {
   const [activeSlide, setActiveSlide] = useState(0);
-  
+  const reduced = useReducedMotion();
+
   const slides = [
     {
       id: 'extension',
       badge: 'Chrome Extension',
-      badgeColor: 'text-emerald-400',
       title: 'Works right inside QuickBooks',
       desc: 'The Kyriq extension lives inside your QB tab — no switching apps, no copy-paste.',
-      content: <ExtensionSlide />
+      content: <ExtensionSlide />,
     },
     {
       id: 'comparison',
-      badge: 'Time Saving',
-      badgeColor: 'text-indigo-400',
+      badge: 'Time saving',
       title: 'Manual vs. Kyriq',
-      desc: 'See how much time you\'re wasting on manual reconciliation.',
-      content: <ComparisonSlide />
-    }
+      desc: 'Where the hours actually go in a manual reconciliation.',
+      content: <ComparisonSlide />,
+    },
   ];
 
-  // Auto-rotate carousel
+  // Auto-rotation is motion the reader did not ask for, so it stops entirely
+  // under prefers-reduced-motion rather than just going faster.
   useEffect(() => {
-    const interval = setInterval(() => {
-      setActiveSlide((prev) => (prev + 1) % slides.length);
-    }, 6000); // Change slide every 6 seconds
+    if (reduced) return;
+    const interval = setInterval(() => setActiveSlide((prev) => (prev + 1) % slides.length), 6000);
     return () => clearInterval(interval);
-  }, [slides.length]);
+  }, [slides.length, reduced]);
 
   return (
-    <section id="extension" className="py-16 sm:py-24 px-4 sm:px-6 bg-[#0f0f1a] relative overflow-hidden">
-      <div className="absolute top-0 left-0 w-[500px] h-[500px] rounded-full pointer-events-none" style={{ background: 'radial-gradient(circle, rgba(99,102,241,0.06) 0%, transparent 70%)' }} />
-      <div className="absolute bottom-0 right-0 w-[400px] h-[400px] rounded-full pointer-events-none" style={{ background: 'radial-gradient(circle, rgba(16,185,129,0.04) 0%, transparent 70%)' }} />
+    <section id="extension" className="py-16 sm:py-24 px-4 sm:px-6 bg-shell-solid relative overflow-hidden">
       <div className="max-w-[1000px] mx-auto relative">
-        <FadeIn>
-          <div className="text-center mb-12 sm:mb-16">
-            <span className={cn('text-[12px] font-bold tracking-[0.12em] uppercase mb-3 block transition-colors duration-300', slides[activeSlide].badgeColor)}>{slides[activeSlide].badge}</span>
-            <h2 className="text-3xl sm:text-4xl md:text-[52px] font-extrabold tracking-[-2px] leading-[1.08] text-white mb-5">{slides[activeSlide].title}</h2>
-            <p className="text-[17px] text-white/50 max-w-[520px] mx-auto leading-relaxed">{slides[activeSlide].desc}</p>
-          </div>
-        </FadeIn>
-        
-        {/* Carousel Content */}
+        <SectionHead dark eyebrow={slides[activeSlide].badge} title={slides[activeSlide].title} blurb={slides[activeSlide].desc} />
+
         <div className="relative">
-          <AnimatePresence mode="wait">
+          <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={activeSlide}
-              initial={{ opacity: 0, x: 100 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -100 }}
-              transition={{ duration: 0.5, ease: 'easeInOut' }}
+              initial={reduced ? { opacity: 0 } : { opacity: 0, x: 60 }}
+              animate={reduced ? { opacity: 1 } : { opacity: 1, x: 0 }}
+              exit={reduced ? { opacity: 0 } : { opacity: 0, x: -60 }}
+              transition={{ duration: reduced ? 0.16 : 0.4, ease: [0.23, 1, 0.32, 1] }}
             >
               {slides[activeSlide].content}
             </motion.div>
           </AnimatePresence>
         </div>
 
-        {/* Carousel Controls */}
-        <div className="flex items-center justify-center gap-4 mt-10">
-          <button
-            onClick={() => setActiveSlide((activeSlide - 1 + slides.length) % slides.length)}
-            className="w-10 h-10 rounded-full bg-white/[0.08] hover:bg-white/[0.15] flex items-center justify-center text-white transition-colors"
-            aria-label="Previous slide"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 12L6 8L10 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          </button>
-          <div className="flex gap-2">
-            {slides.map((_, i) => (
-              <button
-                key={i}
-                onClick={() => setActiveSlide(i)}
-                className={cn('h-1.5 rounded-full transition-all duration-300', i === activeSlide ? 'w-8 bg-white' : 'w-1.5 bg-white/20')}
-                aria-label={`Go to slide ${i + 1}`}
-              />
-            ))}
-          </div>
-          <button
-            onClick={() => setActiveSlide((activeSlide + 1) % slides.length)}
-            className="w-10 h-10 rounded-full bg-white/[0.08] hover:bg-white/[0.15] flex items-center justify-center text-white transition-colors"
-            aria-label="Next slide"
-          >
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 12L10 8L6 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          </button>
+        <div className="flex items-center justify-center gap-2 mt-10">
+          {slides.map((s, i) => (
+            <button
+              key={s.id}
+              onClick={() => setActiveSlide(i)}
+              className={cn('press h-1.5 rounded-full transition-[width,background-color] duration-settle ease-settle', i === activeSlide ? 'w-8 bg-shell-text' : 'w-1.5 bg-shell-muted/40')}
+              aria-label={`Show ${s.badge}`}
+              aria-current={i === activeSlide}
+            />
+          ))}
         </div>
       </div>
     </section>
@@ -458,32 +523,35 @@ function ExtensionSlide() {
     { am: '$560.25', name: 'City Utilities LLC', date: 'Mar 16', badge: 'high', score: '97' },
   ];
   const extCards = [
-    { am: '$2,450.00', py: 'Acme Supply Co. · Check #1042', sc: '98', scColor: 'text-emerald-400', warn: false },
-    { am: '$870.50', py: 'Metro Office Solutions · Check #1043', sc: '94', scColor: 'text-emerald-400', warn: false },
-    { am: '$3,100.00', py: 'Riverside Contractors · Check #1044', sc: '72', scColor: 'text-amber-400', warn: true },
+    { am: '$2,450.00', py: 'Acme Supply Co. · Check #1042', sc: '98', warn: false },
+    { am: '$870.50', py: 'Metro Office Solutions · Check #1043', sc: '94', warn: false },
+    { am: '$3,100.00', py: 'Riverside Contractors · Check #1044', sc: '72', warn: true },
   ];
-  
+
   return (
     <div className="grid lg:grid-cols-[1fr_380px] gap-6 items-start">
-      {/* QBO Mock */}
-      <div className="bg-white rounded-2xl overflow-hidden shadow-[0_24px_60px_rgba(0,0,0,0.4)]">
-        <div className="bg-[#2ca01c] px-4 py-2.5 flex items-center gap-2">
-          <span className="text-[13px] font-bold text-white tracking-[-0.3px]">QuickBooks</span>
+      <div className="bg-surface rounded-card overflow-hidden shadow-glass-modal">
+        <div className="bg-success-dark px-4 py-2.5 flex items-center gap-2">
+          <span className="text-[13px] font-bold text-white tracking-display">QuickBooks</span>
           <span className="text-[10px] text-white/60 ml-auto">Acme Corp</span>
         </div>
-        <div className="px-3 py-2.5 bg-[#f8fafc] border-b border-gray-200 text-[11px] font-semibold text-[#475569]">Banking · For Review (24)</div>
+        <div className="px-3 py-2.5 bg-surface-sunken border-b border-glass-hairline text-[11px] font-semibold text-ink-body">
+          Banking · For Review (24)
+        </div>
         <div className="p-3 space-y-1">
-          {qboRows.map((r, i) => (
-            <div key={i} className={cn('flex items-center gap-3 px-3 py-2.5 rounded-lg text-[12px] border transition-colors',
-              r.badge === 'high' ? 'bg-emerald-50 border-emerald-200' :
-              r.badge === 'med' ? 'bg-amber-50 border-amber-200' :
-              'border-transparent hover:bg-gray-50'
-            )}>
-              <span className="font-bold text-[#1e293b] min-w-[72px]">{r.am}</span>
-              <span className="flex-1 text-[#475569]">{r.name}</span>
-              <span className="text-[11px] text-[#94a3b8]">{r.date}</span>
+          {qboRows.map((r) => (
+            <div
+              key={r.am}
+              className={cn(
+                'flex items-center gap-3 px-3 py-2.5 rounded-input text-xs border',
+                r.badge === 'high' ? 'bg-success-bg border-success-border' : r.badge === 'med' ? 'bg-warning-bg border-warning-border' : 'border-transparent'
+              )}
+            >
+              <span className="font-bold text-ink-strong min-w-[72px] nums">{r.am}</span>
+              <span className="flex-1 text-ink-body">{r.name}</span>
+              <span className="text-[11px] text-ink-faint">{r.date}</span>
               {r.badge && (
-                <span className={cn('text-[9px] font-bold px-2 py-0.5 rounded-full text-white', r.badge === 'high' ? 'bg-emerald-500' : 'bg-amber-500')}>
+                <span className={cn('text-[9px] font-bold px-2 py-0.5 rounded-full text-white', r.badge === 'high' ? 'bg-success' : 'bg-warning')}>
                   kyriq {r.score}
                 </span>
               )}
@@ -491,29 +559,24 @@ function ExtensionSlide() {
           ))}
         </div>
       </div>
-      {/* Extension Sidebar */}
-      <div className="bg-[#1e2235] rounded-2xl overflow-hidden shadow-[0_24px_60px_rgba(0,0,0,0.5)]">
-        <div className="bg-gradient-to-r from-indigo-500 to-violet-500 px-4 py-3 flex items-center gap-2">
+
+      <div className="bg-shell-solid rounded-card overflow-hidden shadow-glass-modal border border-glass-hairline-dark">
+        <div className="bg-gradient-to-r from-brand to-brand-dark px-4 py-3 flex items-center gap-2">
           <KyriqIconWhite size={22} />
-          <span className="text-[14px] font-extrabold text-white tracking-[-0.4px]">kyriq</span>
-          <span className="ml-auto bg-emerald-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">4 pending</span>
-        </div>
-        <div className="flex gap-1 px-3 pt-2.5">
-          {['All','Pending','Matched'].map((t, i) => (
-            <span key={t} className={cn('text-[10px] font-semibold px-2.5 py-1 rounded-t-md', i === 0 ? 'bg-white/[0.07] text-white' : 'text-white/40')}>{t}</span>
-          ))}
+          <span className="text-sm font-extrabold text-white tracking-wordmark">kyriq</span>
+          <span className="ml-auto bg-success text-white text-[10px] font-bold px-2 py-0.5 rounded-full">4 pending</span>
         </div>
         <div className="p-2 space-y-1.5">
-          {extCards.map((c, i) => (
-            <div key={i} className={cn('bg-white/[0.06] rounded-[10px] p-3 border', c.warn ? 'border-amber-500/30' : 'border-white/[0.06]')}>
+          {extCards.map((c) => (
+            <div key={c.am} className={cn('rounded-input p-3 border bg-white/[0.06]', c.warn ? 'border-warning/30' : 'border-glass-hairline-dark')}>
               <div className="flex items-center justify-between mb-1.5">
-                <span className="text-[13px] font-extrabold text-white tracking-[-0.5px]">{c.am}</span>
-                <span className={cn('text-[10px] font-bold', c.scColor)}>{c.sc} {c.warn ? '⚠' : '✓'}</span>
+                <span className="text-[13px] font-extrabold text-shell-text tracking-wordmark nums">{c.am}</span>
+                <span className={cn('text-[10px] font-bold nums', c.warn ? 'text-warning' : 'text-accentEmerald')}>{c.sc}</span>
               </div>
-              <div className="text-[11px] text-white/60 mb-2">{c.py}</div>
+              <div className="text-[11px] text-shell-muted mb-2">{c.py}</div>
               <div className="flex gap-1.5">
-                <button className="text-[10px] font-semibold bg-emerald-500 text-white px-2.5 py-1 rounded-full">✓ Approve</button>
-                <button className="text-[10px] font-semibold bg-white/[0.08] text-white/60 px-2.5 py-1 rounded-full">Flag</button>
+                <span className="text-[10px] font-semibold bg-success text-white px-2.5 py-1 rounded-full">Approve</span>
+                <span className="text-[10px] font-semibold bg-white/[0.08] text-shell-muted px-2.5 py-1 rounded-full">Flag</span>
               </div>
             </div>
           ))}
@@ -528,81 +591,214 @@ function ComparisonSlide() {
     { task: 'Extract data from 100 checks', manual: '3-4 hours', cs: '45 seconds' },
     { task: 'Match checks to QuickBooks', manual: '2-3 hours', cs: 'Instant' },
     { task: 'Identify mismatches', manual: '1-2 hours', cs: 'Instant' },
-    { task: 'Switch between companies', manual: 'Logout/Login', cs: 'One click' },
+    { task: 'Switch between companies', manual: 'Log out, log in', cs: 'One click' },
     { task: 'Generate reconciliation report', manual: '30-60 min', cs: 'One click' },
     { task: 'Detect duplicate entries', manual: 'Often missed', cs: 'Automatic' },
   ];
-  
+
   return (
     <div className="max-w-4xl mx-auto">
-      <div className="rounded-2xl border border-white/[0.06] bg-white/[0.02] backdrop-blur overflow-hidden">
-        <div className="hidden sm:flex items-center py-4 px-4 sm:px-6 border-b border-white/[0.06]">
-          <div className="flex-1 text-xs font-bold uppercase tracking-wider text-white/30">Task</div>
-          <div className="w-28 sm:w-36 text-center text-xs font-bold uppercase tracking-wider text-white/20">Manual</div>
-          <div className="w-28 sm:w-36 text-center text-xs font-bold uppercase tracking-wider text-indigo-400">Kyriq</div>
+      <div className="rounded-card border border-glass-hairline-dark bg-white/[0.02] overflow-hidden">
+        <div className="hidden sm:flex items-center py-4 px-4 sm:px-6 border-b border-glass-hairline-dark">
+          <div className="flex-1 text-eyebrow text-shell-muted">Task</div>
+          <div className="w-28 sm:w-36 text-center text-eyebrow text-shell-muted">Manual</div>
+          <div className="w-28 sm:w-36 text-center text-eyebrow text-accentEmerald">Kyriq</div>
         </div>
-        {rows.map((r, i) => (
-          <div key={i} className="border-b border-white/[0.03] last:border-0">
-            <div className="hidden sm:flex items-center py-4 px-4 sm:px-6 hover:bg-white/[0.02] transition-colors">
-              <div className="flex-1 text-sm text-white/60 font-medium">{r.task}</div>
-              <div className="w-28 sm:w-36 text-center text-sm text-white/25 line-through decoration-white/10">{r.manual}</div>
-              <div className="w-28 sm:w-36 text-center text-sm text-indigo-400 font-semibold">{r.cs}</div>
+        {rows.map((r) => (
+          <div key={r.task} className="border-b border-glass-hairline-dark last:border-0">
+            <div className="hidden sm:flex items-center py-4 px-4 sm:px-6">
+              <div className="flex-1 text-sm text-shell-text font-medium">{r.task}</div>
+              <div className="w-28 sm:w-36 text-center text-sm text-shell-muted line-through">{r.manual}</div>
+              <div className="w-28 sm:w-36 text-center text-sm text-accentEmerald font-semibold">{r.cs}</div>
             </div>
             <div className="sm:hidden px-4 py-3 space-y-1.5">
-              <div className="text-sm text-white/60 font-medium">{r.task}</div>
-              <div className="flex justify-between text-xs"><span className="text-white/25 line-through">Manual: {r.manual}</span><span className="text-indigo-400 font-semibold">{r.cs}</span></div>
+              <div className="text-sm text-shell-text font-medium">{r.task}</div>
+              <div className="flex justify-between text-xs">
+                <span className="text-shell-muted line-through">Manual: {r.manual}</span>
+                <span className="text-accentEmerald font-semibold">{r.cs}</span>
+              </div>
             </div>
           </div>
         ))}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center py-4 sm:py-5 px-4 sm:px-6 bg-white/[0.03]">
-          <div className="flex-1 text-sm text-white font-bold mb-2 sm:mb-0">Total per 100 checks</div>
-          <div className="flex gap-4 sm:gap-0"><div className="sm:w-28 md:w-36 text-center text-sm text-red-400 font-bold">6-9 hours</div><div className="sm:w-28 md:w-36 text-center text-sm sm:text-base text-emerald-400 font-extrabold">Under 2 min</div></div>
-        </div>
       </div>
     </div>
   );
 }
 
+/* =========================================================================
+   Pricing. Every number below is from CHECKLIST 12 / section 7 and must not
+   drift — scripts/check-landing.ts asserts each one.
+   ========================================================================= */
+
+type Plan = {
+  tier: string;
+  name: string;
+  monthly: number;
+  annual: number;
+  allowance: number;
+  overage: string;
+  popular?: boolean;
+};
+
+const PLANS: Plan[] = [
+  { tier: 'essential', name: 'Essential', monthly: 147, annual: 1617, allowance: 1200, overage: '0.15' },
+  { tier: 'professional', name: 'Professional', monthly: 497, annual: 5467, allowance: 4500, overage: '0.12', popular: true },
+  { tier: 'scale', name: 'Scale', monthly: 997, annual: 10967, allowance: 10000, overage: '0.10' },
+];
+
+/** True of every plan, so it is stated once and rendered on all three. */
+const INCLUDED_IN_EVERY_PLAN = [
+  'Kyriq Chrome extension included',
+  'Unlimited QuickBooks companies',
+  'Bank statement and check extraction',
+  'AI confidence matching and audit trail',
+];
+
 function Pricing() {
-  const plans = [
-    { tier: 'starter', displayName: 'Starter', price: 29, checks: '250 checks / month', popular: false, features: ['Unlimited QB companies','AI confidence matching','Chrome extension','Audit trail','Email support'] },
-    { tier: 'growth', displayName: 'Growth', price: 59, checks: '750 checks / month', popular: true, features: ['Everything in Starter','Bulk approve & export','Client portal access','Priority support','Usage analytics'] },
-    { tier: 'pro', displayName: 'Pro', price: 99, checks: '2,000 checks / month', popular: false, features: ['Everything in Growth','Custom integrations','Dedicated onboarding','SLA guarantee','White-label portal'] },
-  ];
+  const [annual, setAnnual] = useState(false);
+
   return (
-    <section id="pricing" className="py-16 sm:py-24 px-4 sm:px-6 bg-[#f5f5f7]">
-      <div className="max-w-[900px] mx-auto">
-        <FadeIn>
-          <div className="text-center mb-12 sm:mb-16">
-            <span className="text-[12px] font-bold tracking-[0.12em] uppercase text-indigo-500 mb-3 block">Pricing</span>
-            <h2 className="text-3xl sm:text-4xl md:text-[52px] font-extrabold tracking-[-2px] leading-[1.08] text-[#1d1d1f] mb-5">Pay for what you process</h2>
-            <p className="text-[17px] text-[#6e6e73] max-w-[520px] mx-auto leading-relaxed">No per-client fees. No seat licenses. Just a simple per-check model that scales with your volume.</p>
+    <section id="pricing" className="py-16 sm:py-24 px-4 sm:px-6">
+      <div className="max-w-[1100px] mx-auto">
+        <SectionHead
+          eyebrow="Pricing"
+          title="Pay for the volume you process"
+          blurb="Every plan includes the Kyriq Chrome extension. Start with a 14-day free trial covering up to 250 checks."
+        />
+
+        {/* Monthly / annual toggle. One recessed track, no per-item borders. */}
+        <div className="flex justify-center mb-10">
+          <div className="glass-track rounded-pill p-1 inline-flex" role="group" aria-label="Billing period">
+            {[
+              { label: 'Monthly', value: false },
+              { label: 'Annual · one month free', value: true },
+            ].map((opt) => (
+              <button
+                key={opt.label}
+                onClick={() => setAnnual(opt.value)}
+                aria-pressed={annual === opt.value}
+                className={cn(
+                  'press rounded-pill px-5 py-2 text-[13px] font-semibold transition-[background-color,color,box-shadow] duration-quick ease-settle',
+                  annual === opt.value ? 'bg-surface text-ink-strong shadow-contact' : 'text-ink-soft hover:text-ink-strong'
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
           </div>
-        </FadeIn>
-        <div className="grid md:grid-cols-3 gap-5">
-          {plans.map((p, i) => (
-            <FadeIn key={p.tier} delay={i * 0.12}>
-              <motion.div whileHover={{ y: -4, boxShadow: '0 16px 48px rgba(0,0,0,0.1)' }} className={cn('relative rounded-[20px] p-8 sm:p-9 transition-all duration-300 h-full flex flex-col', p.popular ? 'bg-[#1a1a2e] text-white border-transparent shadow-[0_8px_40px_rgba(99,102,241,0.3)]' : 'bg-white border-[1.5px] border-gray-100')}>
-                {p.popular && <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-gradient-to-r from-indigo-500 to-violet-500 text-white text-[10px] font-bold uppercase tracking-wider px-4 py-1 rounded-full">Most Popular</div>}
-                <div className={cn('text-[12px] font-bold tracking-[0.1em] uppercase mb-2', p.popular ? 'text-white/50' : 'text-indigo-500')}>{p.displayName}</div>
-                <div className={cn('text-[44px] font-extrabold tracking-[-2px] leading-none mb-1', p.popular ? 'text-white' : 'text-[#1d1d1f]')}><sup className="text-[20px] font-bold tracking-[-0.5px] align-super">$</sup>{p.price}</div>
-                <div className={cn('text-[13px] mb-2', p.popular ? 'text-white/35' : 'text-[#a1a1a6]')}>per month</div>
-                <div className={cn('text-[12px] font-semibold mb-6 pb-6 border-b', p.popular ? 'text-emerald-400 border-white/10' : 'text-emerald-500 border-gray-100')}>{p.checks}</div>
-                <ul className="space-y-2.5 mb-8 flex-1">
-                  {p.features.map((f) => (
-                    <li key={f} className={cn('flex items-center gap-2.5 text-[13px]', p.popular ? 'text-white/65' : 'text-[#6e6e73]')}>
-                      <span className={cn('w-4 h-4 rounded-full flex items-center justify-center flex-shrink-0', p.popular ? 'bg-white/10' : 'bg-indigo-50')}>
-                        <Check size={10} className={p.popular ? 'text-emerald-400' : 'text-indigo-500'} />
-                      </span>
-                      {f}
-                    </li>
-                  ))}
-                </ul>
-                <Link href={`/signup?plan=${p.tier}`} className={cn('block w-full py-3.5 rounded-full text-center text-[14px] font-semibold transition-all', p.popular ? 'bg-gradient-to-r from-indigo-500 to-violet-500 text-white shadow-lg shadow-indigo-500/40 hover:-translate-y-0.5 hover:shadow-indigo-500/50' : 'border-[1.5px] border-gray-200 text-[#1d1d1f] hover:border-indigo-500 hover:text-indigo-500')}>
-                  Get started
-                </Link>
-              </motion.div>
-            </FadeIn>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-5 stagger items-stretch">
+          {PLANS.map((p) => (
+            <div
+              key={p.tier}
+              className={cn(
+                'animate-glass-rise relative rounded-card p-8 h-full flex flex-col',
+                p.popular ? 'bg-shell-solid text-shell-text shadow-brand-glow' : 'glass-card'
+              )}
+            >
+              {p.popular && (
+                <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-gradient-to-r from-brand to-brand-dark text-white text-[10px] font-bold uppercase tracking-eyebrow px-4 py-1 rounded-full whitespace-nowrap">
+                  Most Popular
+                </span>
+              )}
+
+              <div className={cn('text-eyebrow mb-2', p.popular ? 'text-accentEmerald' : 'text-brand')}>{p.name}</div>
+
+              <div className={cn('text-[44px] font-extrabold tracking-[-0.025em] leading-none mb-1 nums', p.popular ? 'text-shell-text' : 'text-ink-strong')}>
+                <sup className="text-xl font-bold align-super">$</sup>
+                {annual ? p.annual.toLocaleString('en-US') : p.monthly}
+              </div>
+              <div className={cn('text-[13px] mb-2', p.popular ? 'text-shell-muted' : 'text-ink-faint')}>
+                {annual ? 'per year — one month free' : 'per month'}
+              </div>
+
+              <div className={cn('text-xs font-semibold mb-6 pb-6 border-b', p.popular ? 'text-accentEmerald border-glass-hairline-dark' : 'text-success-text border-glass-hairline')}>
+                {p.allowance.toLocaleString('en-US')} checks / month
+                <span className={cn('block font-normal mt-1', p.popular ? 'text-shell-muted' : 'text-ink-faint')}>
+                  then ${p.overage} per check
+                </span>
+              </div>
+
+              <ul className="space-y-2.5 mb-8 flex-1">
+                {INCLUDED_IN_EVERY_PLAN.map((f) => (
+                  <li key={f} className={cn('flex items-start gap-2.5 text-[13px]', p.popular ? 'text-shell-text' : 'text-ink-body')}>
+                    <span className={cn('mt-0.5 w-4 h-4 rounded-full flex items-center justify-center shrink-0', p.popular ? 'bg-white/10' : 'bg-brand-wash')}>
+                      <Check size={10} className={p.popular ? 'text-accentEmerald' : 'text-brand'} aria-hidden />
+                    </span>
+                    {f}
+                  </li>
+                ))}
+              </ul>
+
+              {/* TODO(copy): the per-tier feature differences (support level,
+                  onboarding, seat limits) are in the v17 handoff, which is not
+                  in this repo. Until it is, every plan shows only what is
+                  specified in CHECKLIST 12 plus what is true of all of them. */}
+
+              <Link href={CTA_HREF} className={cn(buttonVariants({ variant: p.popular ? 'primary' : 'secondary', size: 'md', block: true }))}>
+                {CTA_LABEL}
+              </Link>
+            </div>
+          ))}
+        </div>
+
+        {/* Usage, overage and the annual terms — CHECKLIST 12. */}
+        <div className="mt-10 grid gap-4 md:grid-cols-2">
+          <div className="glass-card rounded-card p-6">
+            <h3 className="text-[15px] font-bold text-ink-strong mb-2">How usage is counted</h3>
+            <p className="text-[13px] text-ink-body leading-relaxed">
+              A check counts once, when it is extracted. Your monthly allowance is {PLANS.map((p) => p.allowance.toLocaleString('en-US')).join(' / ')} checks on
+              Essential / Professional / Scale. Past the allowance you are billed
+              ${PLANS.map((p) => p.overage).join(' / ')} per additional check, on the same three plans.
+            </p>
+          </div>
+          <div className="glass-card rounded-card p-6">
+            <h3 className="text-[15px] font-bold text-ink-strong mb-2">Annual terms</h3>
+            <p className="text-[13px] text-ink-body leading-relaxed">
+              An annual plan is a 12-month commitment. The check allowance still resets monthly and does not roll over.
+              Overage is billed monthly as it is used. Annual plans are not prorated or refunded if you cancel mid-term.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* =========================================================================
+   FAQ.
+
+   TODO(copy): the approved 15-question FAQ lives in
+   `Kyriq-Developer-Handoff-v17.zip` and on the client's redesign site. NEITHER
+   is in this repo — the only extracted handoff is
+   kyriq-developer-handoff-v12-final/, whose website.html has no FAQ at all.
+   This is customer-facing copy about billing, data handling and retention, so
+   it is deliberately NOT written here: paste the 15 approved pairs into FAQS
+   below and the section renders itself, including the #faq nav link.
+
+   Fifteen is the expected count; check-landing.ts warns if a different number
+   of pairs lands, so a partial paste does not ship silently.
+   ========================================================================= */
+const FAQS: { q: string; a: string }[] = [];
+
+function Faq() {
+  if (FAQS.length === 0) return null;
+  return (
+    <section id="faq" className="py-16 sm:py-24 px-4 sm:px-6">
+      <div className="max-w-[820px] mx-auto">
+        <SectionHead eyebrow="FAQ" title="Questions firms ask before they start" />
+        <div className="grid gap-3 stagger">
+          {FAQS.map((item) => (
+            // <details> rather than a JS accordion: it is keyboard and
+            // screen-reader correct for free, and works before hydration.
+            <details key={item.q} className="animate-glass-rise glass-card rounded-card px-6 py-5 group">
+              <summary className="cursor-pointer list-none flex items-start justify-between gap-4 text-[15px] font-semibold text-ink-strong">
+                {item.q}
+                <span className="shrink-0 text-brand transition-transform duration-quick ease-settle group-open:rotate-45" aria-hidden>+</span>
+              </summary>
+              <p className="mt-3 text-sm text-ink-body leading-relaxed">{item.a}</p>
+            </details>
           ))}
         </div>
       </div>
@@ -610,100 +806,88 @@ function Pricing() {
   );
 }
 
-function TestimonialCard({ text, name, role, initials }: { text: string; name: string; role: string; initials: string }) {
-  return (
-    <div className="w-[280px] sm:w-[360px] bg-white rounded-2xl p-5 sm:p-6 border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
-      <div className="flex gap-0.5 text-amber-400 mb-3">{[...Array(5)].map((_, j) => <Star key={j} size={14} fill="currentColor" />)}</div>
-      <p className="text-xs sm:text-sm text-gray-600 leading-relaxed mb-5">&ldquo;{text}&rdquo;</p>
-      <div className="flex items-center gap-3">
-        <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-gradient-to-br from-indigo-500 to-violet-500 flex items-center justify-center text-white text-[10px] sm:text-xs font-bold">{initials}</div>
-        <div><div className="text-xs sm:text-sm font-bold text-gray-900">{name}</div><div className="text-[10px] sm:text-xs text-gray-400">{role}</div></div>
-      </div>
-    </div>
-  );
-}
-
-function Testimonials() {
-  const testimonials = [
-    { text: 'We used to spend 8 hours a week reconciling checks for our farm service clients. Kyriq cut that down to 20 minutes.', name: 'Maria Rodriguez', role: 'CPA, Rodriguez & Associates', initials: 'MR' },
-    { text: 'The QuickBooks integration is seamless. We manage 30+ companies and can switch between them instantly.', name: 'James Thompson', role: 'Partner, Thompson Tax Group', initials: 'JT' },
-    { text: 'The fuzzy name matching saved us from so many false mismatches. It knows that "FERNANDO L ORTEGA" and "FERNANDO LOPEZ ORTEGA" are the same person.', name: 'Sarah Kim', role: 'Staff Accountant, Pacific Bookkeeping', initials: 'SK' },
-    { text: 'Our tax season went from chaos to calm. We process 2,000+ checks per month now with zero errors. The ROI was obvious within the first week.', name: 'David Chen', role: 'Managing Partner, Chen & Associates', initials: 'DC' },
-    { text: 'The Chrome extension is a game-changer. We can reconcile checks right inside QuickBooks Online without switching tabs.', name: 'Lisa Patel', role: 'Senior Accountant, Patel Tax Services', initials: 'LP' },
-    { text: 'Customer support is amazing. They helped us migrate in one afternoon. The duplicate detection alone saves us hours every week.', name: 'Robert Nakamura', role: 'Controller, Cascade Financial', initials: 'RN' },
-  ];
-  return (
-    <section className="py-16 sm:py-24 overflow-hidden">
-      <FadeIn><div className="text-center mb-10 sm:mb-14 px-4">
-        <span className="text-[12px] font-bold tracking-[0.12em] uppercase text-indigo-500 mb-3 block">Testimonials</span>
-        <h2 className="text-3xl sm:text-4xl md:text-[52px] font-extrabold tracking-[-2px] leading-[1.08] text-[#1d1d1f] mb-5">Trusted by firms like yours</h2>
-        <p className="text-[17px] text-[#6e6e73] max-w-[520px] mx-auto leading-relaxed">See why accounting professionals are switching to Kyriq.</p>
-      </div></FadeIn>
-      <Marquee pauseOnHover className="[--duration:30s] mb-4" gap="1rem">
-        {testimonials.slice(0, 3).map((t) => <TestimonialCard key={t.name} {...t} />)}
-      </Marquee>
-      <Marquee pauseOnHover reverse className="[--duration:30s]" gap="1rem">
-        {testimonials.slice(3).map((t) => <TestimonialCard key={t.name} {...t} />)}
-      </Marquee>
-    </section>
-  );
-}
-
 function CTASection() {
+  const router = useRouter();
   return (
     <section className="py-16 sm:py-24 px-4 sm:px-6">
-      <FadeIn>
-        <div className="max-w-4xl mx-auto relative rounded-3xl overflow-hidden">
-          <div className="bg-gradient-to-br from-[#1a1a2e] via-[#1e2040] to-[#0f1a2e] p-8 sm:p-12 md:p-16 text-center relative">
-            <div className="absolute top-[-80px] right-[-80px] w-[300px] h-[300px] rounded-full pointer-events-none" style={{ background: 'radial-gradient(circle, rgba(99,102,241,0.2) 0%, transparent 70%)' }} />
-            <div className="absolute bottom-[-60px] left-[-60px] w-[250px] h-[250px] rounded-full pointer-events-none" style={{ background: 'radial-gradient(circle, rgba(16,185,129,0.1) 0%, transparent 70%)' }} />
-            <div className="relative">
-              <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-white tracking-[-1.5px] mb-4">Ready to automate your reconciliation?</h2>
-              <p className="text-sm sm:text-lg text-white/50 mb-8 max-w-xl mx-auto">Join hundreds of accounting firms saving 15+ hours per week. Start your free trial today.</p>
-              <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
-                <Link href="/signup" className="px-7 sm:px-8 py-3.5 text-[15px] font-semibold text-white bg-gradient-to-r from-indigo-500 to-violet-500 rounded-full shadow-xl shadow-indigo-500/30 hover:shadow-indigo-500/50 hover:-translate-y-0.5 transition-all flex items-center justify-center gap-2">
-                  Start free trial <ArrowRight size={16} />
-                </Link>
-                <Link href="/login" className="px-7 sm:px-8 py-3.5 text-[15px] font-medium text-white border-[1.5px] border-white/15 rounded-full hover:border-white/30 transition-all flex items-center justify-center gap-2">Sign in</Link>
-              </div>
-            </div>
+      <div className="max-w-4xl mx-auto relative rounded-modal overflow-hidden animate-glass-rise">
+        <div className="bg-shell-solid p-8 sm:p-12 md:p-16 text-center">
+          <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold text-shell-text tracking-[-0.025em] mb-4">
+            Ready to automate your reconciliation?
+          </h2>
+          <p className="text-sm sm:text-lg text-shell-muted mb-8 max-w-xl mx-auto">
+            Fourteen days free, up to 250 checks, and the Chrome extension included from the first day.
+          </p>
+          <div className="flex justify-center">
+            {/* Magic-UI: shimmer-slide keyframe + --speed. A <button> that
+                routes, not an anchor, because an <a> may not contain
+                interactive content and ShimmerButton renders a <button>.
+                The crawlable /signup anchors are the hero, nav and pricing. */}
+            <ShimmerButton
+              onClick={() => router.push(CTA_HREF)}
+              className="min-h-btn px-8 text-[15px] font-semibold text-white shadow-brand-glow"
+              background="linear-gradient(90deg, hsl(var(--brand)), hsl(var(--brand-dark)))"
+            >
+              {CTA_LABEL}
+              <ArrowRight size={16} className="ml-2" aria-hidden />
+            </ShimmerButton>
           </div>
-          <BorderBeam size={250} duration={10} colorFrom="#6366f1" colorTo="#10b981" />
         </div>
-      </FadeIn>
+        {/* Magic-UI: border-beam keyframe + --duration. */}
+        <BorderBeam size={250} duration={10} />
+      </div>
     </section>
   );
 }
 
 function Footer() {
   const footerCols: Record<string, { label: string; href: string }[]> = {
-    Product: [{ label: 'Features', href: '#features' },{ label: 'How it works', href: '#how' },{ label: 'Chrome Extension', href: '#extension' },{ label: 'Pricing', href: '#pricing' }],
-    Company: [{ label: 'About', href: '#' },{ label: 'Blog', href: '#' },{ label: 'Contact', href: '#' }],
-    Legal: [{ label: 'Privacy Policy', href: '/privacy' },{ label: 'Terms of Service', href: '/terms' },{ label: 'Security', href: '#' }],
+    Product: [
+      { label: 'Features', href: '#features' },
+      { label: 'How it works', href: '#how' },
+      { label: 'Chrome extension', href: '#extension' },
+      { label: 'Pricing', href: '#pricing' },
+    ],
+    Account: [
+      { label: CTA_LABEL, href: CTA_HREF },
+      { label: 'Sign in', href: '/login' },
+    ],
+    Legal: [
+      { label: 'Privacy Policy', href: '/privacy' },
+      { label: 'Terms of Service', href: '/terms' },
+    ],
   };
   return (
-    <footer className="bg-[#0f0f1a] px-6 sm:px-12">
+    <footer className="bg-shell-solid px-6 sm:px-12">
       <div className="max-w-7xl mx-auto pt-16 pb-10">
-        <div className="grid grid-cols-2 md:grid-cols-[260px_1fr_1fr_1fr] gap-8 sm:gap-12 pb-12 border-b border-white/[0.06]">
+        <div className="grid grid-cols-2 md:grid-cols-[260px_1fr_1fr_1fr] gap-8 sm:gap-12 pb-12 border-b border-glass-hairline-dark">
           <div className="col-span-2 md:col-span-1">
             <div className="flex items-center gap-2.5 mb-3">
               <KyriqIconWhite size={32} />
-              <span className="text-[18px] font-extrabold text-white tracking-[-0.7px]">kyriq</span>
+              <span className="text-lg font-extrabold text-shell-text tracking-wordmark">kyriq</span>
             </div>
-            <p className="text-[13px] text-white/35 leading-[1.65]">QuickBooks check reconciliation, automated for modern accounting firms.</p>
+            <p className="text-[13px] text-shell-muted leading-relaxed">
+              QuickBooks check reconciliation, automated for modern accounting firms.
+            </p>
           </div>
           {Object.entries(footerCols).map(([title, links]) => (
             <div key={title}>
-              <h4 className="text-[11px] font-bold uppercase tracking-[0.1em] text-white/40 mb-4">{title}</h4>
-              <div className="space-y-2.5">{links.map((l) => (<a key={l.label} href={l.href} className="block text-[13px] text-white/50 hover:text-white/85 transition-colors">{l.label}</a>))}</div>
+              <h4 className="text-eyebrow text-shell-muted mb-4">{title}</h4>
+              <div className="space-y-2.5">
+                {links.map((l) => (
+                  <a key={l.label} href={l.href} className="block text-[13px] text-shell-muted hover:text-shell-text transition-colors duration-quick">
+                    {l.label}
+                  </a>
+                ))}
+              </div>
             </div>
           ))}
         </div>
-        <div className="flex flex-col sm:flex-row justify-between gap-2 pt-8 text-[12px] text-white/25">
+        <div className="flex flex-col sm:flex-row justify-between gap-2 pt-8 text-xs text-shell-muted">
           <span>&copy; 2026 Kyriq. All rights reserved.</span>
           <div className="flex gap-5">
-            <a href="/privacy" className="hover:text-white/50 transition-colors">Privacy</a>
-            <a href="/terms" className="hover:text-white/50 transition-colors">Terms</a>
+            <a href="/privacy" className="hover:text-shell-text transition-colors duration-quick">Privacy</a>
+            <a href="/terms" className="hover:text-shell-text transition-colors duration-quick">Terms</a>
           </div>
         </div>
       </div>
@@ -712,17 +896,20 @@ function Footer() {
 }
 
 export default function LandingPage() {
+  // No `bg-*` on the root: the ambient mesh is mounted in the root layout and
+  // sits at z-index -1, so an opaque page background would hide the thing the
+  // glass is supposed to refract. One scrollbar — nothing here scrolls inside.
   return (
-    <div className="min-h-screen bg-white text-gray-900 overflow-x-hidden">
+    <div className="min-h-screen text-ink-strong overflow-x-hidden">
       <Nav />
       <Hero />
-      <StatsBar />
-      <LogoMarquee />
+      <FactsBar />
+      <ExportMarquee />
       <Features />
       <HowItWorks />
       <CarouselSection />
       <Pricing />
-      <Testimonials />
+      <Faq />
       <CTASection />
       <Footer />
     </div>
