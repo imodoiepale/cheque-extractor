@@ -204,4 +204,31 @@ assert.ok(
 assert.ok(css.includes('prefers-reduced-motion'), 'the reduced-motion block was removed');
 console.log('  ok  glass fallbacks, motion tokens and state utilities all present');
 
+// ── The prefixed form must come FIRST and the standard property LAST ──────
+// Turbopack's CSS minifier (lightningcss) collapses the pair down to whichever
+// it treats as canonical. Authored standard-first, it emitted ONLY
+// `-webkit-backdrop-filter`, which computes to `backdrop-filter: none` in
+// Chrome — verified in Chrome 152 — so every glass surface rendered as a flat
+// tint. The @supports fallback did not catch it either: the browser DOES
+// support the property, the declaration had simply been deleted, so the
+// surfaces never got the raised-opacity fallback. Tailwind's own backdrop-blur
+// utilities survive the same minifier, and they emit the prefix first.
+{
+  const pairs = [...css.matchAll(
+    /(-webkit-)?backdrop-filter:\s*([^;]+);\s*\n\s*(-webkit-)?backdrop-filter:\s*([^;]+);/g
+  )];
+  assert.ok(pairs.length > 0, 'no backdrop-filter pairs found in globals.css at all');
+  for (const m of pairs) {
+    assert.ok(
+      m[1] === '-webkit-' && m[3] === undefined,
+      'backdrop-filter must be authored prefixed-first, standard-last, or the ' +
+        `minifier drops the standard property: ${m[0].replace(/\s+/g, ' ')}`
+    );
+  }
+  for (const cls of ['.glass-card', '.glass-modal', '.glass-chrome', '.glass-toast', '.glass-shell']) {
+    assert.ok(css.includes(cls), `${cls} is missing from globals.css`);
+  }
+  console.log(`  ok  ${pairs.length} backdrop-filter pairs authored prefix-first`);
+}
+
 console.log('\nall primitive checks passed');

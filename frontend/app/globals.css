@@ -353,8 +353,8 @@
     background: var(--glass-card-bg);
     border: 1px solid var(--glass-border);
     box-shadow: var(--shadow-glass);
-    backdrop-filter: blur(18px) saturate(120%);
     -webkit-backdrop-filter: blur(18px) saturate(120%);
+    backdrop-filter: blur(18px) saturate(120%);
   }
 
   /* Cards, list groups — blur tier 2 of 5. */
@@ -362,14 +362,14 @@
     background: var(--glass-card-bg);
     border: 1px solid var(--glass-border);
     box-shadow: var(--shadow-glass);
-    backdrop-filter: blur(18px) saturate(120%);
     -webkit-backdrop-filter: blur(18px) saturate(120%);
+    backdrop-filter: blur(18px) saturate(120%);
   }
 
   /* Over photos or bright artwork. */
   .glass-card-bright {
-    backdrop-filter: blur(28px) saturate(150%);
     -webkit-backdrop-filter: blur(28px) saturate(150%);
+    backdrop-filter: blur(28px) saturate(150%);
   }
 
   /* Nested group inside a glass card. Carries NO blur of its own —
@@ -385,16 +385,16 @@
     background: var(--glass-modal-bg);
     border: 1px solid var(--glass-border);
     box-shadow: var(--shadow-glass-modal);
-    backdrop-filter: blur(24px) saturate(150%);
     -webkit-backdrop-filter: blur(24px) saturate(150%);
+    backdrop-filter: blur(24px) saturate(150%);
   }
 
   /* Shell chrome and sticky table headers — tier 4, heaviest blur. */
   .glass-chrome {
     background: var(--glass-chrome-bg);
     border-color: var(--glass-border);
-    backdrop-filter: blur(26px) saturate(160%);
     -webkit-backdrop-filter: blur(26px) saturate(160%);
+    backdrop-filter: blur(26px) saturate(160%);
   }
 
   /* Toasts — tier 5. */
@@ -402,8 +402,8 @@
     background: var(--glass-toast-bg);
     border: 1px solid var(--glass-border);
     box-shadow: var(--shadow-glass-toast);
-    backdrop-filter: blur(30px) saturate(180%);
     -webkit-backdrop-filter: blur(30px) saturate(180%);
+    backdrop-filter: blur(30px) saturate(180%);
   }
 
   /* The dark shell. Same technique, dark substrate. */
@@ -411,8 +411,8 @@
     background: var(--shell-bg);
     border-color: var(--glass-border-dark);
     box-shadow: var(--bevel-dark), 0 24px 60px rgba(5, 8, 20, 0.35);
-    backdrop-filter: blur(26px) saturate(160%);
     -webkit-backdrop-filter: blur(26px) saturate(160%);
+    backdrop-filter: blur(26px) saturate(160%);
   }
 
   /* Selected: denser, not lighter. Border width inherited, never changed. */
@@ -450,8 +450,8 @@
   /* Tier 1: the page veil over the mesh. */
   .glass-veil {
     background: var(--mesh-veil);
-    backdrop-filter: blur(0.6px) saturate(120%);
     -webkit-backdrop-filter: blur(0.6px) saturate(120%);
+    backdrop-filter: blur(0.6px) saturate(120%);
   }
 
   /* --- Tier 2 degradation: blur unavailable --- */
@@ -480,18 +480,18 @@
     .glass-modal,
     .glass-panel {
       background: var(--glass-opaque-bg);
-      backdrop-filter: none;
       -webkit-backdrop-filter: none;
+      backdrop-filter: none;
     }
     .glass-shell {
       background: hsl(var(--shell-solid));
-      backdrop-filter: none;
       -webkit-backdrop-filter: none;
+      backdrop-filter: none;
     }
     .glass-veil {
       background: transparent;
-      backdrop-filter: none;
       -webkit-backdrop-filter: none;
+      backdrop-filter: none;
     }
   }
 }
