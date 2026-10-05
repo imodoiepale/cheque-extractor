@@ -118,10 +118,16 @@ export function exportToExcel(data: ComparisonRow[], visibleColumns: VisibleColu
     headers.push('QB Source');
   }
 
+  // The ONE literal colour left in this parcel, and it has to be literal:
+  // this HTML is handed to Excel as a downloaded file, where a CSS custom
+  // property means nothing. Value is the brand indigo (--brand), so
+  // the export matches the app rather than the retired blue-600.
+  const EXPORT_HEADER_FILL = '#6366f1';
+
   let html = '<html><head><meta charset="utf-8"></head><body><table border="1">';
   html += '<thead><tr>';
   headers.forEach(header => {
-    html += `<th style="background-color: #2563eb; color: white; padding: 8px; font-weight: bold;">${header}</th>`;
+    html += `<th style="background-color: ${EXPORT_HEADER_FILL}; color: white; padding: 8px; font-weight: bold;">${header}</th>`;
   });
   html += '</tr></thead><tbody>';
 

@@ -1,5 +1,7 @@
 import React from 'react';
 import { FileText, CheckCircle, AlertCircle, FileCheck, XCircle } from 'lucide-react';
+import Link from 'next/link';
+import { GlassCard, GlassPanel } from '@/components/ui';
 
 interface StatisticsPanelProps {
   total: number;
@@ -9,6 +11,15 @@ interface StatisticsPanelProps {
   missingInExtraction: number;
 }
 
+/**
+ * The stat strip above the grid.
+ *
+ * Deliberately NOT five `KpiTile`s: each tile carries its own
+ * `backdrop-filter`, so five of them is five composited layers, and the tile's
+ * p-5/text-3xl metrics would push the table down by ~70px — rows on screen are
+ * the one thing this page cannot spend. One blurred card, five unblurred
+ * panels inside it.
+ */
 export const StatisticsPanel: React.FC<StatisticsPanelProps> = ({
   total,
   matched,
@@ -17,32 +28,38 @@ export const StatisticsPanel: React.FC<StatisticsPanelProps> = ({
   missingInExtraction,
 }) => {
   const stats = [
-    { label: 'Total Records', value: total, icon: FileText, bg: 'bg-gray-50', color: 'text-gray-600' },
-    { label: 'Matched', value: matched, icon: CheckCircle, bg: 'bg-emerald-50', color: 'text-emerald-600' },
-    { label: 'Mismatched', value: mismatched, icon: AlertCircle, bg: 'bg-amber-50', color: 'text-amber-600' },
-    { label: 'Missing in QB', value: missingInQB, icon: FileCheck, bg: 'bg-blue-50', color: 'text-blue-600' },
-    { label: 'Missing in Extraction', value: missingInExtraction, icon: XCircle, bg: 'bg-red-50', color: 'text-red-600' },
+    { label: 'Total Records', value: total, icon: FileText, accent: 'text-ink-faint' },
+    { label: 'Matched', value: matched, icon: CheckCircle, accent: 'text-success' },
+    { label: 'Mismatched', value: mismatched, icon: AlertCircle, accent: 'text-warning' },
+    { label: 'Missing in QB', value: missingInQB, icon: FileCheck, accent: 'text-brand' },
+    { label: 'Missing in Extraction', value: missingInExtraction, icon: XCircle, accent: 'text-error' },
   ];
 
   return (
-    <div className="px-3 py-2 bg-white border-b border-gray-200">
-      <div className="grid grid-cols-5 gap-2 mb-2">
+    <GlassCard padding="sm" className="mx-4 mt-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
         {stats.map((stat) => (
-          <div key={stat.label} className="bg-white rounded-lg border border-gray-200 p-2 flex items-center gap-2 shadow-sm hover:shadow transition">
-            <div className={`p-1.5 rounded-md ${stat.bg}`}>
-              <stat.icon size={14} className={stat.color} />
+          <GlassPanel
+            key={stat.label}
+            radius="input"
+            padding="none"
+            className="flex items-center gap-2 px-2.5 py-2"
+          >
+            <stat.icon size={16} className={`shrink-0 ${stat.accent}`} aria-hidden />
+            <div className="min-w-0">
+              <p className="truncate text-eyebrow text-ink-faint">{stat.label}</p>
+              <p className="nums text-lg font-semibold text-ink-strong">{stat.value}</p>
             </div>
-            <div>
-              <p className="text-[9px] text-gray-500 uppercase tracking-wider font-medium">{stat.label}</p>
-              <p className="text-lg font-bold text-gray-900">{stat.value}</p>
-            </div>
-          </div>
+          </GlassPanel>
         ))}
       </div>
-      <div className="text-xs text-gray-600 bg-blue-50 border border-blue-200 rounded px-3 py-1.5">
-        <span className="font-semibold text-blue-700">QB Data Source:</span> Configure QuickBooks connection in{' '}
-        <a href="/settings" className="text-blue-600 hover:underline font-semibold">Settings → Integrations</a>
-      </div>
-    </div>
+      <p className="mt-2 text-xs text-ink-body">
+        <span className="font-semibold text-ink-strong">QB data source:</span> configure the
+        QuickBooks connection in{' '}
+        <Link href="/settings" className="font-semibold text-brand-deep hover:underline">
+          Settings → Integrations
+        </Link>
+      </p>
+    </GlassCard>
   );
 };

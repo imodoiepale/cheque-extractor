@@ -1,5 +1,6 @@
 import React from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { IconButton, Select } from '@/components/ui';
 
 interface PaginationProps {
   currentPage: number;
@@ -9,6 +10,15 @@ interface PaginationProps {
   onPageChange: (page: number) => void;
   onItemsPerPageChange: (count: number) => void;
 }
+
+/**
+ * Lives inside the table's glass shell, so it carries no blur of its own.
+ *
+ * The per-page options are capability, not decoration: the grid must still be
+ * able to show the whole 200-record view (and far more) on one page. Do not
+ * trim this list to make the table feel faster.
+ */
+const PER_PAGE = [25, 50, 100, 200, 500, 1000, 2000];
 
 export const Pagination: React.FC<PaginationProps> = ({
   currentPage,
@@ -22,35 +32,37 @@ export const Pagination: React.FC<PaginationProps> = ({
   const endIndex = Math.min(currentPage * itemsPerPage, totalItems);
 
   return (
-    <div className="px-6 py-4 bg-white border-t border-gray-200 flex items-center justify-between">
-      <div className="flex items-center gap-4">
-        <span className="text-sm text-gray-600">
-          Showing <span className="font-semibold text-gray-900">{startIndex}</span> to{' '}
-          <span className="font-semibold text-gray-900">{endIndex}</span> of{' '}
-          <span className="font-semibold text-gray-900">{totalItems}</span> records
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-glass-hairline px-4 py-2.5">
+      <div className="flex items-center gap-3">
+        <span className="text-xs text-ink-body">
+          Showing <span className="nums font-semibold text-ink-strong">{startIndex}</span> to{' '}
+          <span className="nums font-semibold text-ink-strong">{endIndex}</span> of{' '}
+          <span className="nums font-semibold text-ink-strong">{totalItems}</span> records
         </span>
-        <select
+        <Select
+          inputSize="sm"
+          aria-label="Records per page"
+          className="nums w-auto"
           value={itemsPerPage}
           onChange={(e) => onItemsPerPageChange(Number(e.target.value))}
-          className="px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
         >
-          <option value={25}>25 per page</option>
-          <option value={50}>50 per page</option>
-          <option value={100}>100 per page</option>
-          <option value={500}>500 per page</option>
-          <option value={1000}>1000 per page</option>
-          <option value={2000}>2000 per page</option>
-        </select>
+          {PER_PAGE.map((n) => (
+            <option key={n} value={n}>
+              {n} per page
+            </option>
+          ))}
+        </Select>
       </div>
 
-      <div className="flex items-center gap-2">
-        <button
+      <div className="flex items-center gap-1.5">
+        <IconButton
+          size="icon-sm"
+          aria-label="Previous page"
           onClick={() => onPageChange(currentPage - 1)}
           disabled={currentPage === 1}
-          className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <ChevronLeft size={18} />
-        </button>
+          <ChevronLeft size={16} />
+        </IconButton>
 
         <div className="flex items-center gap-1">
           {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
@@ -65,14 +77,17 @@ export const Pagination: React.FC<PaginationProps> = ({
               pageNum = currentPage - 2 + i;
             }
 
+            const active = currentPage === pageNum;
             return (
               <button
                 key={pageNum}
+                type="button"
+                aria-current={active ? 'page' : undefined}
                 onClick={() => onPageChange(pageNum)}
-                className={`px-3 py-1.5 text-sm font-medium rounded-lg transition ${
-                  currentPage === pageNum
-                    ? 'bg-blue-600 text-white'
-                    : 'text-gray-700 hover:bg-gray-100'
+                className={`press nums min-w-[2rem] rounded-full px-2.5 py-1 text-xs font-semibold ${
+                  active
+                    ? 'bg-brand text-white shadow-brand-glow'
+                    : 'text-ink-body hover:bg-brand/[0.08] hover:text-ink-strong'
                 }`}
               >
                 {pageNum}
@@ -81,13 +96,14 @@ export const Pagination: React.FC<PaginationProps> = ({
           })}
         </div>
 
-        <button
+        <IconButton
+          size="icon-sm"
+          aria-label="Next page"
           onClick={() => onPageChange(currentPage + 1)}
           disabled={currentPage === totalPages}
-          className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          <ChevronRight size={18} />
-        </button>
+          <ChevronRight size={16} />
+        </IconButton>
       </div>
     </div>
   );
