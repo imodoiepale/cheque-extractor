@@ -62,6 +62,27 @@ function fmtSize(bytes?: number): string {
 // should just extract the data they need" — no OCR, image or confidence settings.
 const EXTRACTION_METHODS = ['ai'] as const;
 
+/** The upload was blocked by the trial or billing gate — never fall back past this. */
+class ProcessingBlocked extends Error {
+  constructor(public readonly detail: Record<string, any>) {
+    const parts: string[] = [];
+    if (detail?.reason === 'trial_expired') parts.push('Your 14-day trial has ended.');
+    else if (detail?.reason === 'trial_check_limit_reached') parts.push('You have used all 250 trial cheques.');
+    else if (detail?.reason) parts.push('Processing is currently paused.');
+    if (typeof detail?.checksRemaining === 'number') parts.push(`${detail.checksRemaining} cheques remaining.`);
+    super(parts.join(' ') || detail?.message || 'Processing is not available on your plan right now.');
+    this.name = 'ProcessingBlocked';
+  }
+}
+
+/** The user declined to re-process a file they had uploaded before. */
+class DuplicateSkipped extends Error {
+  constructor(fileName: string) {
+    super(`${fileName} was already uploaded and was not processed again.`);
+    this.name = 'DuplicateSkipped';
+  }
+}
+
 const STEP_ORDER: ('upload' | 'preview' | 'configure')[] = ['upload', 'preview', 'configure'];
 const STEP_LABELS: Record<string, string> = { upload: 'Upload', preview: 'Preview', configure: 'Configure & Extract' };
 
@@ -246,14 +267,51 @@ export default function UploadPage() {
     setProgressMessages(prev => ({ ...prev, [entryId]: ['Uploading PDF...'] }));
     
     try {
-      const response = await fetch(`${backendUrl}/api/upload-analyze`, {
+      // Through the Next proxy, not straight at the Python backend. The proxy
+      // carries the session, which is what lets the backend resolve the tenant,
+      // stamp tenant_id on the job and record the upload fingerprint that backs
+      // the duplicate warning. Called directly, every one of those was missing.
+      let response = await fetch('/api/upload-analyze', {
         method: 'POST',
         body: formData,
       });
+
+      // Michael, 30 Sep: warn that the file went up before, and let them opt in
+      // to processing it again knowing it counts against their monthly checks.
+      if (response.status === 409) {
+        const dup = await response.json().catch(() => ({} as any));
+        const when = dup.previous_uploaded_at
+          ? new Date(dup.previous_uploaded_at).toLocaleDateString(undefined, {
+              year: 'numeric', month: 'long', day: 'numeric',
+            })
+          : null;
+        const proceed = window.confirm(
+          `${file.name} was uploaded previously${when ? ` on ${when}` : ''}.
+
+` +
+          'Process it again? The cheques will count against this month’s total.'
+        );
+        if (!proceed) {
+          setProgressMessages(prev => ({ ...prev, [entryId]: ['Skipped — already uploaded'] }));
+          throw new DuplicateSkipped(file.name);
+        }
+        response = await fetch('/api/upload-analyze?confirm_reupload=true', {
+          method: 'POST',
+          body: formData,
+        });
+      }
+
+      // A trial or payment block must stop here. Falling through to the
+      // unauthenticated direct-to-backend path below would bypass the gate.
+      if (response.status === 402 || response.status === 401) {
+        const blocked = await response.json().catch(() => ({} as any));
+        throw new ProcessingBlocked(blocked);
+      }
+
       if (response.ok) {
         data = await response.json();
         isDuplicate = data.duplicate === true;
-        
+
         // Start polling for progress if we have a job_id
         if (data.job_id) {
           pollJobProgress(data.job_id, entryId);
@@ -261,7 +319,10 @@ export default function UploadPage() {
       } else {
         throw new Error('analyze endpoint unavailable');
       }
-    } catch {
+    } catch (analyzeErr) {
+      if (analyzeErr instanceof ProcessingBlocked || analyzeErr instanceof DuplicateSkipped) {
+        throw analyzeErr;
+      }
       setProgressMessages(prev => ({ ...prev, [entryId]: ['Converting PDF to images...'] }));
       
       const formData2 = new FormData();
