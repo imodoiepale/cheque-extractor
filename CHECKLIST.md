@@ -459,14 +459,25 @@ independently with geometry and ink filters, pages with no checks are skipped si
 endpoint already returns a per-page `checks_on_page` count, and the preview already shows every page
 with its count.
 
-- [ ] **Wire up `_filter_check_backs()`** in `backend/check_extractor.py`. It already exists, analyses
-      ink projection and the MICR strip, and is never called.
-- [ ] **Add a confidence score per detected region** and reject low-confidence pages. Two paths
+- [x] **Wire up `_filter_check_backs()`** in `backend/check_extractor.py`. It already exists, analyses
+      ink projection and the MICR strip, and is never called. **Done:** called in
+      `detect_checks_on_page` after dedup, so endorsement backs stop being extracted as fronts.
+- [x] **Add a confidence score per detected region** and reject low-confidence pages. Two paths
       currently emit false checks from ruled statement tables: the format-A branch falls back to grid
       boxes when contour detection finds none, and the auto-detect branch keeps both detector outputs
-      when neither is confident. The page gate needs only one box to pass.
-- [ ] **Fix the format vote.** It samples only the first three pages, so a statement whose opening
-      pages are text sets the wrong hint for the check pages that follow.
+      when neither is confident. **Done:** `_region_confidence()` scores each region and a page needs
+      one region at `REGION_CONFIDENCE_PAGE_MIN` to count at all. The decisive signal turned out to be
+      the MICR band, and specifically its *structure*: a table rule along the bottom of a statement row
+      puts as much ink in the strip as MICR does, so ink alone let false checks through. MICR fills most
+      of the strip's rows (67% on the fixtures) where a rule inks a fifth (19%), so both are required.
+      *ponytail:* thresholds are tuned on synthetic fixtures — validate against the 428-cheque batch
+      and Michael's real statements before trusting the constants.
+- [x] **Fix the format vote.** It samples only the first three pages, so a statement whose opening
+      pages are text sets the wrong hint for the check pages that follow. **Done:** the sample is now
+      spread evenly across the whole document, and — the part that actually mattered — only pages
+      holding a confident cheque region get a vote. A ruled transaction table reads as a line-grid, so
+      on a 40-page statement with 6 cheques a plain majority would have been decided by the 34 pages
+      with no cheques on them. Returning None is a safe answer; the caller auto-detects per page.
 - [ ] **Per-page checkboxes** instead of the contiguous range, defaulted to pages where checks were
       found.
 - [ ] Decide whether a downloadable checks-only PDF is wanted. Nothing in the stack can write a PDF

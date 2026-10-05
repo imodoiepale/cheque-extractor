@@ -560,15 +560,14 @@ def _verify_token(request: Request):
 
 app = FastAPI(title="Check Extractor API", version="1.0.0")
 
-# CORS configuration - allow all origins for maximum compatibility
-# Production frontend: https://check-extractor-frontend.vercel.app
-# Build allowed origins from environment variable
+# CORS configuration.
+# The Vercel project was renamed from "check-extractor-frontend" to Kyriq, which
+# changes every preview URL, so previews are matched by regex rather than listed.
+# There is deliberately no "*" here: a wildcard entry made the allowlist inert.
 _frontend_urls = os.environ.get("FRONTEND_URL", "").strip()
 _allowed_origins = [
-    "https://check-extractor-frontend.vercel.app",
-    "https://cheque-extractor-frontend.vercel.app",
-    "http://kyriq.com",
     "https://kyriq.com",
+    "https://www.kyriq.com",
     "http://localhost:3080",
     "http://localhost:3000",
 ]
@@ -580,12 +579,14 @@ if _frontend_urls:
         if url and url not in _allowed_origins:
             _allowed_origins.append(url)
 
-# Add wildcard for maximum compatibility
-_allowed_origins.append("*")
+# Vercel preview deployments for the renamed project, plus the legacy name while
+# any old deployment is still reachable.
+_allowed_origin_regex = r"https://(kyriq|cheque-extractor|check-extractor)[a-z0-9-]*\.vercel\.app"
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
+    allow_origin_regex=_allowed_origin_regex,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
