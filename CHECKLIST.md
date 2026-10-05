@@ -92,7 +92,7 @@ Security and correctness. None of this is visible, all of it is blocking.
       at real volume. **Partly done:** `supabase/config.toml` now has `site_url` on 3080 and a real
       `additional_redirect_urls` list. The Resend SMTP credentials themselves are a dashboard
       setting, so they stay an ops item (section 14).
-- [ ] **Trial enforcement server-side:** 14 days or 250 successfully processed checks, whichever
+- [x] **Trial enforcement server-side:** 14 days or 250 successfully processed checks, whichever
       first. Processing stops; history stays viewable. Include the comp-account override from
       section 5 so pilot firms are not cut off mid-test.
 - [x] **Remove the extraction choices** Michael asked to remove. `EXTRACTION_METHODS` in
@@ -158,29 +158,29 @@ numbers; do not re-derive them.
 | Over bright areas | `blur(28px) saturate(150%)` | same, stated explicitly |
 | Hairline | `rgba(255,255,255,0.06)` | `rgba(15,23,42,0.07)` |
 
-- [ ] **State the blur explicitly, and carry contrast with `@supports`.** DepthMe learned this the
+- [x] **State the blur explicitly, and carry contrast with `@supports`.** DepthMe learned this the
       hard way: their comment records that `backdrop-filter` computed to `none` in a real render and
       that WKWebView support is inconsistent. So blur is declared on the class rather than inherited,
       and an `@supports not (backdrop-filter: blur(1px))` block raises the background opacity so the
       card is still readable. Copy that pattern. A glass card that silently loses its blur must still
       look deliberate.
-- [ ] **Radius scale**, straight from DepthMe: inputs 14px, buttons 16px, pills 20px, cards 24px.
+- [x] **Radius scale**, straight from DepthMe: inputs 14px, buttons 16px, pills 20px, cards 24px.
       This replaces the current 325-vs-119 `rounded-lg`/`rounded-xl` coin-toss.
-- [ ] **Motion tokens.** Easing `cubic-bezier(0.23, 1, 0.32, 1)` is the house curve for everything
+- [x] **Motion tokens.** Easing `cubic-bezier(0.23, 1, 0.32, 1)` is the house curve for everything
       that settles. Durations: tap 120ms, quick 200ms, settle 240ms, reveal 280ms. Press state is
       `transform: scale(0.96)`. Disabled is `opacity: 0.45`. Honour `prefers-reduced-motion`.
-- [ ] **Buttons are pills.** `border-radius: 9999px`, `min-height: 3rem`, inline-flex centred with a
+- [x] **Buttons are pills.** `border-radius: 9999px`, `min-height: 3rem`, inline-flex centred with a
       `0.5rem` gap. Primary carries a 90-degree gradient in the brand indigo; ghost is a hairline
       pill, `1px solid rgba(…,0.14)` over a faint tint.
-- [ ] **Type.** One heading face behind a single token, the way DepthMe fixed theirs. Their note is
+- [x] **Type.** One heading face behind a single token, the way DepthMe fixed theirs. Their note is
       worth heeding: a font imported inside one screen and used nowhere else is why that screen read
       as designed and the rest did not. Set it once, at the root. `-apple-system` leads the stack.
       Negative tracking on display sizes only.
-- [ ] **The ambient background.** A fixed, slowly drifting gradient mesh behind the shell. Glass over
+- [x] **The ambient background.** A fixed, slowly drifting gradient mesh behind the shell. Glass over
       a flat page looks like a rendering bug; it needs something to refract.
-- [ ] **`font-variant-numeric: tabular-nums`** on every monetary and numeric column. Non-negotiable
+- [x] **`font-variant-numeric: tabular-nums`** on every monetary and numeric column. Non-negotiable
       in a reconciliation product where columns of figures must align.
-- [ ] **Map every token into `tailwind.config.js`**, not just into `:root`. The current file has
+- [x] **Map every token into `tailwind.config.js`**, not just into `:root`. The current file has
       variables in CSS that were never added to the theme, which is why the `@apply` block is broken.
 
 ### 2.2 Primitives — same agent, same stage
@@ -226,9 +226,9 @@ different glass cards appearing.
 | **H** | QB integration components, match, export, billing. | 2,535 |
 | **I** | Landing page, Magic-UI decorative components and the legal pages. Holds 20 of the 23 hardcoded hexes and all framer-motion usage. Can run in parallel with A. | 2,325 |
 
-- [ ] **Order:** A merges first. B can start as soon as A's token names are frozen, since it needs
+- [x] **Order:** A merges first. B can start as soon as A's token names are frozen, since it needs
       names not primitives. C through I start once A is merged. I may run alongside A.
-- [ ] **Coordination point between A and I.** The `components/ui/*` decorative components depend on
+- [x] **Coordination point between A and I.** The `components/ui/*` decorative components depend on
       custom keyframes in `tailwind.config.js`: `marquee`, `border-beam`, `shimmer-slide`,
       `spin-around`, plus `--duration`, `--speed` and `--gap` variables. Parcel A must preserve them
       verbatim or hand ownership to I. Rewriting the keyframes silently breaks all four.
@@ -237,23 +237,23 @@ different glass cards appearing.
 
 Found during the inventory. Each is cheap now and expensive later.
 
-- [ ] **Fix the broken `@apply` block in `globals.css`.** It applies `from-primary-light`,
+- [x] **Fix the broken `@apply` block in `globals.css`.** It applies `from-primary-light`,
       `bg-success-bg`, `bg-success-dark`, `bg-error-bg`, `text-error-text`, `bg-warning-bg` and
       `text-warning-text`. Those CSS variables exist in `:root` but were **never mapped into
       `tailwind.config.js`**, so the utilities do not exist and the pill and button classes are
       silently inert today. Parcel A fixes this.
-- [ ] **Adopt `cva`.** It is installed and imported **nowhere**. The primitives are its first use.
+- [x] **Adopt `cva`.** It is installed and imported **nowhere**. The primitives are its first use.
 - [x] **Delete `app/(app)/qb-comparisons/page.old.tsx`**, 1,008 lines of dead code sitting in a route
       folder. Next.js will not route it, but a styling agent would burn a whole budget on it.
-- [ ] **Pick one radius.** `rounded-lg` appears 325 times and `rounded-xl` 119 times with no rule.
-- [ ] **Collapse five table-header systems into one.** There are at least five mutually inconsistent
+- [x] **Pick one radius.** `rounded-lg` appears 325 times and `rounded-xl` 119 times with no rule.
+- [x] **Collapse five table-header systems into one.** There are at least five mutually inconsistent
       `<th>` recipes across the app.
-- [ ] **Decide the real primary colour.** The brand purple in `--primary` is barely used in
+- [x] **Decide the real primary colour.** The brand purple in `--primary` is barely used in
       classNames; `bg-blue-600` is the de-facto primary at 23 occurrences. The new brand is Indigo
       `#6366f1`, so this resolves itself, but every `blue-600` call site has to move.
 - [ ] **Resolve the duplicate legal pages** before styling both: `(public)/terms` versus
       `(public)/legal/terms`, and the same for privacy.
-- [ ] **Decide whether the two shells unify.** `(app)` has a dark sidebar, `(admin)` a light glass
+- [x] **Decide whether the two shells unify.** `(app)` has a dark sidebar, `(admin)` a light glass
       one. Parcel B owns both so the answer is consistent either way.
 - [ ] **Dark mode is currently dead.** A full `.dark` override block exists in `globals.css` but
       nothing toggles it and no `dark:` prefix is used anywhere. Either wire a theme provider or drop
@@ -335,20 +335,20 @@ hook.
 
 ## 5. P2 — roles, access and accounts
 
-- [ ] **Two roles: Administrator and User.** Users get no billing, no reports, no account editing.
+- [x] **Two roles: Administrator and User.** Users get no billing, no reports, no account editing.
       Enforced server-side and in RLS, not by hiding menu items. `profiles.role` already exists with
       admin/member/viewer. *From item 4 of the client list.*
-- [ ] **Build the four missing team endpoints.** `/settings/team` already calls `/api/team/members`,
+- [x] **Build the four missing team endpoints.** `/settings/team` already calls `/api/team/members`,
       `/api/team/invite` and `/api/team/members/[id]` for DELETE and PATCH. None exist, so inviting a
       user currently fails silently. The `team_invitations` table, token and 7-day expiry are already
       in `supabase/migrations/001_schema.sql`.
-- [ ] **Invitation accept page** at a token URL. None exists.
-- [ ] **MFA.** Supabase Auth TOTP enrolment and challenge, required for Administrators. No MFA code
+- [x] **Invitation accept page** at a token URL. None exists.
+- [x] **MFA.** Supabase Auth TOTP enrolment and challenge, required for Administrators. No MFA code
       exists today; it appears only in the legal pages.
-- [ ] **Comp accounts.** Super Admin grants a free account for a set period, with a reason and an
+- [x] **Comp accounts.** Super Admin grants a free account for a set period, with a reason and an
       expiry, written to the audit log. This is how the pilot firms get in.
       *From: "Make it possible for me (super Admin) to give free accounts."*
-- [ ] **Super Admin view** per the v17 billing doc: firm, plan, billing frequency, trial status and
+- [x] **Super Admin view** per the v17 billing doc: firm, plan, billing frequency, trial status and
       usage, subscription status, monthly usage, overage, payment status, paid-through date,
       cancellation status, Stripe IDs and links. Overrides, credits and refunds all logged.
 
@@ -411,15 +411,15 @@ Everything here comes from `STRIPE-BILLING-REQUIREMENTS.md`.
 
 The billing system is only as trustworthy as this table.
 
-- [ ] **Immutable ledger**, one row per successfully processed check, carrying firm, user, company,
+- [x] **Immutable ledger**, one row per successfully processed check, carrying firm, user, company,
       check, processing event, timestamp, billing period and the Stripe event reference.
-- [ ] **Count on success only.** Failed OCR does not count.
-- [ ] **Multiple checks on one page count individually.**
-- [ ] **Idempotency key per processing event** so automatic retries never double-count.
-- [ ] **Repeat uploads count again**, and the user is told first: warn that the file was uploaded on
+- [x] **Count on success only.** Failed OCR does not count.
+- [x] **Multiple checks on one page count individually.**
+- [x] **Idempotency key per processing event** so automatic retries never double-count.
+- [x] **Repeat uploads count again**, and the user is told first: warn that the file was uploaded on
       a given date and let them confirm it should be processed and counted.
       *From Michael, 30 September.*
-- [ ] **Count detected checks, not pages.** A 40-page bank statement containing 6 checks bills 6.
+- [x] **Count detected checks, not pages.** A 40-page bank statement containing 6 checks bills 6.
       This makes detection accuracy a billing-correctness issue, which is why section 10 matters.
 - [ ] Reconcilable meter events submitted to Stripe; Kyriq stays the source of truth for check-level
       detail, Stripe for subscription state.
@@ -569,6 +569,72 @@ reached the repo.
 - **How many email addresses:** one sending address, `notifications@updates.kyriq.com`, plus
   `support@kyriq.com` for replies. The others already created are useful but not required.
 - **Auto-delete uploads:** yes, 14 days after the reconciliation completes. Section 13.
+
+---
+
+## 15b. Found while building — not in the original plan
+
+Each of these was discovered during implementation and is recorded because none
+of it was visible from the documents.
+
+- [x] **`public.app_settings` is readable with the public anon key.** Verified
+      live: a plain `GET /rest/v1/app_settings?select=*` returns the row,
+      including `gemini_api_key`, `qbo_access_token` and `qbo_refresh_token`. The
+      anon key ships in the frontend bundle *and* in the extension's
+      `BOOTSTRAP_CONFIG`, so that means any visitor or extension user. Those
+      three columns are currently NULL, so nothing is exposed yet — but the live
+      save-settings endpoint in `backend/api_server.py` writes `gemini_api_key`
+      into that exact row, so the first key saved through Settings becomes
+      public. Migration 009 meant to enable RLS here and was never applied.
+      Closed by **migration 031**, deliberately standalone so it can go out
+      without the rest of 030. *Still open until 031 is applied.*
+- [x] **The same endpoint printed the API key to the server log** on every save
+      (`print(f"   Data: {update_data}")`). Now redacted to field names and
+      value lengths.
+- [x] **No glass surface was actually blurring.** Turbopack's CSS minifier
+      (lightningcss) collapsed every `backdrop-filter` / `-webkit-backdrop-filter`
+      pair down to the prefixed form alone, and prefix-only computes to
+      `backdrop-filter: none` in Chrome — verified in Chrome 152. So the whole
+      design system's defining effect was absent, every surface rendering as a
+      flat tint. The `@supports` fallback could not catch it either: the browser
+      *does* support the property, the declaration had simply been deleted, so
+      the surfaces got neither the blur nor the raised-opacity fallback. Fixed by
+      authoring the pair prefix-first, which is how Tailwind's own
+      `backdrop-blur` utilities survive the same minifier.
+      `scripts/check-primitives.ts` now asserts the order.
+- [x] **The `npm run lint` gate was inert.** The script was `next lint`; Next 16
+      removed that command, so it parsed `lint` as a directory and exited 0
+      having linted nothing. There was also no ESLint config anywhere in
+      `frontend/`. So the quality gate in section 0 has never linted this
+      codebase. Wired up to real eslint: 0 errors, 107 warnings. The three real
+      errors it surfaced are fixed:
+      - `CompanySwitcher`'s **"Connect QuickBooks" and "Add Company" never
+        worked** — both were `<a href="/api/qbo/auth">`, and that route answers
+        with `{authUrl}` as JSON rather than redirecting, so each navigated the
+        user to a raw JSON document. Now fetch-then-redirect, matching Settings.
+      - `DetailModal` called `useMemo` after `if (!row) return null`, so when the
+        row cleared React saw fewer hooks than the previous render and threw.
+- [x] **Migration 001 was never fully applied to the live database.**
+      `team_invitations`, `profiles` and `tenant_settings` do not exist, and
+      `audit_logs` has different columns than 001 declares. The migrations folder
+      is therefore not a record of this database's shape. 030 was written against
+      what is actually there (it *creates* `team_invitations` rather than
+      assuming it), but this is worth knowing before trusting any migration file
+      as documentation.
+- [ ] **Blocked on assets that never reached the repo.** The logo pack
+      (*Kyriq Logo — All Source files — 12 versions.zip*) is absent, so versions 1
+      and 7 cannot be shipped. `Kyriq-Developer-Handoff-v17.zip` is absent too —
+      only v12 is extracted — so `STRIPE-BILLING-REQUIREMENTS.md`, the new
+      `signup.html` and the updated `website.html` are unavailable. The decisions
+      are captured in this checklist, so Stripe is not blocked, but the
+      **15-question FAQ and the verbatim website copy are**.
+- [ ] **Migrations 026–031 are unapplied.** There is no way to run DDL from the
+      build environment: no `psql`, no linked Supabase CLI, no database password
+      or access token, and no SQL-executing RPC. Until they are applied the usage
+      ledger, trial enforcement, comp accounts, the team endpoints and MFA
+      recovery all fail at the database, and the `app_settings` hole stays open.
+      Needs either a `SUPABASE_DB_URL`, a `SUPABASE_ACCESS_TOKEN`, or someone
+      running them in the SQL editor.
 
 ---
 
