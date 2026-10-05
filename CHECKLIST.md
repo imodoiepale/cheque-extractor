@@ -542,6 +542,11 @@ Not code, but launch-blocking.
 
 ## 15. Answers owed to Michael
 
+Written up and ready to send: `docs/proposals/Kyriq-Answers-and-Accounts.md`. It also carries the
+ops list from section 14, the locked-copy wording question, and the note that the logo pack never
+reached the repo.
+
+
 - **Extension look and options:** yes, it will match the app. Section 11.
 - **MFA:** yes. Section 5.
 - **Free accounts for pilot firms:** yes, a Super Admin comp control with an expiry and a reason.
