@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { Check, X, Loader2 } from 'lucide-react';
+import { GlassPanel } from '@/components/ui';
+import { cn } from '@/lib/utils';
 
 interface UploadStatus {
   file: File;
@@ -41,7 +43,7 @@ export default function UploadProgress({ files, onComplete }: Props) {
 
     for (let i = 0; i < uploads.length; i++) {
       const upload = uploads[i];
-      
+
       try {
         // Update to uploading
         updateUploadStatus(i, { status: 'uploading', progress: 0 });
@@ -60,11 +62,11 @@ export default function UploadProgress({ files, onComplete }: Props) {
         }
 
         const { checkId } = await uploadResponse.json();
-        
-        updateUploadStatus(i, { 
-          status: 'processing', 
+
+        updateUploadStatus(i, {
+          status: 'processing',
           progress: 50,
-          checkId 
+          checkId
         });
 
         // Trigger processing
@@ -76,30 +78,30 @@ export default function UploadProgress({ files, onComplete }: Props) {
           throw new Error('Processing failed to start');
         }
 
-        updateUploadStatus(i, { 
-          status: 'complete', 
-          progress: 100 
+        updateUploadStatus(i, {
+          status: 'complete',
+          progress: 100
         });
 
         completedIds.push(checkId);
 
       } catch (error: any) {
-        updateUploadStatus(i, { 
-          status: 'error', 
-          error: error.message 
+        updateUploadStatus(i, {
+          status: 'error',
+          error: error.message
         });
       }
     }
 
     setIsUploading(false);
-    
+
     if (onComplete && completedIds.length > 0) {
       onComplete(completedIds);
     }
   };
 
   const updateUploadStatus = (index: number, updates: Partial<UploadStatus>) => {
-    setUploads(prev => prev.map((upload, i) => 
+    setUploads(prev => prev.map((upload, i) =>
       i === index ? { ...upload, ...updates } : upload
     ));
   };
@@ -107,14 +109,14 @@ export default function UploadProgress({ files, onComplete }: Props) {
   const getStatusIcon = (status: UploadStatus['status']) => {
     switch (status) {
       case 'complete':
-        return <Check className="text-green-600" size={20} />;
+        return <Check className="text-success" size={20} />;
       case 'error':
-        return <X className="text-red-600" size={20} />;
+        return <X className="text-error" size={20} />;
       case 'uploading':
       case 'processing':
-        return <Loader2 className="text-blue-600 animate-spin" size={20} />;
+        return <Loader2 className="text-brand animate-spin" size={20} />;
       default:
-        return <div className="w-5 h-5 rounded-full border-2 border-gray-300" />;
+        return <div className="h-5 w-5 rounded-full border-2 border-glass-hairline" />;
     }
   };
 
@@ -133,26 +135,30 @@ export default function UploadProgress({ files, onComplete }: Props) {
     }
   };
 
-  const getStatusColor = (status: UploadStatus['status']) => {
+  /* Tint only — the surface itself stays glass (rule 10). */
+  const getStatusTint = (status: UploadStatus['status']) => {
     switch (status) {
       case 'complete':
-        return 'bg-green-50 border-green-200';
+        return 'bg-success-bg/45 border-success-border';
       case 'error':
-        return 'bg-red-50 border-red-200';
+        return 'bg-error-bg/45 border-error-border';
       case 'uploading':
       case 'processing':
-        return 'bg-blue-50 border-blue-200';
+        return 'bg-info-bg/45 border-info-border';
       default:
-        return 'bg-gray-50 border-gray-200';
+        return '';
     }
   };
 
   return (
     <div className="space-y-4">
       {uploads.map((upload, index) => (
-        <div 
+        <GlassPanel
           key={index}
-          className={`border rounded-lg p-4 transition ${getStatusColor(upload.status)}`}
+          className={cn(
+            'transition-[background-color,border-color] duration-quick ease-settle',
+            getStatusTint(upload.status)
+          )}
         >
           <div className="flex items-center gap-4">
             {/* Status Icon */}
@@ -161,33 +167,41 @@ export default function UploadProgress({ files, onComplete }: Props) {
             </div>
 
             {/* File Info */}
-            <div className="flex-1 min-w-0">
-              <p className="font-medium text-gray-900 truncate">
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-medium text-ink-strong">
                 {upload.file.name}
               </p>
-              <p className="text-sm text-gray-600">
+              <p className="text-sm text-ink-body">
                 {getStatusText(upload)}
               </p>
             </div>
 
             {/* Progress */}
             {(upload.status === 'uploading' || upload.status === 'processing') && (
-              <div className="flex-shrink-0 text-sm font-medium text-blue-600">
+              <div className="nums flex-shrink-0 text-sm font-medium text-brand-deep">
                 {upload.progress}%
               </div>
             )}
           </div>
 
-          {/* Progress Bar */}
+          {/* Progress Bar. The width HAS to be inline — it is a runtime value.
+              Everything else (colour, radius, height, easing) is a token, so a
+              token change reaches the bar and only the number stays in JS. */}
           {(upload.status === 'uploading' || upload.status === 'processing') && (
-            <div className="mt-3 w-full bg-gray-200 rounded-full h-1.5">
+            <div
+              className="glass-track mt-3 h-1.5 w-full overflow-hidden rounded-full"
+              role="progressbar"
+              aria-valuenow={upload.progress}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            >
               <div
-                className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
+                className="h-full rounded-full bg-gradient-to-r from-brand to-brand-dark transition-[width] duration-settle ease-settle"
                 style={{ width: `${upload.progress}%` }}
               />
             </div>
           )}
-        </div>
+        </GlassPanel>
       ))}
     </div>
   );
