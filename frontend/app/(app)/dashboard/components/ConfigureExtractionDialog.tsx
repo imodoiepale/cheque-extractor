@@ -35,8 +35,12 @@ interface ExtractionConfig {
 type PageRangeMode = 'all' | 'missing' | 'custom';
 type CheckRangeMode = 'all' | 'failed' | 'custom';
 
+// Kyriq picks the engine; the user is never asked. Michael, 21 Sep: no OCR,
+// image or confidence settings in the UI.
+const EXTRACTION_METHOD = 'gemini';
+const SECONDS_PER_CHECK = 2;
+
 export default function ConfigureExtractionDialog({ job, isOpen, onClose, onSubmit }: Props) {
-  const [method, setMethod] = useState<'gemini' | 'hybrid' | 'tesseract'>('gemini');
   const [pageRangeMode, setPageRangeMode] = useState<PageRangeMode>('missing');
   const [checkRangeMode, setCheckRangeMode] = useState<CheckRangeMode>('failed');
   const [customPageFrom, setCustomPageFrom] = useState(1);
@@ -73,7 +77,6 @@ export default function ConfigureExtractionDialog({ job, isOpen, onClose, onSubm
   // Initialize defaults when dialog opens
   useEffect(() => {
     if (isOpen) {
-      setMethod('gemini');
       setForce(false);
       
       // Default to missing pages if any exist
@@ -107,7 +110,7 @@ export default function ConfigureExtractionDialog({ job, isOpen, onClose, onSubm
       checkCount = Math.max(0, customCheckTo - customCheckFrom + 1);
     }
 
-    const secondsPerCheck = method === 'gemini' ? 2 : method === 'hybrid' ? 3 : 1;
+    const secondsPerCheck = SECONDS_PER_CHECK;
     const totalSeconds = checkCount * secondsPerCheck;
 
     if (totalSeconds < 60) {
@@ -116,14 +119,14 @@ export default function ConfigureExtractionDialog({ job, isOpen, onClose, onSubm
       const minutes = Math.ceil(totalSeconds / 60);
       return `~${minutes} minute${minutes > 1 ? 's' : ''}`;
     }
-  }, [checkRangeMode, analysis, customCheckFrom, customCheckTo, method]);
+  }, [checkRangeMode, analysis, customCheckFrom, customCheckTo]);
 
   const handleSubmit = async () => {
     setIsSubmitting(true);
 
     const config: ExtractionConfig = {
       job_id: job.job_id,
-      methods: [method],
+      methods: [EXTRACTION_METHOD],
       force,
       page_range: null,
       cheque_range: null,
@@ -181,32 +184,6 @@ export default function ConfigureExtractionDialog({ job, isOpen, onClose, onSubm
                 </span>
               </div>
             )}
-          </div>
-
-          {/* Extraction Methods */}
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-700">Extraction Method</label>
-            <div className="space-y-2">
-              {[
-                { id: 'gemini', label: 'AI Only (Gemini)', desc: 'Default - Fast & accurate' },
-                { id: 'hybrid', label: 'Hybrid (OCR + AI)', desc: 'Best accuracy, slower' },
-                { id: 'tesseract', label: 'OCR Only (Tesseract)', desc: 'Fastest, lower accuracy' },
-              ].map((m) => (
-                <label key={m.id} className="flex items-start gap-3 p-3 border border-gray-200 rounded-lg hover:border-blue-300 cursor-pointer transition">
-                  <input
-                    type="radio"
-                    name="method"
-                    checked={method === m.id}
-                    onChange={() => setMethod(m.id as any)}
-                    className="mt-0.5"
-                  />
-                  <div className="flex-1">
-                    <div className="text-sm font-medium text-gray-900">{m.label}</div>
-                    <div className="text-xs text-gray-500">{m.desc}</div>
-                  </div>
-                </label>
-              ))}
-            </div>
           </div>
 
           {/* Page Range */}

@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { signState } from '@/lib/qbo-state';
 import { createAuthenticatedClient } from '@/lib/supabase/api';
 
 /**
@@ -137,9 +138,10 @@ export default async function handler(
       source: (req.query.source as string) || 'web',
       timestamp: Date.now()
     };
-    const state = Buffer.from(JSON.stringify(stateData)).toString('base64');
-    
-    // Store state in session/cookie for verification (optional - state is self-contained)
+    const state = signState(stateData);
+
+    // Store state in session/cookie for verification (defence in depth; the
+    // HMAC in the state itself is what the callback actually rejects on)
     res.setHeader('Set-Cookie', `qbo_state=${state}; Path=/; HttpOnly; SameSite=Lax; Max-Age=600; Secure`);
 
     // QuickBooks OAuth URL

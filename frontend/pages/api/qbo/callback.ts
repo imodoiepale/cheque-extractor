@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createClientFromCookies, createServiceClient } from '@/lib/supabase/api';
+import { peekState, verifyState } from '@/lib/qbo-state';
 
 /**
  * QuickBooks OAuth Callback Endpoint
@@ -17,9 +18,8 @@ export default async function handler(
     const { code, state, realmId } = req.query;
 
     // Detect extension source early (before state decode) so error redirects go to the public page
-    const isExtension = typeof state === 'string' && (() => {
-      try { return JSON.parse(Buffer.from(state, 'base64').toString())?.source === 'extension'; } catch { return false; }
-    })();
+    // Unverified peek, used only to decide which page an error redirect lands on.
+    const isExtension = peekState(state)?.source === 'extension';
     const errRedirect = (code: string, detail = '') =>
       isExtension
         ? `/qb-oauth-complete?error=${code}${detail ? '&detail=' + encodeURIComponent(detail) : ''}`
@@ -29,24 +29,24 @@ export default async function handler(
       return res.redirect(errRedirect('missing_params'));
     }
 
-    // Decode tenant_id from state parameter
-    let tenantId: string | null = null;
-    let stateData: any = null;
-    try {
-      stateData = JSON.parse(Buffer.from(state as string, 'base64').toString());
-      tenantId = stateData.tenant_id;
-      console.log('✅ Decoded state:', { tenant_id: tenantId, timestamp: stateData.timestamp });
-    } catch (decodeErr) {
-      console.error('❌ Failed to decode state parameter:', decodeErr);
-      return res.redirect(errRedirect('invalid_state', 'state_decode_failed'));
+    // The state carries the tenant_id this connection is written against, so a
+    // forged state would attach a QuickBooks company to another firm. Verify the
+    // HMAC and reject on any mismatch — this is not advisory.
+    const verified = verifyState(state);
+    if (!verified.ok) {
+      console.error('🚨 Rejected QuickBooks OAuth state', {
+        reason: verified.reason,
+        realmId,
+        ip: req.headers['x-forwarded-for'] || req.socket.remoteAddress,
+      });
+      return res.redirect(errRedirect('invalid_state', verified.reason));
     }
 
-    if (!tenantId) {
-      console.error('❌ No tenant_id in state parameter');
-      return res.redirect(errRedirect('no_tenant', 'missing_tenant_in_state'));
-    }
+    const stateData = verified.payload;
+    const tenantId: string = stateData.tenant_id;
 
-    // Verify state (CSRF protection) - optional
+    // Cookie check is defence in depth; a mismatch means the flow was not started
+    // in this browser, so it is also rejected rather than warned about.
     const cookies = req.headers.cookie?.split(';').reduce((acc, cookie) => {
       const [key, value] = cookie.trim().split('=');
       acc[key] = value;
@@ -54,8 +54,8 @@ export default async function handler(
     }, {} as Record<string, string>);
 
     if (cookies?.qbo_state && cookies.qbo_state !== state) {
-      console.warn('⚠️ State mismatch - possible CSRF attack');
-      // Don't fail - just warn, since state contains tenant_id anyway
+      console.error('🚨 QuickBooks OAuth state cookie mismatch', { realmId });
+      return res.redirect(errRedirect('invalid_state', 'cookie_mismatch'));
     }
     
     // Log for debugging

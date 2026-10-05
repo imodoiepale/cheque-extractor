@@ -6,7 +6,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   CheckCircle, Clock, Loader2, FileText, Image as ImageIcon,
   Download, Eye, X, ChevronLeft, ChevronRight, LayoutGrid, List,
-  ZoomIn, ZoomOut, AlertCircle, RefreshCw, Terminal,
+  ZoomIn, ZoomOut, AlertCircle, RefreshCw,
 } from 'lucide-react';
 
 type ViewMode = 'card' | 'table';
@@ -69,19 +69,12 @@ export default function ProcessingPage() {
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const imageRef = useRef<HTMLImageElement>(null);
-  const logsEndRef = useRef<HTMLDivElement>(null);
 
   const stageIndex = STAGES.findIndex((s) => s.name === currentStage);
   const checks = jobData?.checks || [];
-  const progressLogs = jobData?.progress_logs || [];
   const extractionPct = jobData?.extraction_progress ?? 0;
   const processedCount = jobData?.processed_count ?? 0;
   const processingCount = jobData?.processing_count ?? 0;
-
-  // Auto-scroll logs to bottom
-  useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [progressLogs.length]);
 
   const EXPORT_FORMATS = [
     { id: 'csv', name: 'Generic CSV', desc: 'Excel, Google Sheets', icon: '📊' },
@@ -159,13 +152,6 @@ export default function ProcessingPage() {
     if (status === 'running') return 'border-blue-200 bg-blue-50';
     if (status === 'error') return 'border-red-200 bg-red-50';
     return 'border-gray-200 bg-gray-50';
-  };
-
-  const methodBarColor = (status: string) => {
-    if (status === 'complete') return 'bg-green-500';
-    if (status === 'running') return 'bg-blue-500';
-    if (status === 'error') return 'bg-red-500';
-    return 'bg-gray-300';
   };
 
   return (
@@ -350,85 +336,6 @@ export default function ProcessingPage() {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* ── Per-method extraction progress ───────────── */}
-            <div className="bg-white rounded-xl shadow p-6">
-              <h2 className="text-lg font-semibold mb-4">Extraction Engines</h2>
-              {methodsProgress.length > 0 ? (
-                <div className="space-y-4">
-                  {methodsProgress.map((mp) => (
-                    <div key={mp.method} className={`rounded-lg border p-4 transition ${methodStatusColor(mp.status)}`}>
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          {methodStatusIcon(mp.status)}
-                          <span className="font-medium text-sm text-gray-900">{mp.label}</span>
-                        </div>
-                        <span className={`text-sm font-bold ${
-                          mp.status === 'complete' ? 'text-green-600' :
-                          mp.status === 'running' ? 'text-blue-600' :
-                          mp.status === 'error' ? 'text-red-600' : 'text-gray-400'
-                        }`}>{mp.progress}%</span>
-                      </div>
-                      <div className="w-full bg-white/60 rounded-full h-2.5 mb-1.5 overflow-hidden">
-                        <div
-                          className={`h-2.5 rounded-full transition-all duration-700 ease-out ${methodBarColor(mp.status)}`}
-                          style={{ width: `${mp.progress}%` }}
-                        />
-                      </div>
-                      <div className="flex items-center justify-between text-xs text-gray-500">
-                        <span>{mp.checks_processed} / {mp.checks_total} cheques</span>
-                        <span className="capitalize">{mp.status}</span>
-                      </div>
-                      {mp.error && <p className="text-xs text-red-600 mt-1">{mp.error}</p>}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-8 text-gray-400">
-                  <Loader2 className="animate-spin mb-2" size={24} />
-                  <p className="text-sm">Waiting for extraction to begin...</p>
-                </div>
-              )}
-            </div>
-
-            {/* ── Live progress logs ──────────────────────── */}
-            <div className="bg-gray-900 rounded-xl shadow p-5 flex flex-col">
-              <div className="flex items-center gap-2 mb-3">
-                <Terminal size={16} className="text-green-400" />
-                <h2 className="text-sm font-semibold text-green-400">Live Progress</h2>
-                <div className="flex-1" />
-                {progressLogs.length > 0 && (
-                  <span className="text-[10px] text-gray-500 font-mono">{progressLogs.length} entries</span>
-                )}
-              </div>
-              <div className="flex-1 overflow-y-auto max-h-[280px] font-mono text-[11px] leading-relaxed space-y-0.5 scrollbar-thin scrollbar-thumb-gray-700">
-                {progressLogs.length === 0 ? (
-                  <div className="flex items-center gap-2 text-gray-500 py-4">
-                    <Loader2 size={12} className="animate-spin" />
-                    <span>Waiting for extraction logs...</span>
-                  </div>
-                ) : (
-                  progressLogs.map((log, i) => (
-                    <div key={i} className={`flex items-start gap-2 px-2 py-0.5 rounded ${
-                      log.level === 'success' ? 'text-green-400' :
-                      log.level === 'warn' ? 'text-yellow-400' :
-                      log.level === 'error' ? 'text-red-400' :
-                      'text-gray-400'
-                    }`}>
-                      <span className="text-gray-600 flex-shrink-0 select-none">
-                        {new Date(log.ts).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                      </span>
-                      <span className="flex-shrink-0">
-                        {log.level === 'success' ? '✓' : log.level === 'warn' ? '⚠' : log.level === 'error' ? '✗' : '›'}
-                      </span>
-                      <span>{log.msg}</span>
-                    </div>
-                  ))
-                )}
-                <div ref={logsEndRef} />
-              </div>
-            </div>
-          </div>
         </>
       )}
 

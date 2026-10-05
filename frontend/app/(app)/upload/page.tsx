@@ -58,13 +58,9 @@ function fmtSize(bytes?: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
-// ── Extraction methods available ───────────────────────────
-const EXTRACTION_METHODS = [
-  { id: 'tesseract', name: 'Tesseract OCR', desc: 'Fast offline text recognition via Tesseract', icon: '🔍' },
-  { id: 'numarkdown', name: 'NuMarkdown', desc: 'Vision-language model — good for structured layouts', icon: '📝' },
-  { id: 'ai', name: 'Gemini AI', desc: 'Google Gemini 2.0 Flash — best for handwritten fields', icon: '🤖' },
-  { id: 'hybrid', name: 'All (Hybrid)', desc: 'Run all 3 engines and merge results for best accuracy', icon: '⚡' },
-];
+// Kyriq picks the engine; the user is never asked. Michael, 21 Sep: "The software
+// should just extract the data they need" — no OCR, image or confidence settings.
+const EXTRACTION_METHODS = ['ai'] as const;
 
 const STEP_ORDER: ('upload' | 'preview' | 'configure')[] = ['upload', 'preview', 'configure'];
 const STEP_LABELS: Record<string, string> = { upload: 'Upload', preview: 'Preview', configure: 'Configure & Extract' };
@@ -90,7 +86,6 @@ export default function UploadPage() {
   const [zoom, setZoom] = useState(1);
 
   // ── Extraction config ────────────────────────────────────
-  const [selectedMethods, setSelectedMethods] = useState<string[]>(['ai']);
   const [rangeType, setRangeType] = useState<RangeType>('all');
   const [pageFrom, setPageFrom] = useState(1);
   const [pageTo, setPageTo] = useState(1);
@@ -451,16 +446,6 @@ export default function UploadPage() {
     }
   };
 
-  const toggleMethod = (methodId: string) => {
-    setSelectedMethods((prev) => {
-      if (methodId === 'hybrid') return ['hybrid'];
-      const without = prev.filter((m) => m !== 'hybrid' && m !== methodId);
-      if (prev.includes(methodId)) {
-        return without.length === 0 ? ['hybrid'] : without;
-      }
-      return [...without, methodId];
-    });
-  };
 
   const handleStartExtraction = async (targetJobId?: string) => {
     const jobId = targetJobId || analyzeResult?.job_id;
@@ -474,15 +459,7 @@ export default function UploadPage() {
 
     try {
       const r = job.result;
-      const isReExtract = forceExtract;
-      const methodsToRun = isReExtract ? ['ai'] : selectedMethods;
-
-      if (isReExtract) {
-        const wantsAllMethods = window.confirm('Use all extraction methods for this re-run? Click OK for the full extraction suite or Cancel to continue with the recommended fast re-run.');
-        if (wantsAllMethods) {
-          window.alert('This re-run currently uses the recommended fast extraction path to avoid reprocessing every engine. Continuing with the fast re-run.');
-        }
-      }
+      const methodsToRun = [...EXTRACTION_METHODS];
 
       const body: Record<string, unknown> = {
         job_id: jobId,
@@ -1153,43 +1130,7 @@ export default function UploadPage() {
             </div>
           )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* ── Method Selection ──────────────────── */}
-            <div className="bg-white rounded-xl border border-gray-100 p-4">
-              <div className="flex items-center gap-2 mb-2.5">
-                <Settings2 size={14} className="text-gray-500" />
-                <h3 className="text-[13px] font-semibold text-gray-900">Extraction Method</h3>
-              </div>
-              <div className="space-y-1.5">
-                {EXTRACTION_METHODS.map((method) => {
-                  const isSelected = selectedMethods.includes(method.id);
-                  return (
-                    <button
-                      key={method.id}
-                      onClick={() => toggleMethod(method.id)}
-                      disabled={step === 'starting'}
-                      className={`w-full text-left p-2.5 rounded-lg border transition ${
-                        isSelected ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-300'
-                      } disabled:opacity-50`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="text-base">{method.icon}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-[12px] text-gray-900">{method.name}</p>
-                          <p className="text-[10px] text-gray-400 truncate">{method.desc}</p>
-                        </div>
-                        <div className={`w-3.5 h-3.5 rounded-full border-[1.5px] flex items-center justify-center transition flex-shrink-0 ${
-                          isSelected ? 'border-gray-900 bg-gray-900' : 'border-gray-300'
-                        }`}>
-                          {isSelected && <CheckCircle size={8} className="text-white" />}
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
+          <div className="grid grid-cols-1 gap-4">
             {/* ── Range Selection ──────────────────── */}
             <div className="bg-white rounded-xl border border-gray-100 p-4">
               <div className="flex items-center gap-2 mb-2.5">
@@ -1323,7 +1264,7 @@ export default function UploadPage() {
           <div className="flex justify-end">
             <button
               onClick={() => handleStartExtraction()}
-              disabled={step === 'starting' || selectedMethods.length === 0}
+              disabled={step === 'starting'}
               className="flex items-center gap-1.5 px-6 py-2.5 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 text-[13px] font-medium transition shadow-sm"
             >
               {step === 'starting' ? (

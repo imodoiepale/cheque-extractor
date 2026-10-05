@@ -59,37 +59,60 @@ green, the change exercised in a browser, and a screenshot at 1440px and 400px.
 
 Security and correctness. None of this is visible, all of it is blocking.
 
-- [ ] **Fix the cross-tenant QuickBooks attach.** `frontend/pages/api/qbo/callback.ts:32-59` decodes
+- [x] **Fix the cross-tenant QuickBooks attach.** `frontend/pages/api/qbo/callback.ts:32-59` decodes
       `tenant_id` from unsigned base64 `state` and only warns on a CSRF mismatch, with the comment
       "Don't fail - just warn". A crafted state can attach a QuickBooks company to another firm.
       Sign the state with an HMAC, or store a nonce server-side keyed to the session, and reject on
       mismatch. *Done when:* a tampered state is rejected and logged.
-- [ ] **Lock down `frontend/pages/api/extension/config.ts`.** It serves with CORS `*` and has an
+      **Done:** state is HMAC-signed in `frontend/lib/qbo-state.ts` (`signState`/`verifyState`),
+      signed in `pages/api/qbo/auth.ts` and verified in `pages/api/qbo/callback.ts`, which now
+      rejects a bad signature, an expired state and a cookie mismatch instead of warning. Secret is
+      `QBO_STATE_SECRET`, falling back to `SUPABASE_SERVICE_ROLE_KEY`. Self-check:
+      `npx tsx lib/qbo-state.check.ts` — it asserts the exact forgery (re-encoded `tenant_id`) is
+      rejected, and that an unsigned legacy state is too.
+- [x] **Lock down `frontend/pages/api/extension/config.ts`.** It serves with CORS `*` and has an
       unauthenticated path that returns configuration. Require a valid session; drop the wildcard.
+      **Done:** the unauthenticated branch is gone (the extension already ships the public Supabase
+      URL and anon key in its own `BOOTSTRAP_CONFIG` and merges them over the response, so it never
+      needed it). CORS now reflects only `chrome-extension://` origins, pinnable with
+      `EXTENSION_ORIGINS`. The same wildcard was in `pages/api/extension/qb/refresh-token.ts`, so
+      both now share `frontend/lib/extension-cors.ts`.
 - [ ] **Turn on `REQUIRE_AUTH=true`** on the Railway backend so `/api/*` verifies JWTs.
-- [ ] **Update the backend CORS allowlist.** `backend/api_server.py:568` still names
+- [x] **Update the backend CORS allowlist.** `backend/api_server.py:568` still names
       `check-extractor-frontend.vercel.app`. The Vercel project was renamed to Kyriq, which changes
-      preview URLs.
+      preview URLs. **Done:** list trimmed to the real origins and the `"*"` entry removed — it had
+      been appended last, which made the whole allowlist inert. Previews now match
+      `allow_origin_regex` covering the Kyriq and legacy project names.
 - [ ] **Make duplicate detection database-backed.** `backend/api_server.py` ~944 checks duplicates
       against in-memory jobs only, with the comment saying so. After a restart the same file creates
       a new job, so identical customer behaviour would be billed differently. This blocks the usage
       ledger.
 - [ ] **Custom SMTP through Resend on Supabase**, and correct `site_url`. Without it auth email goes
       through the shared default sender, rate limited to a handful per hour, so password reset fails
-      at real volume. `supabase/config.toml` has `site_url` pointing at port 3000 while the app runs
-      on 3080.
+      at real volume. **Partly done:** `supabase/config.toml` now has `site_url` on 3080 and a real
+      `additional_redirect_urls` list. The Resend SMTP credentials themselves are a dashboard
+      setting, so they stay an ops item (section 14).
 - [ ] **Trial enforcement server-side:** 14 days or 250 successfully processed checks, whichever
       first. Processing stops; history stays viewable. Include the comp-account override from
       section 5 so pilot firms are not cut off mid-test.
-- [ ] **Remove the extraction choices** Michael asked to remove. `EXTRACTION_METHODS` in
+- [x] **Remove the extraction choices** Michael asked to remove. `EXTRACTION_METHODS` in
       `frontend/app/(app)/upload/page.tsx:62` and its radio group around line 1164; the method list
       in `frontend/app/(app)/dashboard/components/ConfigureExtractionDialog.tsx:191`. Kyriq picks the
       engine. *From: "Don't make them choose OCR settings, image settings, confidence levels."*
-- [ ] **Remove the Extraction Engines and Live Progress panels** from
+      **Done:** both method pickers removed; the engine is a module constant in each file. The
+      re-extract path also had a `window.confirm` asking whether to use all engines that then did
+      nothing but show an alert — that is gone too.
+- [x] **Remove the Extraction Engines and Live Progress panels** from
       `frontend/app/(app)/process/[id]/page.tsx` (one grid block spanning roughly lines 353-430).
       Keep the status card and the stage stepper. *From the 21 September screenshot.*
+      **Done:** both panels removed along with the now-dead `progressLogs`, `logsEndRef`,
+      `methodBarColor` and the `Terminal` import. The post-completion "Extraction Method Results"
+      summary is kept — it was not in the screenshot's scope.
 - [ ] **Ship the new logo.** Versions 1 (horizontal wordmark) and 7 (square K icon) from the logo
-      pack. Brand colours Indigo `#6366f1` and Emerald `#10b981`, font Cera Round Pro Bold. Replace
+      pack. **Blocked:** `Kyriq Logo - All Source files - 12 versions.zip` is not in the repo —
+      `new changes/` has the proposals, specs, screenshots and the switcher mockup but no logo pack,
+      so versions 1 and 7 are not available to ship. Brand colours Indigo `#6366f1` and Emerald
+      `#10b981` are in the design tokens regardless. Font Cera Round Pro Bold. Replace
       `frontend/public/Kyriq_Logo_Files/*`, `frontend/public/logo.png`, `chrome-extension/icons/*`
       and the favicon. The redesign site still uses placeholder purples; use the real logo colours.
 
@@ -220,7 +243,7 @@ Found during the inventory. Each is cheap now and expensive later.
       `tailwind.config.js`**, so the utilities do not exist and the pill and button classes are
       silently inert today. Parcel A fixes this.
 - [ ] **Adopt `cva`.** It is installed and imported **nowhere**. The primitives are its first use.
-- [ ] **Delete `app/(app)/qb-comparisons/page.old.tsx`**, 1,008 lines of dead code sitting in a route
+- [x] **Delete `app/(app)/qb-comparisons/page.old.tsx`**, 1,008 lines of dead code sitting in a route
       folder. Next.js will not route it, but a styling agent would burn a whole budget on it.
 - [ ] **Pick one radius.** `rounded-lg` appears 325 times and `rounded-xl` 119 times with no rule.
 - [ ] **Collapse five table-header systems into one.** There are at least five mutually inconsistent
