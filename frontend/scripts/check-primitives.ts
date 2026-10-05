@@ -15,6 +15,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { cn } from '../lib/utils';
 import { buttonVariants } from '../components/ui/button';
 import { glassCardVariants, glassPanelVariants } from '../components/ui/glass-card';
 import { badgeVariants } from '../components/ui/badge';
@@ -258,6 +259,36 @@ console.log('  ok  glass fallbacks, motion tokens and state utilities all presen
       `ambiguous and the shadow will not render: ${clashes.join(', ')}`
   );
   console.log(`  ok  ${shadowKeys.length} shadow keys, none collide with a colour name`);
+}
+
+// ── Every custom theme key must be known to tailwind-merge ────────────────
+// An unrecognised class has no conflict group, so cn("min-h-btn", "min-h-0")
+// returns BOTH and the primitive's value wins by stylesheet order — the call
+// site's override silently does nothing. That cost a parcel 11.5px of row
+// height in a table and was only caught by measuring in a browser.
+// This asserts every custom key in the config is actually overridable.
+{
+  const theme = (config as any).theme?.extend ?? (config as any).theme ?? {};
+  const probes: [string, string][] = [
+    ...Object.keys(theme.minHeight ?? {}).map((k) => [`min-h-${k}`, 'min-h-0'] as [string, string]),
+    ...Object.keys(theme.transitionDuration ?? {}).map((k) => [`duration-${k}`, 'duration-100'] as [string, string]),
+    ...Object.keys(theme.transitionTimingFunction ?? {}).map((k) => [`ease-${k}`, 'ease-linear'] as [string, string]),
+    ...Object.keys(theme.scale ?? {}).map((k) => [`scale-${k}`, 'scale-100'] as [string, string]),
+    ...Object.keys(theme.opacity ?? {}).map((k) => [`opacity-${k}`, 'opacity-100'] as [string, string]),
+    ...Object.keys(theme.boxShadow ?? {}).map((k) => [`shadow-${k}`, 'shadow-none'] as [string, string]),
+    ...Object.keys(theme.borderRadius ?? {})
+      .filter((k) => !['lg', 'md', 'sm', 'full'].includes(k))
+      .map((k) => [`rounded-${k}`, 'rounded-none'] as [string, string]),
+  ];
+  const broken = probes.filter(([custom, stock]) => cn(custom, stock) !== stock);
+  assert.deepStrictEqual(
+    broken.map(([c]) => c),
+    [],
+    'these custom theme keys are not in the tailwind-merge config, so a ' +
+      'className override of them silently fails: ' +
+      broken.map(([c]) => c).join(', ')
+  );
+  console.log(`  ok  all ${probes.length} custom theme keys are overridable via cn()`);
 }
 
 console.log('\nall primitive checks passed');
