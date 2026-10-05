@@ -1,12 +1,43 @@
 'use client';
 
 import { useState, useEffect, Suspense } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
+import { AlertCircle } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { Button, Field, GlassCard, Input, Skeleton } from '@/components/ui';
+
+/**
+ * Sign in.
+ *
+ * The form-state treatment here is the one parcel D establishes for every
+ * form surface in the app (see also signup / forgot / reset):
+ *
+ *  - every control is a `Field` + `Input`, so the label is wired by `htmlFor`
+ *    and the message is announced, not merely coloured;
+ *  - field-level problems set BOTH `Input state="invalid"` and `Field error`,
+ *    never the border alone;
+ *  - the error clears on the next keystroke, so a corrected field stops
+ *    shouting before submit;
+ *  - one form-level alert sits above the fields for anything the server says;
+ *  - submitting is `Button loading`, which swaps the icon in a fixed-width
+ *    slot — the button never reflows and never goes blank.
+ */
+
+/** Form-level alert. Error colour is paired with an icon and `role="alert"`. */
+function FormAlert({ children }: { children: React.ReactNode }) {
+  return (
+    <div
+      role="alert"
+      className="flex items-start gap-2.5 rounded-input border border-error-border bg-error-bg px-3.5 py-3 text-sm text-error-text"
+    >
+      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+      <span>{children}</span>
+    </div>
+  );
+}
 
 function LoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -36,7 +67,7 @@ function LoginForm() {
       if (error) throw error;
 
       // Small delay to ensure cookies are set
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       // Use window.location for full page reload to ensure session is set
       window.location.href = redirectTo;
@@ -48,69 +79,77 @@ function LoginForm() {
   };
 
   return (
-    <div className="bg-white rounded-2xl shadow-xl shadow-gray-900/5 border border-gray-100 p-6 sm:p-8">
-      <div className="text-center mb-8">
-        <h1 className="text-2xl sm:text-3xl font-black text-gray-900 tracking-tight">Welcome Back</h1>
-        <p className="text-gray-500 mt-2 text-sm">Sign in to your Kyriq account</p>
+    <GlassCard padding="none" className="p-6 sm:p-8">
+      <div className="mb-7 text-center">
+        <h1 className="font-heading text-2xl font-semibold text-ink-strong sm:text-3xl">
+          Welcome back
+        </h1>
+        <p className="mt-1.5 text-sm text-ink-body">Sign in to your Kyriq account</p>
       </div>
 
-      <form onSubmit={handleLogin} className="space-y-5">
-        {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
-            {error}
-          </div>
-        )}
+      <form onSubmit={handleLogin} className="space-y-5" noValidate>
+        {error ? <FormAlert>{error}</FormAlert> : null}
 
-        <div>
-          <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1.5">
-            Email
-          </label>
-          <input
+        <Field label="Email" htmlFor="email" required>
+          <Input
             id="email"
             type="email"
+            autoComplete="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (error) setError('');
+            }}
             placeholder="you@yourfirm.com"
-            className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white"
+            state={error ? 'invalid' : 'default'}
             required
           />
-        </div>
+        </Field>
 
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-              Password
-            </label>
-            <Link href="/forgot-password" className="text-sm text-blue-600 hover:underline">
-              Forgot password?
-            </Link>
-          </div>
-          <input
+        {/* The reset link lives in the hint slot, not inside the <label> — a
+            link inside a label steals the click that should focus the input. */}
+        <Field
+          label="Password"
+          htmlFor="password"
+          required
+          hint={
+            <span className="block text-right">
+              <Link
+                href="/forgot-password"
+                className="font-medium text-brand-deep hover:underline"
+              >
+                Forgot password?
+              </Link>
+            </span>
+          }
+        >
+          <Input
             id="password"
             type="password"
+            autoComplete="current-password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full px-4 py-2.5 border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm bg-white"
+            onChange={(e) => {
+              setPassword(e.target.value);
+              if (error) setError('');
+            }}
+            state={error ? 'invalid' : 'default'}
             required
           />
-        </div>
+        </Field>
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 rounded-xl hover:shadow-lg hover:shadow-blue-600/25 hover:-translate-y-px disabled:opacity-50 disabled:cursor-not-allowed font-bold text-sm transition-all"
-        >
-          {loading ? 'Signing in...' : 'Sign In'}
-        </button>
+        {/* Brand/indigo, matching the website (client change list, item 2). */}
+        <Button type="submit" block loading={loading}>
+          {loading ? 'Signing in…' : 'Sign In'}
+        </Button>
       </form>
 
-      <p className="text-center text-gray-500 mt-6 text-sm">
+      <p className="mt-6 text-center text-sm text-ink-body">
         Don&apos;t have an account?{' '}
-        <Link href="/signup" className="text-blue-600 hover:underline font-semibold">
-          Start free trial
+        <Link href="/signup" className="font-semibold text-brand-deep hover:underline">
+          Start Free Trial
         </Link>
       </p>
-    </div>
+    </GlassCard>
   );
 }
 
@@ -118,14 +157,12 @@ export default function LoginPage() {
   return (
     <Suspense
       fallback={
-        <div className="bg-white rounded-2xl shadow-xl shadow-gray-900/5 border border-gray-100 p-6 sm:p-8">
-          <div className="text-center py-8">
-            <div className="animate-pulse">
-              <div className="h-8 bg-gray-200 rounded w-48 mx-auto mb-4"></div>
-              <div className="h-4 bg-gray-200 rounded w-32 mx-auto"></div>
-            </div>
+        <GlassCard padding="none" className="p-6 sm:p-8">
+          <div className="space-y-3 py-8">
+            <Skeleton className="mx-auto h-8 w-48" />
+            <Skeleton className="mx-auto h-4 w-32" />
           </div>
-        </div>
+        </GlassCard>
       }
     >
       <LoginForm />

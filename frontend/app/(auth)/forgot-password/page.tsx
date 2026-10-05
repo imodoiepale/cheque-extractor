@@ -2,9 +2,18 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
+import { AlertCircle, ArrowLeft, CheckCircle, Mail } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { ArrowLeft, Mail, CheckCircle } from 'lucide-react';
+import { Button, Field, GlassCard, Input } from '@/components/ui';
 
+/**
+ * Request a password-reset link.
+ *
+ * Same form-state treatment as login/signup: Field + Input, one form-level
+ * alert, `Button loading` while submitting. Success is a separate panel
+ * rather than a toast — the instruction ("check your email, it expires in an
+ * hour") has to stay on screen.
+ */
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
@@ -34,91 +43,92 @@ export default function ForgotPasswordPage() {
 
   if (success) {
     return (
-      <div className="bg-white rounded-lg shadow-xl p-8">
-        <div className="text-center">
-          <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-green-100 mb-4">
-            <CheckCircle className="h-10 w-10 text-green-600" />
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">Check Your Email</h1>
-          <p className="text-gray-600 mb-6">
-            We've sent a password reset link to <strong>{email}</strong>
-          </p>
-          <p className="text-sm text-gray-500 mb-8">
-            Click the link in the email to reset your password. The link will expire in 1 hour.
-          </p>
-          <Link
-            href="/login"
-            className="inline-flex items-center text-blue-600 hover:underline font-medium"
-          >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Login
-          </Link>
-        </div>
-      </div>
+      <GlassCard padding="none" className="p-6 text-center sm:p-8">
+        <span
+          className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-success-bg"
+          aria-hidden
+        >
+          <CheckCircle className="h-7 w-7 text-success-text" />
+        </span>
+        <h1 className="font-heading text-2xl font-semibold text-ink-strong">Check your email</h1>
+        <p className="mt-2 text-sm text-ink-body">
+          We sent a password reset link to <strong className="text-ink-strong">{email}</strong>
+        </p>
+        <p className="mt-3 text-sm text-ink-faint">
+          Click the link in the email to reset your password. The link expires in one hour.
+        </p>
+        <Link href="/login" className="mt-6 inline-flex">
+          <Button variant="secondary" size="sm" icon={<ArrowLeft size={16} />}>
+            Back to sign in
+          </Button>
+        </Link>
+      </GlassCard>
     );
   }
 
   return (
-    <div className="bg-white rounded-lg shadow-xl p-8">
-      <div className="mb-6">
-        <Link
-          href="/login"
-          className="inline-flex items-center text-sm text-gray-600 hover:text-gray-900"
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to Login
-        </Link>
-      </div>
+    <GlassCard padding="none" className="p-6 sm:p-8">
+      <Link
+        href="/login"
+        className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-body transition-colors duration-quick ease-settle hover:text-ink-strong"
+      >
+        <ArrowLeft className="h-4 w-4" aria-hidden />
+        Back to sign in
+      </Link>
 
-      <div className="text-center mb-8">
-        <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-blue-100 mb-4">
-          <Mail className="h-6 w-6 text-blue-600" />
-        </div>
-        <h1 className="text-3xl font-bold text-gray-900">Forgot Password?</h1>
-        <p className="text-gray-600 mt-2">
-          No worries, we'll send you reset instructions
+      <div className="mb-7 mt-6 text-center">
+        <span
+          className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-brand-wash"
+          aria-hidden
+        >
+          <Mail className="h-6 w-6 text-brand-deep" />
+        </span>
+        <h1 className="font-heading text-2xl font-semibold text-ink-strong sm:text-3xl">
+          Forgot password?
+        </h1>
+        <p className="mt-1.5 text-sm text-ink-body">
+          No problem — we&apos;ll send you reset instructions.
         </p>
       </div>
 
-      <form onSubmit={handleResetPassword} className="space-y-6">
-        {error && (
-          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-            {error}
+      <form onSubmit={handleResetPassword} className="space-y-5" noValidate>
+        {error ? (
+          <div
+            role="alert"
+            className="flex items-start gap-2.5 rounded-input border border-error-border bg-error-bg px-3.5 py-3 text-sm text-error-text"
+          >
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+            <span>{error}</span>
           </div>
-        )}
+        ) : null}
 
-        <div>
-          <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-            Email Address
-          </label>
-          <input
+        <Field label="Email address" htmlFor="email" required>
+          <Input
             id="email"
             type="email"
+            autoComplete="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="Enter your email address"
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (error) setError('');
+            }}
+            placeholder="you@yourfirm.com"
+            state={error ? 'invalid' : 'default'}
             required
           />
-        </div>
+        </Field>
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition-colors"
-        >
-          {loading ? 'Sending...' : 'Send Reset Link'}
-        </button>
+        <Button type="submit" block loading={loading}>
+          {loading ? 'Sending…' : 'Send Reset Link'}
+        </Button>
       </form>
 
-      <div className="mt-6 text-center">
-        <p className="text-sm text-gray-600">
-          Remember your password?{' '}
-          <Link href="/login" className="text-blue-600 hover:underline font-medium">
-            Sign in
-          </Link>
-        </p>
-      </div>
-    </div>
+      <p className="mt-6 text-center text-sm text-ink-body">
+        Remember your password?{' '}
+        <Link href="/login" className="font-semibold text-brand-deep hover:underline">
+          Sign in
+        </Link>
+      </p>
+    </GlassCard>
   );
 }
