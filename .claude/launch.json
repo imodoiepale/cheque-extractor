@@ -4,8 +4,25 @@
     {
       "name": "prototype",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["-m", "http.server", "3095", "--directory", "kyriq-developer-handoff-v12-final"],
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "3095",
+        "--directory",
+        "kyriq-developer-handoff-v12-final"
+      ],
       "port": 3095
+    },
+    {
+      "name": "frontend",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "frontend",
+        "run",
+        "dev"
+      ],
+      "port": 3080
     }
   ]
 }

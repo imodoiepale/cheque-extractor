@@ -4,6 +4,9 @@ import { useEffect, useState, useRef } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { Landmark, ChevronDown } from 'lucide-react';
 
+// Lives inside the dark glass shell, so it carries no blur of its own and the
+// popover is an opaque `shell-solid` surface (rule 2: never nest two blurs).
+
 const STORAGE_KEY = 'kyriq_active_account';
 
 export function getActiveAccount(): string {
@@ -60,23 +63,23 @@ export default function AccountSwitcher() {
     <div ref={ref} className="relative px-3 py-1 mb-1">
       <button
         onClick={() => setOpen(v => !v)}
-        className="w-full flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-800/30 hover:bg-gray-700/40 border border-gray-700/40 transition-all text-left"
+        className="w-full flex items-center gap-2 px-3 py-1.5 rounded-input text-left press bg-shell-text/[0.05] hover:bg-shell-text/[0.09] border border-glass-border-dark"
         title="Filter by bank account"
       >
-        <Landmark className="w-3.5 h-3.5 text-emerald-400 flex-shrink-0" />
+        <Landmark className="w-3.5 h-3.5 text-accentEmerald flex-shrink-0" />
         <div className="flex-1 min-w-0">
-          <div className="text-[11px] font-medium text-white/70 truncate">
+          <div className="text-[11px] font-medium text-shell-text truncate">
             {active || 'All Accounts'}
           </div>
         </div>
-        <ChevronDown className={`w-3 h-3 text-gray-500 transition-transform flex-shrink-0 ${open ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`w-3 h-3 text-shell-muted transition-transform duration-quick ease-settle flex-shrink-0 ${open ? 'rotate-180' : ''}`} />
       </button>
 
       {open && (
-        <div className="absolute left-3 right-3 mt-1 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-50 overflow-hidden max-h-48 overflow-y-auto">
+        <div className="absolute left-3 right-3 mt-1 z-50 max-h-48 overflow-hidden scroll-region rounded-tile bg-shell-solid border border-glass-border-dark shadow-glass-modal animate-popover-in">
           <button
             onClick={() => select('')}
-            className={`w-full text-left px-3 py-2 text-xs transition-colors ${!active ? 'bg-indigo-500/10 text-indigo-300' : 'text-gray-400 hover:bg-gray-700/50'}`}
+            className={`w-full text-left px-3 py-2 text-xs press ${!active ? 'bg-brand/20 text-shell-active' : 'text-shell-muted hover:bg-shell-text/[0.08] hover:text-shell-text'}`}
           >
             All Accounts
           </button>
@@ -84,7 +87,7 @@ export default function AccountSwitcher() {
             <button
               key={acct}
               onClick={() => select(acct)}
-              className={`w-full text-left px-3 py-2 text-xs truncate transition-colors ${active === acct ? 'bg-indigo-500/10 text-indigo-300' : 'text-gray-300 hover:bg-gray-700/50'}`}
+              className={`w-full text-left px-3 py-2 text-xs truncate press ${active === acct ? 'bg-brand/20 text-shell-active' : 'text-shell-text hover:bg-shell-text/[0.08]'}`}
               title={acct}
             >
               {acct}
