@@ -1,7 +1,19 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { CheckCircle, XCircle, AlertCircle, RefreshCw, Clock } from 'lucide-react';
+import { Badge, Button, GlassPanel, StatusPill } from '@/components/ui';
+
+/**
+ * QuickBooks connection diagnostics.
+ *
+ * NOTE: nothing in the app imports this today — settings renders its own
+ * integration panel. Restyled rather than deleted so it cannot drift back into
+ * raw palette classes; flagged in the parcel-H report as a deletion candidate.
+ *
+ * Two fields here genuinely have no source yet (token expiry, last sync) and
+ * are labelled "not tracked" rather than rendered as a value.
+ */
 
 interface QBStatus {
   connected: boolean;
@@ -9,8 +21,6 @@ interface QBStatus {
   credentialsExist: boolean;
   companyName: string | null;
   realmId: string | null;
-  tokenExpiry: string | null;
-  lastSync: string | null;
   error: string | null;
 }
 
@@ -21,34 +31,24 @@ export default function QBConnectionStatus() {
     credentialsExist: false,
     companyName: null,
     realmId: null,
-    tokenExpiry: null,
-    lastSync: null,
     error: null,
   });
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
 
-  useEffect(() => {
-    checkStatus();
-  }, []);
-
-  const checkStatus = async () => {
+  const checkStatus = useCallback(async () => {
     setChecking(true);
     try {
-      // Check integration status
       const integrationRes = await fetch('/api/settings/integrations');
-      
+
       if (integrationRes.ok) {
         const data = await integrationRes.json();
-        
-        // Check company info if connected
-        let companyInfo = null;
+
+        let companyInfo: any = null;
         if (data.qboConnected) {
           try {
             const companyRes = await fetch('/api/qbo/company-info');
-            if (companyRes.ok) {
-              companyInfo = await companyRes.json();
-            }
+            if (companyRes.ok) companyInfo = await companyRes.json();
           } catch (err) {
             console.warn('Could not fetch company info:', err);
           }
@@ -60,138 +60,113 @@ export default function QBConnectionStatus() {
           credentialsExist: data.credentialsExist || false,
           companyName: companyInfo?.companyName || data.companyName || null,
           realmId: data.realmId || null,
-          tokenExpiry: null, // TODO: Add token expiry tracking
-          lastSync: null, // TODO: Add last sync tracking
           error: null,
         });
       } else {
-        const errorData = await integrationRes.json();
-        setStatus(prev => ({
-          ...prev,
-          error: errorData.error || 'Failed to check status',
-        }));
+        const errorData = await integrationRes.json().catch(() => ({}));
+        setStatus(prev => ({ ...prev, error: errorData.error || 'Failed to check status' }));
       }
     } catch (error: any) {
-      setStatus(prev => ({
-        ...prev,
-        error: error.message || 'Network error',
-      }));
+      setStatus(prev => ({ ...prev, error: error.message || 'Network error' }));
     } finally {
       setLoading(false);
       setChecking(false);
     }
-  };
+  }, []);
+
+  useEffect(() => { checkStatus(); }, [checkStatus]);
 
   if (loading) {
     return (
-      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+      <GlassPanel tone="plain" radius="tile" padding="md">
         <div className="flex items-center gap-2">
-          <RefreshCw size={16} className="animate-spin text-gray-400" />
-          <span className="text-sm text-gray-600">Checking QuickBooks connection...</span>
+          <RefreshCw size={16} className="animate-spin text-ink-faint" aria-hidden />
+          <span className="text-sm text-ink-body">Checking QuickBooks connection…</span>
         </div>
-      </div>
+      </GlassPanel>
     );
   }
 
   if (status.error) {
     return (
-      <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+      <div role="alert" className="rounded-tile border border-error-border bg-error-bg p-4">
         <div className="flex items-start gap-3">
-          <AlertCircle className="text-red-600 flex-shrink-0 mt-0.5" size={20} />
-          <div className="flex-1">
-            <h3 className="font-semibold text-red-900 text-sm">Connection Check Failed</h3>
-            <p className="text-red-700 text-xs mt-1">{status.error}</p>
+          <AlertCircle className="mt-0.5 shrink-0 text-error-text" size={20} aria-hidden />
+          <div className="min-w-0 flex-1">
+            <h3 className="text-sm font-semibold text-error-text">Connection check failed</h3>
+            <p className="mt-1 text-xs text-error-text">{status.error}</p>
           </div>
-          <button
-            onClick={checkStatus}
-            disabled={checking}
-            className="px-3 py-1.5 bg-red-600 text-white text-xs rounded hover:bg-red-700 disabled:opacity-50"
-          >
-            {checking ? 'Checking...' : 'Retry'}
-          </button>
+          <Button size="sm" variant="destructive" loading={checking} onClick={checkStatus}>
+            Retry
+          </Button>
         </div>
       </div>
     );
   }
 
   return (
-    <div className={`border rounded-lg p-4 ${
-      status.connected ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'
-    }`}>
-      <div className="space-y-3">
-        {/* Connection Status */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            {status.connected ? (
-              <CheckCircle className="text-green-600" size={20} />
-            ) : (
-              <XCircle className="text-amber-600" size={20} />
+    <GlassPanel tone="plain" radius="tile" padding="md" className="space-y-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-2">
+          {status.connected
+            ? <CheckCircle className="shrink-0 text-success" size={20} aria-hidden />
+            : <XCircle className="shrink-0 text-warning" size={20} aria-hidden />}
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-ink-strong">
+              {status.connected ? 'Connected to QuickBooks' : 'Not connected'}
+            </h3>
+            {status.companyName && (
+              <p className="mt-0.5 truncate text-xs text-ink-body">
+                Company: <span className="font-semibold">{status.companyName}</span>
+              </p>
             )}
-            <div>
-              <h3 className={`font-semibold text-sm ${
-                status.connected ? 'text-green-900' : 'text-amber-900'
-              }`}>
-                {status.connected ? 'Connected to QuickBooks' : 'Not Connected'}
-              </h3>
-              {status.companyName && (
-                <p className="text-xs text-gray-700 mt-0.5">
-                  Company: <span className="font-semibold">{status.companyName}</span>
-                </p>
-              )}
-            </div>
           </div>
-          <button
-            onClick={checkStatus}
-            disabled={checking}
-            className="p-2 hover:bg-white/50 rounded transition disabled:opacity-50"
-            title="Refresh status"
-          >
-            <RefreshCw size={14} className={checking ? 'animate-spin' : ''} />
-          </button>
         </div>
+        <button
+          type="button"
+          onClick={checkStatus}
+          disabled={checking}
+          aria-label="Refresh connection status"
+          title="Refresh status"
+          className="press rounded-full p-2 text-ink-faint hover:text-ink-strong disabled:opacity-disabled"
+        >
+          <RefreshCw size={14} className={checking ? 'animate-spin' : undefined} />
+        </button>
+      </div>
 
-        {/* Status Details */}
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <div className="flex items-center gap-1.5">
-            {status.configured ? (
-              <CheckCircle size={12} className="text-green-600" />
-            ) : (
-              <XCircle size={12} className="text-red-600" />
-            )}
-            <span className={status.configured ? 'text-green-800' : 'text-red-800'}>
-              Credentials {status.configured ? 'Configured' : 'Not Configured'}
-            </span>
-          </div>
-          
-          <div className="flex items-center gap-1.5">
-            {status.connected ? (
-              <CheckCircle size={12} className="text-green-600" />
-            ) : (
-              <XCircle size={12} className="text-amber-600" />
-            )}
-            <span className={status.connected ? 'text-green-800' : 'text-amber-800'}>
-              OAuth {status.connected ? 'Active' : 'Required'}
-            </span>
-          </div>
-
-          {status.realmId && (
-            <div className="col-span-2 flex items-center gap-1.5 text-gray-600">
-              <span className="font-medium">Realm ID:</span>
-              <span className="font-mono text-[10px]">{status.realmId}</span>
-            </div>
-          )}
+      <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
+        <div className="flex items-center gap-1.5">
+          <StatusPill
+            status={status.configured ? 'complete' : 'failed'}
+            label={`Credentials ${status.configured ? 'configured' : 'missing'}`}
+            size="sm"
+          />
         </div>
-
-        {/* Token Status (if connected) */}
-        {status.connected && (
-          <div className="pt-2 border-t border-green-200">
-            <div className="flex items-center gap-1.5 text-xs text-green-800">
-              <Clock size={12} />
-              <span>Token auto-refresh: Active</span>
-            </div>
+        <div className="flex items-center gap-1.5">
+          <StatusPill
+            status={status.connected ? 'complete' : 'pending'}
+            label={`OAuth ${status.connected ? 'active' : 'required'}`}
+            size="sm"
+          />
+        </div>
+        {status.realmId && (
+          <div className="flex items-center gap-1.5 text-ink-faint sm:col-span-2">
+            <span className="font-medium">Realm ID</span>
+            <span className="nums font-mono text-[10px]">{status.realmId}</span>
           </div>
         )}
       </div>
-    </div>
+
+      {status.connected && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-glass-hairline pt-2">
+          <span className="inline-flex items-center gap-1.5 text-xs text-ink-body">
+            <Clock size={12} aria-hidden /> Token auto-refresh active
+          </span>
+          {/* Both of these were `null` with a TODO. Say so rather than show a blank. */}
+          <Badge tone="outline" size="sm">Token expiry not tracked</Badge>
+          <Badge tone="outline" size="sm">Last sync not tracked</Badge>
+        </div>
+      )}
+    </GlassPanel>
   );
 }

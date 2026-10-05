@@ -1,8 +1,19 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { X, Search, Loader2 } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { Search, Loader2, X, BookOpen, SearchX } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { Badge, Button, Dialog, GlassPanel } from '@/components/ui';
+import { cn } from '@/lib/utils';
+
+/**
+ * Find a QuickBooks transaction to remap a check onto.
+ *
+ * The overlay, the scrim, escape-to-close and the body scroll lock all come
+ * from the Dialog primitive, which is also the only blurred surface here — the
+ * result rows are GlassPanels and carry no backdrop-filter, so the layer count
+ * does not move with the number of results.
+ */
 
 function fmt(amount: number | null | undefined): string {
   if (amount == null) return '—';
@@ -39,11 +50,12 @@ function quickScore(check: any, qbTxn: any): number {
   return Math.min(score, 100);
 }
 
-function scoreColor(s: number): string {
-  if (s >= 80) return 'text-emerald-600 bg-emerald-50 border-emerald-200';
-  if (s >= 60) return 'text-amber-600 bg-amber-50 border-amber-200';
-  if (s >= 40) return 'text-orange-600 bg-orange-50 border-orange-200';
-  return 'text-gray-500 bg-gray-50 border-gray-200';
+/** Four bands onto the four Badge tones. No band invents a colour. */
+function scoreTone(s: number): 'success' | 'warning' | 'error' | 'neutral' {
+  if (s >= 80) return 'success';
+  if (s >= 60) return 'warning';
+  if (s >= 40) return 'error';
+  return 'neutral';
 }
 
 interface SearchQBModalProps {
@@ -65,13 +77,7 @@ export default function SearchQBModal({ check, onSelect, onClose }: SearchQBModa
     if (check?.payee) setQuery(check.payee);
   }, [check]);
 
-  useEffect(() => {
-    if (!query.trim()) { setResults([]); setHasSearched(false); return; }
-    const t = setTimeout(() => doSearch(query), 400);
-    return () => clearTimeout(t);
-  }, [query]);
-
-  async function doSearch(q: string) {
+  const doSearch = useCallback(async (q: string) => {
     if (!q.trim()) return;
     setIsLoading(true);
     setError(null);
@@ -95,136 +101,152 @@ export default function SearchQBModal({ check, onSelect, onClose }: SearchQBModa
     } finally {
       setIsLoading(false);
     }
-  }
+  }, [check?.id]);
 
+  /* Debounced: 400ms after the last keystroke, so a typed payee is one query. */
   useEffect(() => {
-    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') onClose(); }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+    if (!query.trim()) { setResults([]); setHasSearched(false); return; }
+    const t = setTimeout(() => doSearch(query), 400);
+    return () => clearTimeout(t);
+  }, [query, doSearch]);
 
   return (
-    <div className="fixed inset-0 bg-black/45 flex items-center justify-center z-50 p-5" onClick={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="bg-white rounded-xl w-full max-w-[660px] max-h-[88vh] flex flex-col shadow-2xl overflow-hidden">
-
-        {/* Header */}
-        <div className="flex justify-between items-start px-5 pt-5 pb-4 border-b border-gray-200">
-          <div>
-            <div className="text-base font-bold text-gray-900 mb-1">Find QuickBooks Transaction</div>
-            <div className="text-sm text-gray-500">
-              Matching check <strong>#{check?.check_number || '—'}</strong> — {fmt(check?.amount)} to{' '}
-              <strong>{check?.payee || 'unknown payee'}</strong>
-            </div>
-          </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        {/* Check summary strip */}
-        <div className="flex bg-gray-50 border-b border-gray-200">
-          {[
-            { label: 'Check #', value: check?.check_number || '—' },
-            { label: 'Amount', value: fmt(check?.amount) },
-            { label: 'Date', value: fmtDate(check?.check_date) },
-            { label: 'Payee', value: check?.payee || '—' },
-          ].map((item) => (
-            <div key={item.label} className="flex-1 px-4 py-2 border-r border-gray-200 last:border-r-0">
-              <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">{item.label}</div>
-              <div className="text-sm font-semibold text-gray-900 truncate">{item.value}</div>
-            </div>
-          ))}
-        </div>
-
-        {/* Search bar */}
-        <div className="flex items-center gap-2 px-5 py-3 border-b border-gray-100">
-          <Search className="w-4 h-4 text-gray-400 flex-shrink-0" />
-          <input
-            ref={inputRef}
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by payee, amount, check #, date…"
-            className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-700 outline-none focus:ring-2 focus:ring-indigo-200"
-          />
-          {isLoading && <Loader2 className="w-4 h-4 text-indigo-500 animate-spin flex-shrink-0" />}
-          {query && !isLoading && (
-            <button onClick={() => { setQuery(''); setResults([]); setHasSearched(false); }} className="text-gray-400 hover:text-gray-600">
-              <X className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-
-        {/* Error */}
-        {error && (
-          <div className="mx-5 mt-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-            ⚠️ {error}
-          </div>
-        )}
-
-        {/* Results */}
-        <div className="flex-1 overflow-y-auto px-5 py-2">
-          {!hasSearched && !isLoading && (
-            <div className="text-center py-10 text-gray-500">
-              <div className="text-2xl mb-2">📚</div>
-              <div className="font-semibold text-gray-700">Search QuickBooks transactions</div>
-              <div className="text-sm text-gray-400 mt-1">Type above to search by payee name, amount, or check number</div>
-            </div>
-          )}
-
-          {hasSearched && results.length === 0 && !isLoading && (
-            <div className="text-center py-10 text-gray-500">
-              <div className="text-2xl mb-2">🤷</div>
-              <div className="font-semibold text-gray-700">No transactions found</div>
-              <div className="text-sm text-gray-400 mt-1">Try a different search term</div>
-            </div>
-          )}
-
-          {results.map((txn) => {
-            const score = quickScore(check, txn);
-            return (
-              <div
-                key={txn.id}
-                onClick={() => onSelect(txn)}
-                className="flex justify-between items-center px-4 py-3 rounded-lg border border-gray-200 mb-2 cursor-pointer hover:border-indigo-300 hover:bg-indigo-50/30 transition-all"
-              >
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className="text-[11px] font-bold bg-gray-100 text-gray-700 px-2 py-0.5 rounded">
-                      {txn.txn_type || 'Transaction'}
-                    </span>
-                    {txn.doc_number && <span className="text-sm font-bold text-gray-900">#{txn.doc_number}</span>}
-                    <span className="text-sm font-bold text-gray-900 ml-auto">{fmt(txn.amount)}</span>
-                  </div>
-                  <div className="text-xs text-gray-500">{fmtDate(txn.txn_date)} · {txn.payee || 'No payee'}</div>
-                  {txn.account && <div className="text-[11px] text-gray-400 mt-0.5">{txn.account}</div>}
-                  {txn.memo && <div className="text-[11px] text-gray-400 italic">&quot;{txn.memo}&quot;</div>}
-                </div>
-                <div className="flex flex-col items-end gap-2 ml-4 flex-shrink-0">
-                  <span className={`text-sm font-extrabold px-2.5 py-0.5 rounded-full border ${scoreColor(score)}`}>
-                    {score}%
-                  </span>
-                  <button className="px-2.5 py-1 text-xs font-semibold bg-indigo-600 text-white rounded-md hover:bg-indigo-700 whitespace-nowrap">
-                    Use this →
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Footer */}
-        <div className="flex justify-between items-center px-5 py-3 border-t border-gray-200 bg-gray-50">
-          <span className="text-xs text-gray-400">
+    <Dialog
+      open
+      onClose={onClose}
+      size="xl"
+      title="Find QuickBooks transaction"
+      description={
+        <>
+          Matching check <strong className="nums">#{check?.check_number || '—'}</strong> —{' '}
+          <strong className="nums">{fmt(check?.amount)}</strong> to{' '}
+          <strong>{check?.payee || 'unknown payee'}</strong>
+        </>
+      }
+      footer={
+        <>
+          <span className="nums mr-auto text-xs text-ink-faint">
             {results.length > 0
               ? `${results.length} transaction${results.length !== 1 ? 's' : ''} found`
               : 'Showing last 90 days of transactions'}
           </span>
-          <button onClick={onClose} className="px-3 py-1.5 text-sm font-semibold bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50">
-            Cancel
+          <Button size="sm" variant="secondary" onClick={onClose}>Cancel</Button>
+        </>
+      }
+    >
+      {/* The check being remapped, pinned above the search so the figures the
+          reader is comparing against never scroll away. */}
+      <GlassPanel tone="sunken" radius="tile" padding="none" className="mb-3 grid grid-cols-2 sm:grid-cols-4">
+        {[
+          { label: 'Check #', value: check?.check_number || '—', nums: true },
+          { label: 'Amount', value: fmt(check?.amount), nums: true },
+          { label: 'Date', value: fmtDate(check?.check_date), nums: true },
+          { label: 'Payee', value: check?.payee || '—', nums: false },
+        ].map((item) => (
+          <div key={item.label} className="min-w-0 px-4 py-2">
+            <div className="text-eyebrow text-ink-faint">{item.label}</div>
+            <div className={cn('truncate text-sm font-semibold text-ink-strong', item.nums && 'nums')}>
+              {item.value}
+            </div>
+          </div>
+        ))}
+      </GlassPanel>
+
+      {/* Search */}
+      <div className="flex items-center gap-2">
+        <Search className="h-4 w-4 shrink-0 text-ink-faint" aria-hidden />
+        <input
+          ref={inputRef}
+          /* `text`, not `search`: this field has its own clear button, and
+             WebKit renders a second native one next to it. */
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search by payee, amount, check #, date…"
+          aria-label="Search QuickBooks transactions"
+          className="min-h-input flex-1 rounded-input border border-glass-hairline bg-white/70 px-3.5 py-2.5 text-sm text-ink-strong shadow-inner-track placeholder:text-ink-faint focus:border-brand focus:bg-white/90 focus:outline-none focus:ring-[3px] focus:ring-ring/50"
+        />
+        {isLoading && <Loader2 className="h-4 w-4 shrink-0 animate-spin text-brand" aria-label="Searching" />}
+        {query && !isLoading && (
+          <button
+            type="button"
+            aria-label="Clear search"
+            onClick={() => { setQuery(''); setResults([]); setHasSearched(false); }}
+            className="press shrink-0 rounded-full p-1 text-ink-faint hover:text-ink-strong"
+          >
+            <X className="h-4 w-4" />
           </button>
-        </div>
+        )}
       </div>
-    </div>
+
+      {error && (
+        <p role="alert" className="mt-2 rounded-input border border-error-border bg-error-bg px-3 py-2 text-sm text-error-text">
+          {error}
+        </p>
+      )}
+
+      {/* Results. The one scroll region in this dialog. */}
+      <div className="scroll-region mt-3 max-h-[46vh]">
+        {!hasSearched && !isLoading && (
+          <div className="py-10 text-center">
+            <BookOpen className="mx-auto mb-2 h-8 w-8 text-ink-faint" aria-hidden />
+            <p className="font-heading text-base font-semibold text-ink-strong">
+              Search QuickBooks transactions
+            </p>
+            <p className="mt-1 text-sm text-ink-body">
+              Type above to search by payee name, amount or check number.
+            </p>
+          </div>
+        )}
+
+        {hasSearched && results.length === 0 && !isLoading && (
+          <div className="py-10 text-center">
+            <SearchX className="mx-auto mb-2 h-8 w-8 text-ink-faint" aria-hidden />
+            <p className="font-heading text-base font-semibold text-ink-strong">No transactions found</p>
+            <p className="mt-1 text-sm text-ink-body">Try a different search term.</p>
+          </div>
+        )}
+
+        {results.map((txn) => {
+          const score = quickScore(check, txn);
+          return (
+            <GlassPanel
+              key={txn.id}
+              tone="plain"
+              radius="tile"
+              padding="none"
+              className="press mb-2 flex cursor-pointer items-center justify-between gap-4 px-4 py-3 hover:bg-brand/[0.06]"
+              role="button"
+              tabIndex={0}
+              onClick={() => onSelect(txn)}
+              onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && onSelect(txn)}
+            >
+              <div className="min-w-0 flex-1">
+                <div className="mb-1 flex items-center gap-2">
+                  <Badge tone="outline" size="sm">{txn.txn_type || 'Transaction'}</Badge>
+                  {txn.doc_number && (
+                    <span className="nums text-sm font-semibold text-ink-strong">#{txn.doc_number}</span>
+                  )}
+                  <span className="nums-money ml-auto text-sm font-semibold text-ink-strong">
+                    {fmt(txn.amount)}
+                  </span>
+                </div>
+                <div className="nums text-xs text-ink-body">
+                  {fmtDate(txn.txn_date)} · {txn.payee || 'No payee'}
+                </div>
+                {txn.account && <div className="mt-0.5 text-[11px] text-ink-faint">{txn.account}</div>}
+                {txn.memo && <div className="text-[11px] italic text-ink-faint">&quot;{txn.memo}&quot;</div>}
+              </div>
+              <div className="flex shrink-0 flex-col items-end gap-2">
+                <Badge tone={scoreTone(score)} size="md" className="nums font-bold">{score}%</Badge>
+                <span className="press inline-flex items-center rounded-full bg-gradient-to-r from-brand to-brand-dark px-2.5 py-1 text-xs font-semibold text-white shadow-brand-glow">
+                  Use this
+                </span>
+              </div>
+            </GlassPanel>
+          );
+        })}
+      </div>
+    </Dialog>
   );
 }

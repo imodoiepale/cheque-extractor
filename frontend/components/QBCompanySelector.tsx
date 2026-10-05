@@ -1,7 +1,20 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Building2, RefreshCw, AlertCircle } from 'lucide-react';
+import { GlassPanel } from '@/components/ui';
+
+/**
+ * Compact "which QuickBooks company am I on" strip.
+ *
+ * NOTE: nothing in the app imports this today — `QBCompanySwitcher` (parcel A)
+ * is the live control. It is restyled rather than deleted so it is not a
+ * palette-drift landmine if someone wires it back in, and is flagged in the
+ * parcel-H report as a deletion candidate.
+ *
+ * GlassPanel, not GlassCard: this sits inside page chrome and must not blur a
+ * second time.
+ */
 
 interface CompanyInfo {
   realmId: string;
@@ -18,17 +31,13 @@ export default function QBCompanySelector({ onCompanyChange }: QBCompanySelector
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchCurrentCompany();
-  }, []);
-
-  const fetchCurrentCompany = async () => {
+  const fetchCurrentCompany = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      
+
       const response = await fetch('/api/qbo/company-info');
-      
+
       if (response.ok) {
         const data = await response.json();
         setCurrentCompany({
@@ -36,8 +45,9 @@ export default function QBCompanySelector({ onCompanyChange }: QBCompanySelector
           companyName: data.companyName,
           connected: data.connected,
         });
+        onCompanyChange?.(data.realmId);
       } else {
-        const errorData = await response.json();
+        const errorData = await response.json().catch(() => ({}));
         setError(errorData.error || 'Not connected to QuickBooks');
         setCurrentCompany(null);
       }
@@ -47,51 +57,50 @@ export default function QBCompanySelector({ onCompanyChange }: QBCompanySelector
     } finally {
       setLoading(false);
     }
-  };
+  }, [onCompanyChange]);
 
-  const handleSwitchCompany = () => {
-    // Redirect to settings to reconnect with different company
-    window.location.href = '/settings?tab=integrations&action=reconnect';
-  };
+  useEffect(() => { fetchCurrentCompany(); }, [fetchCurrentCompany]);
 
   if (loading) {
     return (
-      <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg border border-gray-200">
-        <RefreshCw size={14} className="animate-spin text-gray-400" />
-        <span className="text-xs text-gray-500">Loading company info...</span>
-      </div>
+      <GlassPanel tone="plain" radius="input" padding="none" className="flex items-center gap-2 px-3 py-2">
+        <RefreshCw size={14} className="animate-spin text-ink-faint" aria-hidden />
+        <span className="text-xs text-ink-body">Loading company info…</span>
+      </GlassPanel>
     );
   }
 
   if (error || !currentCompany) {
     return (
-      <div className="flex items-center gap-2 px-3 py-2 bg-red-50 rounded-lg border border-red-200">
-        <AlertCircle size={14} className="text-red-500" />
-        <span className="text-xs text-red-700">{error || 'Not connected'}</span>
-        <button
-          onClick={() => window.location.href = '/settings?tab=integrations'}
-          className="ml-auto text-xs text-red-600 hover:text-red-800 font-medium"
+      <div className="flex items-center gap-2 rounded-input border border-error-border bg-error-bg px-3 py-2">
+        <AlertCircle size={14} className="shrink-0 text-error-text" aria-hidden />
+        <span className="text-xs text-error-text">{error || 'Not connected'}</span>
+        <a
+          href="/settings?tab=integrations"
+          className="press ml-auto text-xs font-semibold text-error-text underline-offset-2 hover:underline"
         >
           Connect
-        </button>
+        </a>
       </div>
     );
   }
 
   return (
-    <div className="flex items-center gap-2 px-3 py-2 bg-green-50 rounded-lg border border-green-200">
-      <Building2 size={14} className="text-green-600" />
-      <div className="flex-1">
-        <div className="text-xs font-semibold text-green-900">{currentCompany.companyName}</div>
-        <div className="text-[10px] text-green-600">QuickBooks Connected</div>
+    <div className="flex items-center gap-2 rounded-input border border-success-border bg-success-bg px-3 py-2">
+      <Building2 size={14} className="shrink-0 text-success-text" aria-hidden />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-xs font-semibold text-success-text">
+          {currentCompany.companyName}
+        </div>
+        <div className="text-[10px] text-success-text/80">QuickBooks connected</div>
       </div>
-      <button
-        onClick={handleSwitchCompany}
-        className="text-xs text-green-700 hover:text-green-900 font-medium"
+      <a
+        href="/settings?tab=integrations&action=reconnect"
         title="Switch to a different QuickBooks company"
+        className="press text-xs font-semibold text-success-text underline-offset-2 hover:underline"
       >
         Switch
-      </button>
+      </a>
     </div>
   );
 }

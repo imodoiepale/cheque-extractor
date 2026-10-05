@@ -1,15 +1,84 @@
 'use client';
 
 import { useState } from 'react';
-import { Check, Flag, FileText, ChevronDown, ChevronUp, Search, Plus, Undo2, AlertTriangle, Pencil, CheckCircle2 } from 'lucide-react';
+import {
+  Check, Flag, FileText, ChevronDown, ChevronUp, Search, Plus, Undo2,
+  AlertTriangle, Pencil, CheckCircle2, Repeat, HelpCircle,
+} from 'lucide-react';
+import {
+  GlassPanel, StatusPill, Badge, Input, Textarea, Field,
+  type StatusKey,
+} from '@/components/ui';
+import { cn } from '@/lib/utils';
 
-const STATUS_COLORS: Record<string, { bg: string; text: string; dot: string; border: string }> = {
-  matched:     { bg: 'bg-emerald-50', text: 'text-emerald-800', dot: 'bg-emerald-500', border: 'border-emerald-500' },
-  approved:    { bg: 'bg-blue-50',    text: 'text-blue-800',    dot: 'bg-blue-500',    border: 'border-blue-500' },
-  pending:     { bg: 'bg-amber-50',   text: 'text-amber-800',   dot: 'bg-amber-500',   border: 'border-amber-500' },
-  discrepancy: { bg: 'bg-red-50',     text: 'text-red-800',     dot: 'bg-red-500',     border: 'border-red-500' },
-  unmatched:   { bg: 'bg-gray-50',    text: 'text-gray-700',    dot: 'bg-gray-400',    border: 'border-gray-400' },
-  flagged:     { bg: 'bg-violet-50',  text: 'text-violet-800',  dot: 'bg-violet-500',  border: 'border-violet-500' },
+/**
+ * MatchRow — one check against one QuickBooks transaction.
+ *
+ * Three rules this file is held to by scripts/check-parcel-h.ts:
+ *
+ *  1. The row is a GlassPanel, never a GlassCard. A match list is long, and a
+ *     blurred row is one compositing layer per row.
+ *  2. Row height is `ROW_CELL` and is declared once. The pre-redesign row was
+ *     px-4 py-3 and it stays px-4 py-3 — the premium look costs no rows.
+ *  3. The only inline `style` left is ScoreBar's width, which is genuine
+ *     maths. Every colour, radius and shadow comes from a token.
+ */
+
+/** Declared once. The grid row was px-4 py-3 before the redesign; it still is. */
+const ROW_CELL = 'px-4 py-3';
+
+/**
+ * Dense row buttons.
+ *
+ * These are NOT the `Button` primitive, for two separate reasons:
+ *
+ *  1. Button's `secondary` variant IS `.glass-card` and `ghost` carries
+ *     `backdrop-blur-[8px]`. Either one would put a compositing layer on every
+ *     row of a list that runs to hundreds.
+ *  2. `size="sm"` is `min-h-tap` (2.75rem), and overriding it through
+ *     `className` does NOT work: tailwind-merge does not recognise the custom
+ *     `min-h-tap` / `min-h-btn` theme keys, so it keeps both classes and the
+ *     44px floor wins. Measured: the row grew 120.5px -> 132px before this was
+ *     caught. Density does not regress, so the row pill is declared here.
+ *
+ * Both reasons are reported as primitive gaps rather than patched in the
+ * primitive. The 44px tap floor is deliberately traded away INSIDE a row, which
+ * is where it already was before the redesign.
+ */
+const ROW_BTN_BASE = [
+  'press inline-flex min-h-0 items-center justify-center gap-1 whitespace-nowrap',
+  'rounded-full px-2.5 py-1 text-xs font-semibold',
+  'focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50',
+  'disabled:pointer-events-none disabled:opacity-disabled',
+].join(' ');
+const ROW_BTN_PRIMARY = [
+  ROW_BTN_BASE,
+  'bg-gradient-to-r from-brand to-brand-dark text-white shadow-brand-glow',
+  'hover:from-brand-light hover:to-brand',
+].join(' ');
+const ROW_BTN_QUIET = [
+  ROW_BTN_BASE,
+  'border border-glass-hairline bg-surface/70 text-ink-body',
+  'hover:bg-brand/[0.06] hover:text-ink-strong',
+].join(' ');
+/** Expanded sub-panels. Same 1.5rem gutter the old `px-6 py-3` had. */
+const PANEL_CELL = 'px-6 py-3';
+
+/**
+ * The match vocabulary mapped onto the canonical StatusPill keys. `discrepancy`
+ * and `flagged` are NOT keys in STATUS_TONES, so they alias onto keys that are
+ * (`error`, `review`) rather than introducing two new status colours.
+ *
+ * The accent stripe is derived from the same row, so a status can never be one
+ * colour on the pill and another on the stripe.
+ */
+const MATCH_STATUS: Record<string, { pill: StatusKey; accent: string }> = {
+  matched:     { pill: 'matched',   accent: 'border-l-success' },
+  approved:    { pill: 'approved',  accent: 'border-l-info' },
+  pending:     { pill: 'pending',   accent: 'border-l-warning' },
+  discrepancy: { pill: 'error',     accent: 'border-l-error' },
+  unmatched:   { pill: 'unmatched', accent: 'border-l-warning' },
+  flagged:     { pill: 'review',    accent: 'border-l-warning' },
 };
 
 const STATUS_LABELS: Record<string, string> = {
@@ -21,11 +90,15 @@ const STATUS_LABELS: Record<string, string> = {
   flagged: 'Flagged',
 };
 
-function confidenceColor(score: number): string {
-  if (score >= 95) return 'text-emerald-600 bg-emerald-50 border-emerald-200';
-  if (score >= 75) return 'text-amber-600 bg-amber-50 border-amber-200';
-  if (score >= 50) return 'text-orange-600 bg-orange-50 border-orange-200';
-  return 'text-red-600 bg-red-50 border-red-200';
+/**
+ * Confidence bands. Three, not the old four: the 50–74 band was `orange-600`,
+ * which has no token and no contrast guarantee. Collapsing it into the error
+ * band keeps every band inside a verified 4.5:1 pair.
+ */
+function confidenceTone(score: number): 'success' | 'warning' | 'error' {
+  if (score >= 95) return 'success';
+  if (score >= 75) return 'warning';
+  return 'error';
 }
 
 function fmt(amount: number | null | undefined): string {
@@ -80,7 +153,7 @@ export default function MatchRow({
   const { check, qb_txn, status, confidence_score, confidence_reasons,
     discrepancy_amount, notes, flagged_reason } = match;
 
-  const colors = STATUS_COLORS[status] || STATUS_COLORS.pending;
+  const mapped = MATCH_STATUS[status] || MATCH_STATUS.pending;
 
   async function handleCreateInQB() {
     if (!window.confirm('Create this check as a new transaction in QuickBooks?')) return;
@@ -89,151 +162,222 @@ export default function MatchRow({
   }
 
   return (
-    <div className={`bg-white rounded-lg border border-gray-200 shadow-sm overflow-hidden mb-2 border-l-4 ${colors.border} ${isSelected ? 'ring-2 ring-indigo-200' : ''}`}>
-      {/* Main row */}
-      <div className="grid grid-cols-[32px_1fr_120px_1fr_180px] gap-3 px-4 py-3 items-center">
-        {/* Checkbox */}
+    <GlassPanel
+      padding="none"
+      radius="tile"
+      className={cn(
+        'mb-2 overflow-hidden border-l-4',
+        mapped.accent,
+        /* Selected gets denser, never lighter, and never moves the text. */
+        isSelected && 'bg-brand/[0.06] shadow-glass-selected'
+      )}
+      data-selected={isSelected ? '' : undefined}
+    >
+      {/*
+        Main row. The five-column template and the row height are unchanged from
+        pre-redesign at `lg` and up, which is every desktop width this product is
+        read at.
+
+        Below `lg` it collapses to checkbox + one stacked column. The old fixed
+        template needed 534px and simply overflowed its own `overflow-hidden`
+        container at 400px — the QuickBooks side and EVERY row action were
+        clipped out of reach, with no horizontal scrollbar to find them.
+      */}
+      <div
+        className={cn(
+          'grid items-center gap-3',
+          'grid-cols-[32px_minmax(0,1fr)]',
+          'lg:grid-cols-[32px_1fr_120px_1fr_180px]',
+          ROW_CELL
+        )}
+      >
         <input
           type="checkbox"
           checked={isSelected}
           onChange={onSelect}
-          className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+          aria-label="Select match"
+          className="h-4 w-4 rounded border-glass-hairline accent-primary"
         />
 
-        {/* Left: Check data */}
+        {/* Left: the extracted check */}
         <div className="flex flex-col gap-0.5">
-          <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">Check</div>
+          <div className="text-eyebrow text-ink-faint">Check</div>
           {check ? (
             <>
               <div className="flex items-center gap-2">
-                {status === 'approved' && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
-                <span className="text-sm font-bold text-gray-900">#{check.check_number || '—'}</span>
-                <span className="text-sm font-bold text-gray-900">{fmt(check.amount)}</span>
+                {status === 'approved' && <CheckCircle2 className="h-4 w-4 shrink-0 text-success" />}
+                <span className="nums text-sm font-semibold text-ink-strong">#{check.check_number || '—'}</span>
+                <span className="nums-money text-sm font-semibold text-ink-strong">{fmt(check.amount)}</span>
               </div>
-              <div className="text-xs text-gray-500">{fmtDate(check.check_date)}</div>
-              <div className="text-xs font-medium text-gray-700">{check.payee || <em className="text-gray-400">No payee</em>}</div>
-              {check.memo && <div className="text-[11px] text-gray-400 italic">&quot;{check.memo}&quot;</div>}
+              <div className="nums text-xs text-ink-faint">{fmtDate(check.check_date)}</div>
+              <div className="text-xs font-medium text-ink-body">
+                {check.payee || <em className="text-ink-faint">No payee</em>}
+              </div>
+              {check.memo && <div className="text-[11px] italic text-ink-faint">&quot;{check.memo}&quot;</div>}
             </>
           ) : (
-            <div className="text-xs text-gray-400">No check data</div>
+            <div className="text-xs text-ink-faint">No check data</div>
           )}
         </div>
 
-        {/* Center: Confidence */}
-        <div className="flex flex-col items-center gap-1">
-          <span className={`text-sm font-extrabold px-2.5 py-0.5 rounded-full border ${confidenceColor(confidence_score)}`}>
+        {/* Centre: confidence, then the status it produced */}
+        <div className="col-start-2 flex flex-row items-center gap-2 lg:col-start-auto lg:flex-col lg:gap-1">
+          <Badge tone={confidenceTone(confidence_score)} size="md" className="nums font-bold">
             {Math.round(confidence_score)}%
-          </span>
-          <span className="text-gray-300 text-sm">→</span>
-          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${colors.bg} ${colors.text}`}>
-            {STATUS_LABELS[status] || status}
-          </span>
+          </Badge>
+          <span aria-hidden className="text-sm text-ink-faint">→</span>
+          <StatusPill status={mapped.pill} label={STATUS_LABELS[status] || status} size="sm" />
         </div>
 
-        {/* Right: QB transaction */}
-        <div className="flex flex-col gap-0.5">
-          <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wide">QuickBooks</div>
+        {/* Right: the QuickBooks transaction */}
+        <div className="col-start-2 flex flex-col gap-0.5 lg:col-start-auto">
+          <div className="text-eyebrow text-ink-faint">QuickBooks</div>
           {qb_txn ? (
             <>
               <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-gray-900">
+                <span className="nums text-sm font-semibold text-ink-strong">
                   {qb_txn.doc_number ? `#${qb_txn.doc_number}` : qb_txn.txn_type || 'Txn'}
                 </span>
-                <span className={`text-sm font-bold ${discrepancy_amount > 0 ? 'text-red-600' : 'text-gray-900'}`}>
+                <span
+                  className={cn(
+                    'nums-money text-sm font-semibold',
+                    discrepancy_amount > 0 ? 'text-error-text' : 'text-ink-strong'
+                  )}
+                >
                   {fmt(qb_txn.amount)}
                 </span>
               </div>
-              <div className="text-xs text-gray-500">{fmtDate(qb_txn.txn_date)}</div>
-              <div className="text-xs font-medium text-gray-700">{qb_txn.payee || <em className="text-gray-400">No payee</em>}</div>
-              {qb_txn.account && <div className="text-[11px] text-gray-400">{qb_txn.account}</div>}
+              <div className="nums text-xs text-ink-faint">{fmtDate(qb_txn.txn_date)}</div>
+              <div className="text-xs font-medium text-ink-body">
+                {qb_txn.payee || <em className="text-ink-faint">No payee</em>}
+              </div>
+              {qb_txn.account && <div className="text-[11px] text-ink-faint">{qb_txn.account}</div>}
               {discrepancy_amount > 0 && (
-                <div className="text-[11px] text-red-600 font-semibold">Δ {fmt(discrepancy_amount)} difference</div>
+                <div className="nums text-[11px] font-semibold text-error-text">
+                  Δ {fmt(discrepancy_amount)} difference
+                </div>
               )}
             </>
           ) : (
-            <div className="flex flex-col items-start py-1">
-              <span className="text-lg">❓</span>
-              <span className="text-xs text-gray-500">No QB match found</span>
+            <div className="flex flex-col items-start gap-1 py-1">
+              <HelpCircle className="h-5 w-5 text-ink-faint" aria-hidden />
+              <span className="text-xs text-ink-body">No QB match found</span>
             </div>
           )}
         </div>
 
-        {/* Action buttons */}
-        <div className="flex flex-col gap-1.5 items-end">
+        {/* Row actions */}
+        <div className="col-start-2 flex flex-row flex-wrap items-center gap-1.5 lg:col-start-auto lg:flex-col lg:items-end">
           {status === 'unmatched' && (
             <>
-              <button onClick={onSearchQB} className="px-2.5 py-1 text-xs font-semibold bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors flex items-center gap-1">
-                <Search className="w-3 h-3" /> Find in QB
+              <button type="button" className={ROW_BTN_PRIMARY} onClick={onSearchQB}>
+                <Search className="h-3 w-3" aria-hidden /> Find in QB
               </button>
-              <button onClick={handleCreateInQB} disabled={isCreatingInQB} className="px-2.5 py-1 text-xs font-semibold bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors flex items-center gap-1">
-                <Plus className="w-3 h-3" /> {isCreatingInQB ? '…' : 'Create in QB'}
+              <button type="button" className={ROW_BTN_QUIET} disabled={isCreatingInQB} onClick={handleCreateInQB}>
+                <Plus className="h-3 w-3" aria-hidden /> {isCreatingInQB ? 'Creating…' : 'Create in QB'}
               </button>
             </>
           )}
           {['matched', 'pending'].includes(status) && (
             <>
-              <button onClick={onApprove} className="px-2.5 py-1 text-xs font-semibold bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition-colors flex items-center gap-1">
-                <Check className="w-3 h-3" /> Approve
+              <button type="button" className={ROW_BTN_PRIMARY} onClick={onApprove}>
+                <Check className="h-3 w-3" aria-hidden /> Approve
               </button>
-              <button onClick={onSearchQB} className="px-2.5 py-1 text-xs font-semibold bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors flex items-center gap-1">
-                🔁 Remap
+              <button type="button" className={ROW_BTN_QUIET} onClick={onSearchQB}>
+                <Repeat className="h-3 w-3" aria-hidden /> Remap
               </button>
             </>
           )}
           {status === 'discrepancy' && (
             <>
-              <button onClick={() => setShowResolvePanel((v) => !v)} className="px-2.5 py-1 text-xs font-semibold bg-amber-500 text-white rounded-md hover:bg-amber-600 transition-colors flex items-center gap-1">
-                <AlertTriangle className="w-3 h-3" /> Resolve
+              <button
+                type="button"
+                className={ROW_BTN_PRIMARY}
+                onClick={() => setShowResolvePanel((v) => !v)}
+                aria-expanded={showResolvePanel}
+              >
+                <AlertTriangle className="h-3 w-3" aria-hidden /> Resolve
               </button>
-              <button onClick={onSearchQB} className="px-2.5 py-1 text-xs font-semibold bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors flex items-center gap-1">
-                🔁 Remap
+              <button type="button" className={ROW_BTN_QUIET} onClick={onSearchQB}>
+                <Repeat className="h-3 w-3" aria-hidden /> Remap
               </button>
             </>
           )}
           {status === 'approved' && (
             <>
-              <div className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-md">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                Approved
-              </div>
-              <button onClick={onUndoApproval} className="px-2.5 py-1 text-xs font-semibold bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50 transition-colors flex items-center gap-1">
-                <Undo2 className="w-3 h-3" /> Undo
+              <StatusPill
+                status="approved"
+                label="Approved"
+                size="md"
+                icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+              />
+              <button type="button" className={ROW_BTN_QUIET} onClick={onUndoApproval}>
+                <Undo2 className="h-3 w-3" aria-hidden /> Undo
               </button>
             </>
           )}
           {status === 'flagged' && (
             <>
-              <button onClick={onApprove} className="px-2.5 py-1 text-xs font-semibold bg-emerald-600 text-white rounded-md hover:bg-emerald-700 transition-colors flex items-center gap-1">
-                <Check className="w-3 h-3" /> Approve Anyway
+              <button type="button" className={ROW_BTN_PRIMARY} onClick={onApprove}>
+                <Check className="h-3 w-3" aria-hidden /> Approve Anyway
               </button>
-              <div className="text-[11px] text-violet-600 italic bg-violet-50 px-2 py-0.5 rounded">
-                🚩 {flagged_reason || 'Flagged for review'}
-              </div>
+              <Badge tone="warning" size="sm" className="max-w-[170px] text-right">
+                <Flag className="h-3 w-3 shrink-0" aria-hidden />
+                <span className="truncate">{flagged_reason || 'Flagged for review'}</span>
+              </Badge>
             </>
           )}
-          {/* Universal icons */}
-          <div className="flex gap-1 mt-0.5">
+
+          {/* Universal affordances, available on every status */}
+          <div className="mt-0.5 flex gap-1">
             {status !== 'flagged' && (
-              <button onClick={() => setShowFlagMenu((v) => !v)} title="Flag" className="p-1 text-gray-400 hover:text-violet-600 border border-gray-200 rounded transition-colors">
-                <Flag className="w-3 h-3" />
+              <button
+                type="button"
+                onClick={() => setShowFlagMenu((v) => !v)}
+                aria-expanded={showFlagMenu}
+                aria-label="Flag for review"
+                title="Flag"
+                className="press rounded-input border border-glass-hairline p-1 text-ink-faint hover:text-warning-text"
+              >
+                <Flag className="h-3 w-3" />
               </button>
             )}
-            <button onClick={() => setShowNoteInput((v) => !v)} title="Note" className="p-1 text-gray-400 hover:text-indigo-600 border border-gray-200 rounded transition-colors">
-              <FileText className="w-3 h-3" />
+            <button
+              type="button"
+              onClick={() => setShowNoteInput((v) => !v)}
+              aria-expanded={showNoteInput}
+              aria-label="Internal note"
+              title="Note"
+              className="press rounded-input border border-glass-hairline p-1 text-ink-faint hover:text-brand-deep"
+            >
+              <FileText className="h-3 w-3" />
             </button>
             {qb_txn && (
-              <button onClick={() => setShowEditPanel((v) => !v)} title="Edit QB transaction" className="p-1 text-gray-400 hover:text-emerald-600 border border-gray-200 rounded transition-colors">
-                <Pencil className="w-3 h-3" />
+              <button
+                type="button"
+                onClick={() => setShowEditPanel((v) => !v)}
+                aria-expanded={showEditPanel}
+                aria-label="Edit QB transaction"
+                title="Edit QB transaction"
+                className="press rounded-input border border-glass-hairline p-1 text-ink-faint hover:text-success-text"
+              >
+                <Pencil className="h-3 w-3" />
               </button>
             )}
-            <button onClick={() => setExpanded((v) => !v)} title="Details" className="p-1 text-gray-400 hover:text-gray-600 border border-gray-200 rounded transition-colors">
-              {expanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            <button
+              type="button"
+              onClick={() => setExpanded((v) => !v)}
+              aria-expanded={expanded}
+              aria-label="Confidence breakdown"
+              title="Details"
+              className="press rounded-input border border-glass-hairline p-1 text-ink-faint hover:text-ink-strong"
+            >
+              {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
             </button>
           </div>
         </div>
       </div>
 
-      {/* Flag menu panel */}
       {showFlagMenu && (
         <FlagMenu
           onFlag={(reason) => { onFlag(reason); setShowFlagMenu(false); }}
@@ -241,38 +385,43 @@ export default function MatchRow({
         />
       )}
 
-      {/* Note input panel */}
       {showNoteInput && (
-        <div className="border-t border-gray-100 bg-gray-50 px-6 py-3">
-          <div className="text-xs font-bold text-gray-700 mb-2">Internal Note</div>
-          <textarea
-            value={noteText}
-            onChange={(e) => setNoteText(e.target.value)}
-            placeholder="Add a note visible only to your firm…"
-            className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm text-gray-700 outline-none focus:ring-2 focus:ring-indigo-200 resize-y"
-            rows={3}
-          />
-          <div className="flex gap-2 mt-2">
-            <button onClick={() => { onAddNote(noteText); setShowNoteInput(false); }} className="px-3 py-1 text-xs font-semibold bg-indigo-600 text-white rounded-md hover:bg-indigo-700">
-              Save Note
+        <SubPanel title="Internal note">
+          <Field
+            htmlFor={`note-${match.id}`}
+            hint="Visible only to your firm."
+          >
+            <Textarea
+              id={`note-${match.id}`}
+              value={noteText}
+              onChange={(e) => setNoteText(e.target.value)}
+              placeholder="Add a note visible only to your firm…"
+              rows={3}
+            />
+          </Field>
+          <div className="mt-2 flex gap-2">
+            <button
+              type="button"
+              className={ROW_BTN_PRIMARY}
+              onClick={() => { onAddNote(noteText); setShowNoteInput(false); }}
+            >
+              Save note
             </button>
-            <button onClick={() => setShowNoteInput(false)} className="px-3 py-1 text-xs font-semibold bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50">
+            <button type="button" className={ROW_BTN_QUIET} onClick={() => setShowNoteInput(false)}>
               Cancel
             </button>
           </div>
-        </div>
+        </SubPanel>
       )}
 
-      {/* Resolve discrepancy panel */}
       {showResolvePanel && (
         <ResolvePanel
           match={match}
-          onResolve={(resolution, amount, notes) => { onResolveDiscrepancy(resolution, amount, notes); setShowResolvePanel(false); }}
+          onResolve={(resolution, amount, resolveNotes) => { onResolveDiscrepancy(resolution, amount, resolveNotes); setShowResolvePanel(false); }}
           onClose={() => setShowResolvePanel(false)}
         />
       )}
 
-      {/* Edit QB transaction panel */}
       {showEditPanel && qb_txn && (
         <EditQBPanel
           qbTxn={qb_txn}
@@ -284,10 +433,8 @@ export default function MatchRow({
         />
       )}
 
-      {/* Confidence breakdown */}
       {expanded && confidence_reasons && (
-        <div className="border-t border-gray-100 bg-gray-50 px-6 py-3">
-          <div className="text-[10px] font-bold text-gray-400 uppercase tracking-wide mb-3">Match Confidence Breakdown</div>
+        <SubPanel title="Match confidence breakdown" eyebrow>
           <div className="flex flex-col gap-2">
             <ScoreBar label="Amount" score={confidence_reasons.amount} max={40} />
             <ScoreBar label="Check #" score={confidence_reasons.checkNumber} max={30} />
@@ -295,12 +442,35 @@ export default function MatchRow({
             <ScoreBar label="Payee" score={confidence_reasons.payee} max={15} />
           </div>
           {notes && (
-            <div className="mt-3 pt-2 border-t border-gray-200 text-xs text-gray-500">
-              📝 <em>{notes}</em>
+            <div className="mt-3 border-t border-glass-hairline pt-2 text-xs text-ink-body">
+              <em>{notes}</em>
             </div>
           )}
-        </div>
+        </SubPanel>
       )}
+    </GlassPanel>
+  );
+}
+
+/**
+ * The expanded drawers. One recipe, so the four of them cannot drift. `sunken`
+ * carries no backdrop-filter — this sits inside a row that sits inside a list.
+ */
+function SubPanel({
+  title,
+  eyebrow,
+  children,
+}: {
+  title: string;
+  eyebrow?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={cn('border-t border-glass-hairline bg-surface-sunken/70', PANEL_CELL)}>
+      <div className={cn('mb-2', eyebrow ? 'text-eyebrow text-ink-faint' : 'text-xs font-semibold text-ink-body')}>
+        {title}
+      </div>
+      {children}
     </div>
   );
 }
@@ -316,33 +486,37 @@ function FlagMenu({ onFlag, onClose }: { onFlag: (reason: string) => void; onClo
     'Client needs to confirm',
   ];
   return (
-    <div className="border-t border-gray-100 bg-gray-50 px-6 py-3">
-      <div className="text-xs font-bold text-gray-700 mb-2">🚩 Flag for Review</div>
+    <SubPanel title="Flag for review">
       <div className="flex flex-col gap-1.5">
         {presets.map((p) => (
-          <button key={p} onClick={() => onFlag(p)} className="text-left text-xs text-gray-700 bg-white border border-gray-200 rounded-md px-3 py-1.5 hover:bg-gray-50 transition-colors">
+          <button
+            key={p}
+            type="button"
+            onClick={() => onFlag(p)}
+            className="press rounded-input border border-glass-hairline bg-surface/70 px-3 py-1.5 text-left text-xs text-ink-body hover:bg-brand/[0.06] hover:text-ink-strong"
+          >
             {p}
           </button>
         ))}
-        <input
+        <Input
+          inputSize="sm"
           placeholder="Custom reason…"
           value={custom}
           onChange={(e) => setCustom(e.target.value)}
-          className="border border-gray-300 rounded-md px-3 py-1.5 text-xs outline-none focus:ring-2 focus:ring-indigo-200"
           onKeyDown={(e) => e.key === 'Enter' && custom && onFlag(custom)}
         />
       </div>
-      <div className="flex gap-2 mt-2">
+      <div className="mt-2 flex gap-2">
         {custom && (
-          <button onClick={() => onFlag(custom)} className="px-3 py-1 text-xs font-semibold bg-violet-600 text-white rounded-md hover:bg-violet-700">
+          <button type="button" className={ROW_BTN_PRIMARY} onClick={() => onFlag(custom)}>
             Flag: &quot;{custom}&quot;
           </button>
         )}
-        <button onClick={onClose} className="px-3 py-1 text-xs font-semibold bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50">
+        <button type="button" className={ROW_BTN_QUIET} onClick={onClose}>
           Cancel
         </button>
       </div>
-    </div>
+    </SubPanel>
   );
 }
 
@@ -358,46 +532,51 @@ function ResolvePanel({ match, onResolve, onClose }: {
   const qbAmt = match.qb_txn?.amount;
 
   return (
-    <div className="border-t border-gray-100 bg-gray-50 px-6 py-3">
-      <div className="text-xs font-bold text-gray-700 mb-2">⚠️ Resolve Discrepancy</div>
-      <div className="text-xs text-gray-600 mb-3">
-        Check: <strong>{fmt(checkAmt)}</strong> | QB: <strong>{fmt(qbAmt)}</strong> | Diff:{' '}
-        <strong className="text-red-600">{fmt(Math.abs((checkAmt || 0) - (qbAmt || 0)))}</strong>
+    <SubPanel title="Resolve discrepancy">
+      <div className="mb-3 text-xs text-ink-body">
+        Check <strong className="nums">{fmt(checkAmt)}</strong> · QB{' '}
+        <strong className="nums">{fmt(qbAmt)}</strong> · Difference{' '}
+        <strong className="nums text-error-text">{fmt(Math.abs((checkAmt || 0) - (qbAmt || 0)))}</strong>
       </div>
-      <div className="flex flex-col gap-2 mb-3">
+      <div className="mb-3 flex flex-col gap-2">
         {[
           { value: 'use_check_amount', label: `Use check amount (${fmt(checkAmt)}) — update QB` },
           { value: 'use_qb_amount', label: `Use QB amount (${fmt(qbAmt)}) — accept as-is` },
           { value: 'manual_override', label: "Manual override — I'll enter the correct amount" },
         ].map((opt) => (
-          <label key={opt.value} className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+          <label key={opt.value} className="flex cursor-pointer items-center gap-2 text-xs text-ink-body">
             <input
               type="radio"
+              name={`resolution-${match.id}`}
               value={opt.value}
               checked={resolution === opt.value}
               onChange={() => setResolution(opt.value)}
-              className="text-indigo-600 focus:ring-indigo-500"
+              className="accent-primary"
             />
             {opt.label}
           </label>
         ))}
       </div>
-      <textarea
+      <Textarea
         placeholder="Resolution notes (optional)…"
         value={notes}
         onChange={(e) => setNotes(e.target.value)}
-        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-indigo-200 resize-y"
         rows={2}
+        aria-label="Resolution notes"
       />
-      <div className="flex gap-2 mt-2">
-        <button onClick={() => onResolve(resolution, null, notes)} className="px-3 py-1 text-xs font-semibold bg-emerald-600 text-white rounded-md hover:bg-emerald-700">
-          Resolve & Approve
+      <div className="mt-2 flex gap-2">
+        <button
+          type="button"
+          className={ROW_BTN_PRIMARY}
+          onClick={() => onResolve(resolution, null, notes)}
+        >
+          Resolve &amp; approve
         </button>
-        <button onClick={onClose} className="px-3 py-1 text-xs font-semibold bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50">
+        <button type="button" className={ROW_BTN_QUIET} onClick={onClose}>
           Cancel
         </button>
       </div>
-    </div>
+    </SubPanel>
   );
 }
 
@@ -433,70 +612,85 @@ function EditQBPanel({
   }
 
   return (
-    <div className="border-t border-gray-100 bg-gray-50 px-6 py-3">
-      <div className="text-xs font-bold text-gray-700 mb-3">✏️ Edit QB Transaction</div>
-      <div className="text-[11px] text-gray-500 mb-3">Updates date, check #, and memo directly in QuickBooks.</div>
-      <div className="flex flex-col gap-2 mb-3">
-        <label className="flex flex-col gap-0.5">
-          <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Date</span>
-          <input
+    <SubPanel title="Edit QB transaction">
+      <p className="mb-3 text-[11px] text-ink-faint">
+        Updates date, check # and memo directly in QuickBooks.
+      </p>
+      <div className="mb-3 flex flex-col gap-2">
+        <Field label="Date" htmlFor={`qb-date-${qbTxn.id}`}>
+          <Input
+            id={`qb-date-${qbTxn.id}`}
+            inputSize="sm"
             type="date"
             value={txnDate}
             onChange={(e) => setTxnDate(e.target.value)}
-            className="border border-gray-300 rounded-md px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-emerald-200"
           />
-        </label>
-        <label className="flex flex-col gap-0.5">
-          <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Check # / Ref No.</span>
-          <input
-            type="text"
+        </Field>
+        <Field label="Check # / Ref no." htmlFor={`qb-doc-${qbTxn.id}`}>
+          <Input
+            id={`qb-doc-${qbTxn.id}`}
+            inputSize="sm"
             value={docNumber}
             onChange={(e) => setDocNumber(e.target.value)}
             placeholder={qbTxn.doc_number || 'e.g. 800001'}
-            className="border border-gray-300 rounded-md px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-emerald-200"
           />
-        </label>
-        <label className="flex flex-col gap-0.5">
-          <span className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide">Memo</span>
-          <input
-            type="text"
+        </Field>
+        <Field label="Memo" htmlFor={`qb-memo-${qbTxn.id}`}>
+          <Input
+            id={`qb-memo-${qbTxn.id}`}
+            inputSize="sm"
             value={memo}
             onChange={(e) => setMemo(e.target.value)}
             placeholder={qbTxn.memo || 'Add memo…'}
-            className="border border-gray-300 rounded-md px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-emerald-200"
           />
-        </label>
+        </Field>
       </div>
       {saveError && (
-        <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1 mb-2">{saveError}</div>
+        <p role="alert" className="mb-2 rounded-input bg-error-bg px-2 py-1 text-xs text-error-text">
+          {saveError}
+        </p>
       )}
-      <div className="text-[10px] text-gray-400 mb-2">Amount and payee changes require editing directly in QuickBooks.</div>
+      <p className="mb-2 text-[11px] text-ink-faint">
+        Amount and payee changes require editing directly in QuickBooks.
+      </p>
       <div className="flex gap-2">
-        <button
-          onClick={handleSave}
-          disabled={isSaving}
-          className="px-3 py-1 text-xs font-semibold bg-emerald-600 text-white rounded-md hover:bg-emerald-700 disabled:opacity-60"
-        >
+        <button type="button" className={ROW_BTN_PRIMARY} onClick={handleSave} disabled={isSaving}>
           {isSaving ? 'Saving…' : 'Save to QB'}
         </button>
-        <button onClick={onClose} className="px-3 py-1 text-xs font-semibold bg-white text-gray-700 border border-gray-300 rounded-md hover:bg-gray-50">
+        <button type="button" className={ROW_BTN_QUIET} onClick={onClose}>
           Cancel
         </button>
       </div>
-    </div>
+    </SubPanel>
   );
 }
 
+/**
+ * The one inline `style` left in this file, and it has to be: the bar width is
+ * `score / max` and no utility can express an arbitrary percentage. The colour
+ * beside it is NOT inline — it is a token class, which is the half of this
+ * component that used to drift.
+ */
 function ScoreBar({ label, score, max }: { label: string; score: number; max: number }) {
-  const pct = max > 0 ? (score / max) * 100 : 0;
-  const color = pct === 100 ? 'bg-emerald-500' : pct >= 60 ? 'bg-amber-500' : 'bg-red-500';
+  const pct = max > 0 ? Math.min(100, Math.max(0, (score / max) * 100)) : 0;
+  const fill = pct === 100 ? 'bg-success' : pct >= 60 ? 'bg-warning' : 'bg-error';
   return (
     <div className="flex items-center gap-3">
-      <div className="w-16 text-xs text-gray-700 font-medium">{label}</div>
-      <div className="flex-1 h-2 bg-gray-200 rounded-full overflow-hidden">
-        <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
+      <div className="w-16 text-xs font-medium text-ink-body">{label}</div>
+      <div
+        className="h-2 flex-1 overflow-hidden rounded-full bg-surface-sunken shadow-inner-track"
+        role="meter"
+        aria-label={`${label} score`}
+        aria-valuenow={score}
+        aria-valuemin={0}
+        aria-valuemax={max}
+      >
+        <div
+          className={cn('h-full rounded-full transition-[width] duration-settle ease-settle', fill)}
+          style={{ width: `${pct}%` }}
+        />
       </div>
-      <div className="w-10 text-right text-[11px] text-gray-400">
+      <div className="nums w-10 text-right text-[11px] text-ink-faint">
         {score}/{max}
       </div>
     </div>
