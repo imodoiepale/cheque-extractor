@@ -28,32 +28,32 @@ export default async function ReviewPage({ params }: { params: { id: string } })
     .order('created_at', { ascending: false });
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6">
+    <div className="mx-auto max-w-7xl space-y-6 p-6" data-tone="brand">
       {/* Header */}
-      <div className="flex justify-between items-center">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Review Check</h1>
-          <p className="text-gray-600 mt-1">Check #{check.check_number || 'N/A'}</p>
+          <h1 className="font-heading text-3xl font-semibold text-ink-strong">Review Check</h1>
+          <p className="nums mt-1 text-sm text-ink-body">Check #{check.check_number || 'N/A'}</p>
         </div>
         <ApprovalActions checkId={check.id} currentStatus={check.status} />
       </div>
 
       {/* Validation Warnings */}
       {check.validation_errors && check.validation_errors.length > 0 && (
-        <ValidationWarnings 
+        <ValidationWarnings
           errors={check.validation_errors}
           warnings={check.validation_warnings || []}
         />
       )}
 
       {/* Main Content */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         {/* Left Column - Image */}
         <div className="space-y-6">
           <CheckImageViewer imageUrl={check.file_url} />
-          
+
           {/* OCR vs AI Comparison */}
-          <ComparisonPanel 
+          <ComparisonPanel
             ocrResults={check.ocr_results}
             aiResults={check.ai_results}
           />
@@ -62,7 +62,7 @@ export default async function ReviewPage({ params }: { params: { id: string } })
         {/* Right Column - Fields */}
         <div className="space-y-6">
           <FieldEditor check={check} />
-          
+
           {/* Audit History */}
           {auditLogs && auditLogs.length > 0 && (
             <AuditHistory logs={auditLogs} />

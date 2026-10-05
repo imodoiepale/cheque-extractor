@@ -5,33 +5,54 @@ import { useRouter } from 'next/navigation';
 import { Check } from '@/types/check';
 import ConfidenceBadge from './ConfidenceBadge';
 import { createClient } from '@/lib/supabase/client';
+import { Button, GlassCard, GlassCardTitle, Input } from '@/components/ui';
+import { cn } from '@/lib/utils';
 
 interface Props {
   check: Check;
 }
 
+/** The five editable fields, declared once instead of five copied blocks. */
+type FieldKey = 'payee' | 'amount' | 'check_date' | 'check_number' | 'bank_name';
+
+const FIELDS: ReadonlyArray<{
+  key: FieldKey;
+  label: string;
+  type: 'text' | 'number' | 'date';
+  prefix?: string;
+}> = [
+  { key: 'payee', label: 'Payee', type: 'text' },
+  { key: 'amount', label: 'Amount', type: 'number', prefix: '$' },
+  { key: 'check_date', label: 'Date', type: 'date' },
+  { key: 'check_number', label: 'Check Number', type: 'text' },
+  { key: 'bank_name', label: 'Bank Name', type: 'text' },
+];
+
+const STATUS_TONE = {
+  success: 'border-success-border bg-success-bg text-success-text',
+  warning: 'border-warning-border bg-warning-bg text-warning-text',
+  error: 'border-error-border bg-error-bg text-error-text',
+} as const;
+
 export default function FieldEditor({ check }: Props) {
   const router = useRouter();
-  const [fields, setFields] = useState({
+
+  const snapshot = (): Record<FieldKey, string> => ({
     payee: check.payee || '',
     amount: check.amount?.toString() || '',
     check_date: check.check_date || '',
     check_number: check.check_number || '',
     bank_name: check.bank_name || '',
   });
+
+  const [fields, setFields] = useState(snapshot);
   const [saving, setSaving] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'warning' | 'error'; text: string } | null>(null);
+  const [statusMessage, setStatusMessage] = useState<{ type: keyof typeof STATUS_TONE; text: string } | null>(null);
 
   // Track originals so we can compute the diff to push to QB.
-  const original = {
-    payee: check.payee || '',
-    amount: check.amount?.toString() || '',
-    check_date: check.check_date || '',
-    check_number: check.check_number || '',
-    bank_name: check.bank_name || '',
-  };
+  const original = snapshot();
 
-  const handleFieldChange = (field: string, value: string) => {
+  const handleFieldChange = (field: FieldKey, value: string) => {
     setFields(prev => ({ ...prev, [field]: value }));
   };
 
@@ -124,12 +145,12 @@ export default function FieldEditor({ check }: Props) {
       if (Object.keys(changed).length > 0) {
         const qb = await pushChangesToQB(changed);
         if (qb.ok) {
-          setStatusMessage({ type: 'success', text: `Saved ✓ — ${qb.message}` });
+          setStatusMessage({ type: 'success', text: `Saved — ${qb.message}` });
         } else {
-          setStatusMessage({ type: 'warning', text: `Saved locally ✓ — ⚠ ${qb.message}` });
+          setStatusMessage({ type: 'warning', text: `Saved locally — ${qb.message}` });
         }
       } else {
-        setStatusMessage({ type: 'success', text: 'Saved ✓ — no changes detected.' });
+        setStatusMessage({ type: 'success', text: 'Saved — no changes detected.' });
       }
       router.refresh();
     } catch (error: any) {
@@ -141,132 +162,57 @@ export default function FieldEditor({ check }: Props) {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow">
-      <div className="px-6 py-4 border-b">
-        <h3 className="font-semibold">Extracted Fields</h3>
-        <p className="text-sm text-gray-600 mt-1">Review and edit as needed</p>
+    <GlassCard padding="none" className="overflow-hidden">
+      <div className="border-b border-glass-hairline px-6 py-4">
+        <GlassCardTitle className="text-base">Extracted Fields</GlassCardTitle>
+        <p className="mt-1 text-sm text-ink-body">Review and edit as needed</p>
       </div>
 
-      <div className="p-6 space-y-4">
-        {/* Payee */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <label className="block text-sm font-medium text-gray-700">
-              Payee
-            </label>
-            <ConfidenceBadge 
-              confidence={check.payee_confidence || 0}
-              source={check.payee_source || 'ocr'}
-            />
-          </div>
-          <input
-            type="text"
-            value={fields.payee}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleFieldChange('payee', e.target.value)}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
-        </div>
-
-        {/* Amount */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <label className="block text-sm font-medium text-gray-700">
-              Amount
-            </label>
-            <ConfidenceBadge 
-              confidence={check.amount_confidence || 0}
-              source={check.amount_source || 'ocr'}
-            />
-          </div>
-          <div className="relative">
-            <span className="absolute left-4 top-2 text-gray-500">$</span>
-            <input
-              type="number"
-              step="0.01"
-              value={fields.amount}
-              onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleFieldChange('amount', e.target.value)}
-              className="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-        </div>
-
-        {/* Date */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <label className="block text-sm font-medium text-gray-700">
-              Date
-            </label>
-            <ConfidenceBadge 
-              confidence={check.check_date_confidence || 0}
-              source={check.check_date_source || 'ocr'}
-            />
-          </div>
-          <input
-            type="date"
-            value={fields.check_date}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleFieldChange('check_date', e.target.value)}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
-        </div>
-
-        {/* Check Number */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <label className="block text-sm font-medium text-gray-700">
-              Check Number
-            </label>
-            <ConfidenceBadge 
-              confidence={check.check_number_confidence || 0}
-              source={check.check_number_source || 'ocr'}
-            />
-          </div>
-          <input
-            type="text"
-            value={fields.check_number}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleFieldChange('check_number', e.target.value)}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
-        </div>
-
-        {/* Bank Name */}
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <label className="block text-sm font-medium text-gray-700">
-              Bank Name
-            </label>
-            <ConfidenceBadge 
-              confidence={check.bank_name_confidence || 0}
-              source={check.bank_name_source || 'ocr'}
-            />
-          </div>
-          <input
-            type="text"
-            value={fields.bank_name}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => handleFieldChange('bank_name', e.target.value)}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
-        </div>
+      <div className="space-y-4 p-6">
+        {FIELDS.map(({ key, label, type, prefix }) => {
+          const id = `field-${key}`;
+          return (
+            <div key={key}>
+              <div className="mb-2 flex items-center justify-between gap-3">
+                <label htmlFor={id} className="block text-sm font-medium text-ink-body">
+                  {label}
+                </label>
+                <ConfidenceBadge
+                  confidence={(check as any)[`${key}_confidence`] || 0}
+                  source={(check as any)[`${key}_source`] || 'ocr'}
+                />
+              </div>
+              <div className="relative">
+                {prefix && (
+                  <span className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-faint">
+                    {prefix}
+                  </span>
+                )}
+                <Input
+                  id={id}
+                  type={type}
+                  step={type === 'number' ? '0.01' : undefined}
+                  value={fields[key]}
+                  onChange={(e) => handleFieldChange(key, e.target.value)}
+                  className={cn(prefix && 'pl-7', type === 'number' && 'nums')}
+                />
+              </div>
+            </div>
+          );
+        })}
 
         {/* Inline status banner */}
         {statusMessage && (
-          <div className={`text-sm rounded-lg px-3 py-2 border ${
-            statusMessage.type === 'success' ? 'bg-emerald-50 text-emerald-800 border-emerald-200' :
-            statusMessage.type === 'warning' ? 'bg-amber-50 text-amber-800 border-amber-200' :
-                                              'bg-red-50 text-red-800 border-red-200'
-          }`}>
+          <p role="status" className={cn('rounded-input border px-3 py-2 text-sm', STATUS_TONE[statusMessage.type])}>
             {statusMessage.text}
-          </div>
+          </p>
         )}
 
         {/* Save Button */}
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium"
-        >
+        <Button block loading={saving} onClick={handleSave}>
           {saving ? 'Saving...' : 'Save Changes (& push to QB if linked)'}
-        </button>
+        </Button>
       </div>
-    </div>
+    </GlassCard>
   );
 }

@@ -1,9 +1,11 @@
+import { Loader2 } from 'lucide-react';
+
 export default function DashboardLoading() {
   return (
-    <div className="flex items-center justify-center h-screen">
+    <div className="flex h-screen items-center justify-center">
       <div className="text-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
-        <p className="text-gray-600">Loading dashboard...</p>
+        <Loader2 className="mx-auto mb-4 h-10 w-10 animate-spin text-brand" />
+        <p className="text-sm text-ink-body">Loading dashboard...</p>
       </div>
     </div>
   );

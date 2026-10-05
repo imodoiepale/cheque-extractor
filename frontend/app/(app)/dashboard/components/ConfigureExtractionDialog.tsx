@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { X, Loader2, Play, AlertCircle } from 'lucide-react';
+import { Play, AlertCircle } from 'lucide-react';
+import { Button, Dialog, GlassPanel, Input } from '@/components/ui';
 
 interface JobCheck {
   check_id: string;
@@ -39,6 +40,11 @@ type CheckRangeMode = 'all' | 'failed' | 'custom';
 // image or confidence settings in the UI.
 const EXTRACTION_METHOD = 'gemini';
 const SECONDS_PER_CHECK = 2;
+
+/** One recipe for a radio row, so the eight of them cannot drift apart. */
+const RADIO_ROW =
+  'flex cursor-pointer items-center gap-2 rounded-input border border-glass-hairline bg-white/55 p-3 ' +
+  'transition-[border-color,background-color] duration-quick ease-settle hover:border-brand/40 hover:bg-white/80';
 
 export default function ConfigureExtractionDialog({ job, isOpen, onClose, onSubmit }: Props) {
   const [pageRangeMode, setPageRangeMode] = useState<PageRangeMode>('missing');
@@ -78,7 +84,7 @@ export default function ConfigureExtractionDialog({ job, isOpen, onClose, onSubm
   useEffect(() => {
     if (isOpen) {
       setForce(false);
-      
+
       // Default to missing pages if any exist
       if (analysis.missingCount > 0) {
         setPageRangeMode('missing');
@@ -101,7 +107,7 @@ export default function ConfigureExtractionDialog({ job, isOpen, onClose, onSubm
   // Calculate estimated time
   const estimatedTime = useMemo(() => {
     let checkCount = 0;
-    
+
     if (checkRangeMode === 'all') {
       checkCount = analysis.totalChecks;
     } else if (checkRangeMode === 'failed') {
@@ -110,15 +116,13 @@ export default function ConfigureExtractionDialog({ job, isOpen, onClose, onSubm
       checkCount = Math.max(0, customCheckTo - customCheckFrom + 1);
     }
 
-    const secondsPerCheck = SECONDS_PER_CHECK;
-    const totalSeconds = checkCount * secondsPerCheck;
+    const totalSeconds = checkCount * SECONDS_PER_CHECK;
 
     if (totalSeconds < 60) {
       return `~${totalSeconds} seconds`;
-    } else {
-      const minutes = Math.ceil(totalSeconds / 60);
-      return `~${minutes} minute${minutes > 1 ? 's' : ''}`;
     }
+    const minutes = Math.ceil(totalSeconds / 60);
+    return `~${minutes} minute${minutes > 1 ? 's' : ''}`;
   }, [checkRangeMode, analysis, customCheckFrom, customCheckTo]);
 
   const handleSubmit = async () => {
@@ -148,218 +152,197 @@ export default function ConfigureExtractionDialog({ job, isOpen, onClose, onSubm
     onSubmit(config);
   };
 
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div
-        className="bg-white rounded-xl shadow-2xl w-[90vw] max-w-2xl max-h-[90vh] overflow-y-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
-          <div>
-            <h2 className="text-lg font-semibold text-gray-900">Configure Extraction</h2>
-            <p className="text-xs text-gray-500 mt-0.5">{job.pdf_name}</p>
-          </div>
-          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded transition">
-            <X size={18} />
-          </button>
-        </div>
-
-        {/* Body */}
-        <div className="px-6 py-5 space-y-5">
-          {/* Stats */}
-          <div className="bg-gray-50 rounded-lg p-4 space-y-1">
-            <div className="flex items-center justify-between text-sm">
-              <span className="text-gray-600">Total:</span>
-              <span className="font-medium text-gray-900">{job.total_pages} pages, {analysis.totalChecks} checks detected</span>
-            </div>
-            {analysis.missingCount > 0 && (
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-gray-600">Extracted:</span>
-                <span className="font-medium text-gray-900">
-                  {analysis.extractedCount}/{analysis.totalChecks} checks 
-                  <span className="text-amber-600 ml-1">({analysis.missingCount} missing)</span>
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* Page Range */}
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-700">Page Range</label>
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 p-3 border border-gray-200 rounded-lg hover:border-blue-300 cursor-pointer transition">
-                <input
-                  type="radio"
-                  name="pageRange"
-                  checked={pageRangeMode === 'all'}
-                  onChange={() => setPageRangeMode('all')}
-                />
-                <span className="text-sm text-gray-900">All pages (1-{job.total_pages})</span>
-              </label>
-              
-              {analysis.missingPages.length > 0 && (
-                <label className="flex items-start gap-2 p-3 border border-gray-200 rounded-lg hover:border-blue-300 cursor-pointer transition">
-                  <input
-                    type="radio"
-                    name="pageRange"
-                    checked={pageRangeMode === 'missing'}
-                    onChange={() => setPageRangeMode('missing')}
-                    className="mt-0.5"
-                  />
-                  <div className="flex-1">
-                    <div className="text-sm text-gray-900">
-                      Pages with missing checks: {analysis.minMissingPage} to {analysis.maxMissingPage}
-                    </div>
-                    <div className="text-xs text-gray-500 mt-0.5">
-                      {analysis.missingPages.length} page{analysis.missingPages.length > 1 ? 's' : ''} need extraction
-                    </div>
-                  </div>
-                </label>
-              )}
-
-              <label className="flex items-center gap-2 p-3 border border-gray-200 rounded-lg hover:border-blue-300 cursor-pointer transition">
-                <input
-                  type="radio"
-                  name="pageRange"
-                  checked={pageRangeMode === 'custom'}
-                  onChange={() => setPageRangeMode('custom')}
-                />
-                <span className="text-sm text-gray-900 mr-2">Custom range:</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={job.total_pages}
-                  value={customPageFrom}
-                  onChange={(e) => setCustomPageFrom(Math.max(1, Math.min(job.total_pages, parseInt(e.target.value) || 1)))}
-                  onClick={() => setPageRangeMode('custom')}
-                  className="w-16 px-2 py-1 border border-gray-300 rounded text-sm"
-                />
-                <span className="text-sm text-gray-500">to</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={job.total_pages}
-                  value={customPageTo}
-                  onChange={(e) => setCustomPageTo(Math.max(1, Math.min(job.total_pages, parseInt(e.target.value) || 1)))}
-                  onClick={() => setPageRangeMode('custom')}
-                  className="w-16 px-2 py-1 border border-gray-300 rounded text-sm"
-                />
-              </label>
-            </div>
-          </div>
-
-          {/* Check Range */}
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-700">Check Range</label>
-            <div className="space-y-2">
-              <label className="flex items-center gap-2 p-3 border border-gray-200 rounded-lg hover:border-blue-300 cursor-pointer transition">
-                <input
-                  type="radio"
-                  name="checkRange"
-                  checked={checkRangeMode === 'all'}
-                  onChange={() => setCheckRangeMode('all')}
-                />
-                <span className="text-sm text-gray-900">All checks (1-{analysis.totalChecks})</span>
-              </label>
-
-              {analysis.missingCount > 0 && (
-                <label className="flex items-center gap-2 p-3 border border-gray-200 rounded-lg hover:border-blue-300 cursor-pointer transition">
-                  <input
-                    type="radio"
-                    name="checkRange"
-                    checked={checkRangeMode === 'failed'}
-                    onChange={() => setCheckRangeMode('failed')}
-                  />
-                  <span className="text-sm text-gray-900">
-                    Failed/missing checks only ({analysis.missingCount} check{analysis.missingCount > 1 ? 's' : ''})
-                  </span>
-                </label>
-              )}
-
-              <label className="flex items-center gap-2 p-3 border border-gray-200 rounded-lg hover:border-blue-300 cursor-pointer transition">
-                <input
-                  type="radio"
-                  name="checkRange"
-                  checked={checkRangeMode === 'custom'}
-                  onChange={() => setCheckRangeMode('custom')}
-                />
-                <span className="text-sm text-gray-900 mr-2">Custom range:</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={analysis.totalChecks}
-                  value={customCheckFrom}
-                  onChange={(e) => setCustomCheckFrom(Math.max(1, Math.min(analysis.totalChecks, parseInt(e.target.value) || 1)))}
-                  onClick={() => setCheckRangeMode('custom')}
-                  className="w-16 px-2 py-1 border border-gray-300 rounded text-sm"
-                />
-                <span className="text-sm text-gray-500">to</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={analysis.totalChecks}
-                  value={customCheckTo}
-                  onChange={(e) => setCustomCheckTo(Math.max(1, Math.min(analysis.totalChecks, parseInt(e.target.value) || 1)))}
-                  onClick={() => setCheckRangeMode('custom')}
-                  className="w-16 px-2 py-1 border border-gray-300 rounded text-sm"
-                />
-              </label>
-            </div>
-          </div>
-
-          {/* Force Re-extract */}
-          <label className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg cursor-pointer">
-            <input
-              type="checkbox"
-              checked={force}
-              onChange={(e) => setForce(e.target.checked)}
-            />
-            <div className="flex-1">
-              <div className="text-sm font-medium text-amber-900">Force re-extract (overwrite existing results)</div>
-              <div className="text-xs text-amber-700 mt-0.5">This will re-process all checks in the selected range, even if they already have extraction data</div>
-            </div>
-          </label>
-
-          {/* Estimated Time */}
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex items-center gap-2">
-            <AlertCircle size={16} className="text-blue-600 flex-shrink-0" />
-            <div className="text-sm text-blue-900">
-              <span className="font-medium">Estimated time:</span> {estimatedTime}
-            </div>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <div className="sticky bottom-0 bg-gray-50 border-t border-gray-200 px-6 py-4 flex items-center justify-end gap-3">
-          <button
-            onClick={onClose}
-            disabled={isSubmitting}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition disabled:opacity-50"
-          >
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      size="xl"
+      title="Configure Extraction"
+      description={job.pdf_name}
+      className="max-h-[90vh] overflow-hidden"
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose} disabled={isSubmitting}>
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
+            size="sm"
             onClick={handleSubmit}
-            disabled={isSubmitting}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+            loading={isSubmitting}
+            icon={<Play size={16} />}
           >
-            {isSubmitting ? (
-              <>
-                <Loader2 size={16} className="animate-spin" />
-                Starting...
-              </>
-            ) : (
-              <>
-                <Play size={16} />
-                Start Extraction
-              </>
+            {isSubmitting ? 'Starting...' : 'Start Extraction'}
+          </Button>
+        </>
+      }
+    >
+      <div className="scroll-region max-h-[62vh] space-y-5 pr-1">
+        {/* Stats — inset group, no blur of its own. */}
+        <GlassPanel tone="sunken" radius="input" padding="md" className="space-y-1">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-ink-faint">Total:</span>
+            <span className="nums font-medium text-ink-strong">{job.total_pages} pages, {analysis.totalChecks} checks detected</span>
+          </div>
+          {analysis.missingCount > 0 && (
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-ink-faint">Extracted:</span>
+              <span className="nums font-medium text-ink-strong">
+                {analysis.extractedCount}/{analysis.totalChecks} checks
+                <span className="ml-1 text-warning-text">({analysis.missingCount} missing)</span>
+              </span>
+            </div>
+          )}
+        </GlassPanel>
+
+        {/* Page Range */}
+        <div className="space-y-2">
+          <span className="block text-sm font-medium text-ink-body">Page Range</span>
+          <div className="space-y-2">
+            <label className={RADIO_ROW}>
+              <input
+                type="radio"
+                name="pageRange"
+                checked={pageRangeMode === 'all'}
+                onChange={() => setPageRangeMode('all')}
+              />
+              <span className="nums text-sm text-ink-strong">All pages (1-{job.total_pages})</span>
+            </label>
+
+            {analysis.missingPages.length > 0 && (
+              <label className={`${RADIO_ROW} items-start`}>
+                <input
+                  type="radio"
+                  name="pageRange"
+                  checked={pageRangeMode === 'missing'}
+                  onChange={() => setPageRangeMode('missing')}
+                  className="mt-0.5"
+                />
+                <div className="flex-1">
+                  <div className="nums text-sm text-ink-strong">
+                    Pages with missing checks: {analysis.minMissingPage} to {analysis.maxMissingPage}
+                  </div>
+                  <div className="mt-0.5 text-xs text-ink-faint">
+                    {analysis.missingPages.length} page{analysis.missingPages.length > 1 ? 's' : ''} need extraction
+                  </div>
+                </div>
+              </label>
             )}
-          </button>
+
+            <label className={RADIO_ROW}>
+              <input
+                type="radio"
+                name="pageRange"
+                checked={pageRangeMode === 'custom'}
+                onChange={() => setPageRangeMode('custom')}
+              />
+              <span className="mr-2 text-sm text-ink-strong">Custom range:</span>
+              <Input
+                type="number"
+                inputSize="sm"
+                min={1}
+                max={job.total_pages}
+                value={customPageFrom}
+                onChange={(e) => setCustomPageFrom(Math.max(1, Math.min(job.total_pages, parseInt(e.target.value) || 1)))}
+                onClick={() => setPageRangeMode('custom')}
+                className="nums w-16"
+              />
+              <span className="text-sm text-ink-faint">to</span>
+              <Input
+                type="number"
+                inputSize="sm"
+                min={1}
+                max={job.total_pages}
+                value={customPageTo}
+                onChange={(e) => setCustomPageTo(Math.max(1, Math.min(job.total_pages, parseInt(e.target.value) || 1)))}
+                onClick={() => setPageRangeMode('custom')}
+                className="nums w-16"
+              />
+            </label>
+          </div>
+        </div>
+
+        {/* Check Range */}
+        <div className="space-y-2">
+          <span className="block text-sm font-medium text-ink-body">Check Range</span>
+          <div className="space-y-2">
+            <label className={RADIO_ROW}>
+              <input
+                type="radio"
+                name="checkRange"
+                checked={checkRangeMode === 'all'}
+                onChange={() => setCheckRangeMode('all')}
+              />
+              <span className="nums text-sm text-ink-strong">All checks (1-{analysis.totalChecks})</span>
+            </label>
+
+            {analysis.missingCount > 0 && (
+              <label className={RADIO_ROW}>
+                <input
+                  type="radio"
+                  name="checkRange"
+                  checked={checkRangeMode === 'failed'}
+                  onChange={() => setCheckRangeMode('failed')}
+                />
+                <span className="nums text-sm text-ink-strong">
+                  Failed/missing checks only ({analysis.missingCount} check{analysis.missingCount > 1 ? 's' : ''})
+                </span>
+              </label>
+            )}
+
+            <label className={RADIO_ROW}>
+              <input
+                type="radio"
+                name="checkRange"
+                checked={checkRangeMode === 'custom'}
+                onChange={() => setCheckRangeMode('custom')}
+              />
+              <span className="mr-2 text-sm text-ink-strong">Custom range:</span>
+              <Input
+                type="number"
+                inputSize="sm"
+                min={1}
+                max={analysis.totalChecks}
+                value={customCheckFrom}
+                onChange={(e) => setCustomCheckFrom(Math.max(1, Math.min(analysis.totalChecks, parseInt(e.target.value) || 1)))}
+                onClick={() => setCheckRangeMode('custom')}
+                className="nums w-16"
+              />
+              <span className="text-sm text-ink-faint">to</span>
+              <Input
+                type="number"
+                inputSize="sm"
+                min={1}
+                max={analysis.totalChecks}
+                value={customCheckTo}
+                onChange={(e) => setCustomCheckTo(Math.max(1, Math.min(analysis.totalChecks, parseInt(e.target.value) || 1)))}
+                onClick={() => setCheckRangeMode('custom')}
+                className="nums w-16"
+              />
+            </label>
+          </div>
+        </div>
+
+        {/* Force Re-extract */}
+        <label className="flex cursor-pointer items-center gap-2 rounded-input border border-warning-border bg-warning-bg p-3">
+          <input
+            type="checkbox"
+            checked={force}
+            onChange={(e) => setForce(e.target.checked)}
+          />
+          <div className="flex-1">
+            <div className="text-sm font-medium text-warning-text">Force re-extract (overwrite existing results)</div>
+            <div className="mt-0.5 text-xs text-warning-text/80">This will re-process all checks in the selected range, even if they already have extraction data</div>
+          </div>
+        </label>
+
+        {/* Estimated Time */}
+        <div className="flex items-center gap-2 rounded-input border border-info-border bg-info-bg p-3">
+          <AlertCircle size={16} className="shrink-0 text-info-text" />
+          <div className="text-sm text-info-text">
+            <span className="font-medium">Estimated time:</span> {estimatedTime}
+          </div>
         </div>
       </div>
-    </div>
+    </Dialog>
   );
 }
