@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import Image from 'next/image';
-import { Upload, Settings, List, BarChart3, Download, Receipt, GitCompare, LayoutDashboard, Scale, ArrowLeftRight } from 'lucide-react';
+import { Upload, Settings, List, Download, Receipt, GitCompare, LayoutDashboard, Scale, ArrowLeftRight } from 'lucide-react';
 import UserProfile from '@/components/UserProfile';
 import QBProviderWrapper from '@/components/QBProviderWrapper';
 import SidebarCompanySwitcher from '@/components/SidebarCompanySwitcher';
@@ -15,7 +15,6 @@ const NAV_ITEMS = [
   { href: '/qb-comparisons', icon: GitCompare, label: 'QB Comparisons' },
   { href: '/qb-match', icon: ArrowLeftRight, label: 'QB Match' },
   { href: '/export', icon: Download, label: 'Export' },
-  { href: '/analytics', icon: BarChart3, label: 'Analytics' },
   { href: '/billing', icon: Receipt, label: 'Billing' },
 ];
 

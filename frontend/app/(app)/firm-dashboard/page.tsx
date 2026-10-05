@@ -1,17 +1,43 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import Link from 'next/link';
 import {
   CheckCircle, AlertTriangle, Copy, Eye, Search,
-  Loader2, RefreshCw, TrendingUp, ArrowRight,
-  Clock, Flag, ShieldCheck, ChevronRight, Filter,
-  FileText, Users, BarChart3, Activity, Upload,
+  Loader2, RefreshCw, TrendingUp,
+  Flag, ShieldCheck, Filter,
+  FileText, BarChart3, Activity, Upload, Layers, Zap,
 } from 'lucide-react';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, AreaChart, Area,
+  Area, AreaChart, CartesianGrid, Tooltip, XAxis, YAxis,
 } from 'recharts';
+import {
+  Badge,
+  Button,
+  GlassCard,
+  GlassCardTitle,
+  GlassPanel,
+  IconButton,
+  Input,
+  KpiTile,
+  Table,
+  TableScroll,
+  Tbody,
+  Td,
+  Th,
+  Thead,
+  Tr,
+} from '@/components/ui';
+import {
+  areaFade,
+  AXIS_TICK,
+  CHART_COLORS,
+  ChartEmpty,
+  ChartFrame,
+  GRID_PROPS,
+  NO_TWEEN,
+  TOOLTIP_PROPS,
+} from '@/lib/charts';
 
 // ── Types ──────────────────────────────────────────────────
 interface JobCheck {
@@ -52,6 +78,11 @@ interface ReviewItem {
   status: 'review' | 'mismatch' | 'manual' | 'flagged';
 }
 
+/** The Client Overview table keeps its pre-redesign `px-4 py-3` row, which is
+ *  the shared `tdVariants` recipe, so it adopts the primitive unchanged. The
+ *  only local metric is the extraction micro-bar width below. */
+const METER = 'h-1.5 overflow-hidden rounded-full';
+
 // ── Helpers ────────────────────────────────────────────────
 function extVal(ext: any, field: string): string {
   if (!ext) return '';
@@ -75,17 +106,38 @@ function fmtTime(iso: string): string {
   } catch { return iso; }
 }
 
-// ── Component ──────────────────────────────────────────────
+const isExtracted = (c: JobCheck) => !!c.extraction && Object.keys(c.extraction).length > 0;
+
+const avgConfidence = (ext: any) =>
+  ['amount', 'payee', 'checkDate', 'checkNumber'].reduce((s, f) => s + extConf(ext, f), 0) / 4;
+
+/** A rate meter's fill is state, so it reads off the state tokens. */
+const rateFill = (rate: number) =>
+  rate > 80 ? 'bg-success' : rate > 50 ? 'bg-warning' : 'bg-error';
+
 export default function FirmDashboardPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [viewMode, setViewMode] = useState<'overview' | 'detail'>('overview');
   const [syncing, setSyncing] = useState(false);
   const [syncResult, setSyncResult] = useState<{ count: number; error?: string } | null>(null);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [uploadResult, setUploadResult] = useState<{ count: number; total?: number; error?: string } | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const fetchJobs = useCallback(async () => {
+    try {
+      const res = await fetch('/api/jobs');
+      if (!res.ok) throw new Error('Failed to fetch');
+      const data = await res.json();
+      setJobs((data.jobs || []).sort((a: Job, b: Job) =>
+        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      ));
+    } catch (e) {
+      console.error('Failed to fetch:', e);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   const handleQBOFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -136,21 +188,6 @@ export default function FirmDashboardPage() {
     }
   };
 
-  const fetchJobs = useCallback(async () => {
-    try {
-      const res = await fetch('/api/jobs');
-      if (!res.ok) throw new Error('Failed to fetch');
-      const data = await res.json();
-      setJobs((data.jobs || []).sort((a: Job, b: Job) =>
-        new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-      ));
-    } catch (e) {
-      console.error('Failed to fetch:', e);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => { fetchJobs(); }, [fetchJobs]);
 
   // ── Derived Stats ──────────────────────────────────────
@@ -158,7 +195,7 @@ export default function FirmDashboardPage() {
     const completedJobs = jobs.filter(j => j.status === 'complete');
     const allChecks = completedJobs.flatMap(j => j.checks || []);
     const totalChecks = allChecks.length;
-    const extractedChecks = allChecks.filter(c => c.extraction && Object.keys(c.extraction).length > 0);
+    const extractedChecks = allChecks.filter(isExtracted);
 
     // Confidence-based matching simulation
     let matched = 0;
@@ -170,7 +207,7 @@ export default function FirmDashboardPage() {
     extractedChecks.forEach(c => {
       const amt = extVal(c.extraction, 'amount');
       const payee = extVal(c.extraction, 'payee');
-      const avgConf = ['amount', 'payee', 'checkDate', 'checkNumber'].reduce((sum, f) => sum + extConf(c.extraction, f), 0) / 4;
+      const avgConf = avgConfidence(c.extraction);
 
       // Duplicate detection
       const key = `${amt}-${payee}`;
@@ -188,6 +225,54 @@ export default function FirmDashboardPage() {
     return { totalChecks, matched, duplicates, missing, manualReview, matchRate, extractedChecks, completedJobs };
   }, [jobs]);
 
+  /**
+   * ── Processing metrics ───────────────────────────────────
+   * Moved here verbatim from the removed /analytics route (CHECKLIST 3, item
+   * 10: "Remove the Analytics page; its content moves into Firm Admin"). The
+   * figures are the same ones that page computed — document counts, pages
+   * scanned, extraction success rate, the per-engine breakdown and the job
+   * status split — only now they sit beside the reconciliation numbers they
+   * were always read against. Note the data source changed from the backend
+   * origin to the `/api/jobs` proxy, which is how every other page reads it.
+   */
+  const processing = useMemo(() => {
+    const totalDocs = jobs.length;
+    const completedDocs = jobs.filter(j => j.status === 'complete').length;
+    const errorDocs = jobs.filter(j => j.status === 'error').length;
+    const pendingDocs = jobs.filter(j => j.status === 'pending').length;
+    const inFlightDocs = jobs.filter(j =>
+      ['extracting', 'ocr_running', 'detecting', 'analyzed'].includes(j.status)
+    ).length;
+    const declaredChecks = jobs.reduce((s, j) => s + (j.total_checks || 0), 0);
+    const totalPages = jobs.reduce((s, j) => s + (j.total_pages || 0), 0);
+
+    const allChecks = jobs.flatMap(j => j.checks || []);
+    const extracted = allChecks.filter(isExtracted);
+    const extractionRate = declaredChecks > 0
+      ? Math.round((extracted.length / declaredChecks) * 100)
+      : 0;
+
+    const methodCounts: Record<string, number> = {};
+    extracted.forEach(c => {
+      (c.methods_used || []).forEach((m: string) => {
+        methodCounts[m] = (methodCounts[m] || 0) + 1;
+      });
+    });
+    const methodEntries = Object.entries(methodCounts).sort((a, b) => b[1] - a[1]);
+
+    const statusSplit = [
+      { label: 'Complete', count: completedDocs, tone: 'success' as const },
+      { label: 'Processing', count: inFlightDocs, tone: 'brand' as const },
+      { label: 'Error', count: errorDocs, tone: 'error' as const },
+      { label: 'Pending', count: pendingDocs, tone: 'neutral' as const },
+    ].filter(s => s.count > 0);
+
+    return {
+      totalDocs, completedDocs, declaredChecks, totalPages,
+      extracted, extractionRate, methodEntries, statusSplit,
+    };
+  }, [jobs]);
+
   // ── Match Rate Over Time (simulated from job dates) ────
   const matchRateHistory = useMemo(() => {
     const completedJobs = jobs.filter(j => j.status === 'complete').sort(
@@ -199,11 +284,8 @@ export default function FirmDashboardPage() {
 
     return completedJobs.map(j => {
       const checks = j.checks || [];
-      const extracted = checks.filter(c => c.extraction && Object.keys(c.extraction).length > 0);
-      const highConf = extracted.filter(c => {
-        const avg = ['amount', 'payee', 'checkDate', 'checkNumber'].reduce((s, f) => s + extConf(c.extraction, f), 0) / 4;
-        return avg > 0.8;
-      });
+      const extracted = checks.filter(isExtracted);
+      const highConf = extracted.filter(c => avgConfidence(c.extraction) > 0.8);
 
       runningTotal += checks.length;
       runningMatched += highConf.length;
@@ -217,17 +299,24 @@ export default function FirmDashboardPage() {
     });
   }, [jobs]);
 
-  // ── Client Overview (group by PDF source) ──────────────
+  /**
+   * ── Client Overview (group by PDF source) ──────────────
+   * Carries the per-document extraction figures the Analytics page listed
+   * separately. That list and this table were the same rows keyed by the same
+   * job, so the two became one table with the extraction columns added rather
+   * than a second list of the same documents — the only consolidation in the
+   * move, and the slice went from 10 to 15 so no document is lost with it.
+   */
   const clientOverview = useMemo(() => {
     const completedJobs = jobs.filter(j => j.status === 'complete');
-    return completedJobs.slice(0, 10).map(j => {
+    return completedJobs.slice(0, 15).map(j => {
       const checks = j.checks || [];
-      const extracted = checks.filter(c => c.extraction && Object.keys(c.extraction).length > 0);
-      const highConf = extracted.filter(c => {
-        const avg = ['amount', 'payee', 'checkDate', 'checkNumber'].reduce((s, f) => s + extConf(c.extraction, f), 0) / 4;
-        return avg > 0.8;
-      });
+      const extracted = checks.filter(isExtracted);
+      const highConf = extracted.filter(c => avgConfidence(c.extraction) > 0.8);
       const matchRate = checks.length > 0 ? Math.round((highConf.length / checks.length) * 100) : 0;
+      const extractionRate = j.total_checks > 0
+        ? Math.round((extracted.length / j.total_checks) * 100)
+        : 0;
 
       const seenAmounts = new Map<string, number>();
       extracted.forEach(c => {
@@ -241,6 +330,9 @@ export default function FirmDashboardPage() {
         name: j.pdf_name.replace(/\.pdf$/i, ''),
         checksThisMonth: checks.length,
         matchRate,
+        extracted: extracted.length,
+        declared: j.total_checks,
+        extractionRate,
         alerts,
         status: matchRate > 80 ? 'good' : matchRate > 50 ? 'warning' : 'critical',
         jobId: j.job_id,
@@ -248,13 +340,19 @@ export default function FirmDashboardPage() {
     });
   }, [jobs]);
 
+  const filteredClients = useMemo(() => {
+    if (!searchQuery) return clientOverview;
+    const q = searchQuery.toLowerCase();
+    return clientOverview.filter(c => c.name.toLowerCase().includes(q));
+  }, [clientOverview, searchQuery]);
+
   // ── Review Queue ───────────────────────────────────────
   const reviewQueue = useMemo((): ReviewItem[] => {
     const items: ReviewItem[] = [];
     jobs.filter(j => j.status === 'complete').forEach(j => {
       (j.checks || []).forEach(c => {
         if (!c.extraction) return;
-        const avgConf = ['amount', 'payee', 'checkDate', 'checkNumber'].reduce((s, f) => s + extConf(c.extraction, f), 0) / 4;
+        const avgConf = avgConfidence(c.extraction);
         if (avgConf <= 0.8) {
           items.push({
             check_id: c.check_id,
@@ -276,7 +374,7 @@ export default function FirmDashboardPage() {
     jobs.filter(j => j.status === 'complete').forEach(j => {
       (j.checks || []).forEach(c => {
         if (!c.extraction) return;
-        const avgConf = ['amount', 'payee', 'checkDate', 'checkNumber'].reduce((s, f) => s + extConf(c.extraction, f), 0) / 4;
+        const avgConf = avgConfidence(c.extraction);
         const checkNum = extVal(c.extraction, 'checkNumber');
         const payee = extVal(c.extraction, 'payee');
         const amount = extVal(c.extraction, 'amount');
@@ -312,52 +410,54 @@ export default function FirmDashboardPage() {
       .slice(0, 15);
   }, [jobs]);
 
-  // ── Status badge colors ────────────────────────────────
-  const statusConfig: Record<string, { bg: string; text: string; label: string }> = {
-    review: { bg: 'bg-amber-100', text: 'text-amber-700', label: 'Review' },
-    mismatch: { bg: 'bg-red-100', text: 'text-red-700', label: 'Mismatch' },
-    manual: { bg: 'bg-purple-100', text: 'text-purple-700', label: 'Manual' },
-    flagged: { bg: 'bg-orange-100', text: 'text-orange-700', label: 'Flagged' },
+  // ── Status vocabulary, mapped once ─────────────────────
+  const reviewTone: Record<string, 'warning' | 'error' | 'brand'> = {
+    review: 'warning',
+    mismatch: 'error',
+    manual: 'brand',
+    flagged: 'warning',
   };
 
-  const auditTypeConfig: Record<string, { icon: any; color: string; bg: string }> = {
-    auto_match: { icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-    manual_override: { icon: ShieldCheck, color: 'text-blue-600', bg: 'bg-blue-50' },
-    ocr_extracted: { icon: FileText, color: 'text-gray-600', bg: 'bg-gray-50' },
-    flagged: { icon: Flag, color: 'text-orange-600', bg: 'bg-orange-50' },
-    duplicate: { icon: Copy, color: 'text-red-600', bg: 'bg-red-50' },
+  const auditTypeConfig: Record<string, { icon: any; className: string }> = {
+    auto_match: { icon: CheckCircle, className: 'bg-success-bg text-success-text' },
+    manual_override: { icon: ShieldCheck, className: 'bg-info-bg text-info-text' },
+    ocr_extracted: { icon: FileText, className: 'bg-neutral-bg text-neutral-text' },
+    flagged: { icon: Flag, className: 'bg-warning-bg text-warning-text' },
+    duplicate: { icon: Copy, className: 'bg-error-bg text-error-text' },
   };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-[60vh]">
-        <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+      <div className="flex h-[60vh] items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-brand" />
       </div>
     );
   }
 
   return (
-    <div className="max-w-[1400px] mx-auto p-5 space-y-5">
+    <div className="mx-auto max-w-[1400px] space-y-5 p-5">
       {/* ── Header ──────────────────────────────────── */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Firm Dashboard</h1>
-          <p className="text-[13px] text-gray-500 mt-0.5">Cheque reconciliation overview</p>
+          <p className="text-eyebrow text-ink-faint">Firm Admin</p>
+          <h1 className="font-heading text-2xl font-semibold tracking-display text-ink-strong">Firm Dashboard</h1>
+          <p className="mt-0.5 text-sm text-ink-body">Cheque reconciliation and processing overview</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input
+            <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-ink-faint" />
+            <Input
               type="text"
-              placeholder="Search..."
+              placeholder="Search documents..."
+              aria-label="Search documents"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 pr-3 py-2 text-[13px] border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 w-48"
+              className="w-48 pl-10"
             />
           </div>
-          <label
-            className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-[13px] font-medium transition shadow-sm cursor-pointer disabled:opacity-50"
-          >
+          {/* A file input styled as the primary pill. `Button` cannot wrap an
+              <input type=file>, so the label carries the same variant classes. */}
+          <label className="press inline-flex min-h-tap cursor-pointer items-center justify-center gap-2 rounded-full border border-brand-dark/40 bg-gradient-to-r from-brand to-brand-dark px-4 text-sm font-semibold text-white shadow-brand-glow hover:from-brand-light hover:to-brand">
             <input
               type="file"
               accept=".qbo,.ofx,.qfx"
@@ -368,283 +468,332 @@ export default function FirmDashboardPage() {
             {uploadingFile ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
             {uploadingFile ? 'Uploading...' : 'Upload .QBO'}
           </label>
-          <button
+          <Button
+            variant="secondary"
+            size="sm"
             onClick={handleQBSync}
-            disabled={syncing}
-            className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-[13px] font-medium transition shadow-sm disabled:opacity-50"
+            loading={syncing}
+            icon={<RefreshCw size={14} />}
           >
-            {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
             {syncing ? 'Syncing...' : 'Sync from QuickBooks'}
-          </button>
+          </Button>
           {(syncResult || uploadResult) && (
-            <span className={`text-[11px] px-2 py-1 rounded ${
-              (syncResult?.error || uploadResult?.error) ? 'bg-red-50 text-red-600' : 'bg-emerald-50 text-emerald-600'
-            }`}>
+            <Badge tone={(syncResult?.error || uploadResult?.error) ? 'error' : 'success'} size="sm">
               {syncResult?.error || uploadResult?.error || (
                 syncResult ? `${syncResult.count} entries synced` :
                 uploadResult ? `${uploadResult.count} cheques imported${uploadResult.total ? ` (${uploadResult.total} total)` : ''}` : ''
               )}
-            </span>
+            </Badge>
           )}
-          <button
-            onClick={fetchJobs}
-            className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition"
-          >
+          <IconButton aria-label="Refresh" onClick={fetchJobs}>
             <RefreshCw size={16} />
-          </button>
-          <select
-            value={viewMode}
-            onChange={(e) => setViewMode(e.target.value as any)}
-            className="px-3 py-2 text-[13px] border border-gray-200 rounded-lg bg-white focus:outline-none"
-          >
-            <option value="overview">Overview</option>
-            <option value="detail">Detail</option>
-          </select>
+          </IconButton>
         </div>
       </div>
 
-      {/* ── Top Stats Cards ─────────────────────────── */}
-      <div className="grid grid-cols-4 gap-3">
-        <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-xl p-4 text-white shadow-lg shadow-blue-200">
-          <p className="text-blue-100 text-[11px] font-medium uppercase tracking-wider">Checks</p>
-          <p className="text-3xl font-bold mt-1">{stats.totalChecks.toLocaleString()}</p>
-          <p className="text-blue-200 text-[11px] mt-1">Total processed</p>
-        </div>
-        <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-xl p-4 text-white shadow-lg shadow-emerald-200">
-          <p className="text-emerald-100 text-[11px] font-medium uppercase tracking-wider">Match Rate</p>
-          <p className="text-3xl font-bold mt-1">{stats.matchRate}%</p>
-          <p className="text-emerald-200 text-[11px] mt-1">Auto-matched</p>
-        </div>
-        <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-xl p-4 text-white shadow-lg shadow-red-200">
-          <p className="text-red-100 text-[11px] font-medium uppercase tracking-wider">Duplicate Alerts</p>
-          <p className="text-3xl font-bold mt-1">{stats.duplicates}</p>
-          <p className="text-red-200 text-[11px] mt-1">Potential duplicates</p>
-        </div>
-        <div className="bg-gradient-to-br from-amber-500 to-amber-600 rounded-xl p-4 text-white shadow-lg shadow-amber-200">
-          <p className="text-amber-100 text-[11px] font-medium uppercase tracking-wider">Manual Reviews</p>
-          <p className="text-3xl font-bold mt-1">{stats.manualReview}</p>
-          <p className="text-amber-200 text-[11px] mt-1">Needs attention</p>
-        </div>
+      {/* ── Reconciliation KPIs ─────────────────────── */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiTile tone="brand" label="Checks" value={stats.totalChecks.toLocaleString()} caption="Total processed" />
+        <KpiTile tone="success" label="Match Rate" value={`${stats.matchRate}%`} caption="Auto-matched" />
+        <KpiTile tone="error" label="Duplicate Alerts" value={stats.duplicates} caption="Potential duplicates" />
+        <KpiTile tone="warning" label="Manual Reviews" value={stats.manualReview} caption="Needs attention" />
+      </div>
+
+      {/* ── Processing KPIs (from the retired Analytics page) ─── */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiTile
+          icon={<FileText size={16} />}
+          label="Documents"
+          value={processing.totalDocs}
+          caption={`${processing.completedDocs} complete`}
+        />
+        <KpiTile
+          icon={<Layers size={16} />}
+          label="Total Cheques"
+          value={processing.declaredChecks}
+          caption={`${processing.totalPages} pages scanned`}
+        />
+        <KpiTile
+          tone="success"
+          icon={<CheckCircle size={16} />}
+          label="Extracted"
+          value={processing.extracted.length}
+          caption={`${processing.extractionRate}% success rate`}
+        />
+        <KpiTile
+          tone="warning"
+          icon={<Zap size={16} />}
+          label="Methods Used"
+          value={processing.methodEntries.length}
+          caption={processing.methodEntries.map(([m]) => m).join(', ') || 'None'}
+        />
       </div>
 
       {/* ── Main Grid ───────────────────────────────── */}
       <div className="grid grid-cols-12 gap-5">
-        {/* ── Left Column (8 cols) ──────────────────── */}
-        <div className="col-span-8 space-y-5">
+        {/* ── Left Column ──────────────────────── */}
+        <div className="col-span-12 space-y-5 xl:col-span-8">
           {/* Client Overview Table */}
-          <div className="bg-white rounded-xl border border-gray-200/80 overflow-hidden">
-            <div className="px-5 py-3.5 border-b border-gray-100 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-gray-900">Client Overview</h2>
-              <div className="flex items-center gap-2">
-                <span className="text-[11px] text-gray-400">{clientOverview.length} documents</span>
-              </div>
+          <GlassCard padding="none" className="overflow-hidden">
+            <div className="flex items-center justify-between border-b border-glass-hairline px-5 py-3.5">
+              <GlassCardTitle className="text-sm">Client Overview</GlassCardTitle>
+              <span className="nums text-xs text-ink-faint">{filteredClients.length} documents</span>
             </div>
 
-            {/* Mini stats bar */}
-            <div className="px-5 py-3 bg-gray-50/50 border-b border-gray-100 flex items-center gap-3">
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-100 text-blue-700 rounded-lg text-[12px] font-bold">
-                {stats.totalChecks} <span className="font-normal text-blue-600">Checks This Month</span>
-              </span>
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-100 text-emerald-700 rounded-lg text-[12px] font-bold">
-                {stats.matchRate}% <span className="font-normal text-emerald-600">Auto-Match Rate</span>
-              </span>
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-100 text-red-700 rounded-lg text-[12px] font-bold">
-                {stats.duplicates} <span className="font-normal text-red-600">Duplicates</span>
-              </span>
-              <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-[12px] font-bold">
-                {stats.missing} <span className="font-normal text-gray-600">Missing</span>
-              </span>
+            {/* Mini stats bar — an inset group, never a second blurred pane. */}
+            <div className="flex flex-wrap items-center gap-2 border-b border-glass-hairline bg-surface-sunken/50 px-5 py-3">
+              <Badge tone="brand" size="md" className="nums font-semibold">
+                {stats.totalChecks} <span className="font-normal">Checks This Month</span>
+              </Badge>
+              <Badge tone="success" size="md" className="nums font-semibold">
+                {stats.matchRate}% <span className="font-normal">Auto-Match Rate</span>
+              </Badge>
+              <Badge tone="error" size="md" className="nums font-semibold">
+                {stats.duplicates} <span className="font-normal">Duplicates</span>
+              </Badge>
+              <Badge tone="neutral" size="md" className="nums font-semibold">
+                {stats.missing} <span className="font-normal">Missing</span>
+              </Badge>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-[13px]">
-                <thead>
-                  <tr className="border-b border-gray-50 bg-gray-50/30">
-                    <th className="px-4 py-2.5 text-left text-[11px] font-medium text-gray-400 uppercase tracking-wider">Client Name</th>
-                    <th className="px-4 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">Checks</th>
-                    <th className="px-4 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">Match Rate</th>
-                    <th className="px-4 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">Alerts</th>
-                    <th className="px-4 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">Status</th>
-                    <th className="px-4 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">Action</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {clientOverview.length === 0 ? (
-                    <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-gray-400 text-[13px]">
+            <TableScroll className="max-h-[32rem]">
+              <Table>
+                <Thead>
+                  <Tr>
+                    <Th>Client Name</Th>
+                    <Th numeric>Checks</Th>
+                    <Th numeric>Match Rate</Th>
+                    <Th numeric>Extracted</Th>
+                    <Th numeric>Alerts</Th>
+                    <Th>Status</Th>
+                    <Th>Action</Th>
+                  </Tr>
+                </Thead>
+                <Tbody>
+                  {filteredClients.length === 0 ? (
+                    <Tr>
+                      <Td colSpan={7} className="py-8 text-center text-ink-faint">
                         No completed documents yet. Upload and process cheques to see data here.
-                      </td>
-                    </tr>
+                      </Td>
+                    </Tr>
                   ) : (
-                    clientOverview.map((client) => (
-                      <tr key={client.jobId} className="hover:bg-gray-50/50 transition">
-                        <td className="px-4 py-3">
-                          <span className="font-medium text-gray-900 truncate block max-w-[200px]">{client.name}</span>
-                        </td>
-                        <td className="px-4 py-3 text-center font-medium text-gray-900">{client.checksThisMonth}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center justify-center gap-2">
-                            <span className="text-[12px] font-bold text-gray-900">{client.matchRate}%</span>
-                            <div className="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    filteredClients.map((client) => (
+                      <Tr key={client.jobId} interactive>
+                        <Td>
+                          <span className="block max-w-[200px] truncate font-medium text-ink-strong">{client.name}</span>
+                        </Td>
+                        <Td numeric className="font-medium">{client.checksThisMonth}</Td>
+                        <Td numeric>
+                          <div className="flex items-center justify-end gap-2">
+                            <span className="nums text-xs font-semibold text-ink-strong">{client.matchRate}%</span>
+                            <div className={`glass-track w-16 ${METER}`}>
                               <div
-                                className={`h-full rounded-full ${client.matchRate > 80 ? 'bg-emerald-500' : client.matchRate > 50 ? 'bg-amber-500' : 'bg-red-500'}`}
+                                className={`h-full rounded-full ${rateFill(client.matchRate)}`}
                                 style={{ width: `${client.matchRate}%` }}
                               />
                             </div>
                           </div>
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          {client.alerts > 0 ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-50 text-red-600 rounded-full text-[11px] font-medium">
-                              <AlertTriangle size={10} /> {client.alerts}
+                        </Td>
+                        {/* Extraction figures, carried over from Analytics. */}
+                        <Td numeric>
+                          <div className="flex items-center justify-end gap-2">
+                            <span className="nums text-xs text-ink-body">
+                              {client.extracted}/{client.declared}
                             </span>
+                            <div className={`glass-track w-12 ${METER}`}>
+                              <div
+                                className={`h-full rounded-full ${rateFill(client.extractionRate)}`}
+                                style={{ width: `${client.extractionRate}%` }}
+                              />
+                            </div>
+                          </div>
+                        </Td>
+                        <Td numeric>
+                          {client.alerts > 0 ? (
+                            <Badge tone="error" size="sm"><AlertTriangle size={10} /> {client.alerts}</Badge>
                           ) : (
-                            <span className="text-gray-300">—</span>
+                            <span className="text-ink-faint">—</span>
                           )}
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium ${
-                            client.status === 'good' ? 'bg-emerald-50 text-emerald-700' :
-                            client.status === 'warning' ? 'bg-amber-50 text-amber-700' :
-                            'bg-red-50 text-red-700'
-                          }`}>
+                        </Td>
+                        <Td>
+                          <Badge
+                            tone={client.status === 'good' ? 'success' : client.status === 'warning' ? 'warning' : 'error'}
+                            size="sm"
+                          >
                             {client.status === 'good' ? 'Matched' : client.status === 'warning' ? 'Partial' : 'Review'}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-center">
+                          </Badge>
+                        </Td>
+                        <Td>
                           <Link
                             href={`/reconciliation?job=${client.jobId}`}
-                            className="inline-flex items-center gap-1 px-2.5 py-1 bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg text-[11px] font-medium transition"
+                            className="press inline-flex items-center gap-1 rounded-pill bg-info-bg px-2.5 py-1 text-xs font-medium text-info-text hover:bg-brand/[0.16]"
                           >
                             <Eye size={12} /> Inspect
                           </Link>
-                        </td>
-                      </tr>
+                        </Td>
+                      </Tr>
                     ))
                   )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                </Tbody>
+              </Table>
+            </TableScroll>
+          </GlassCard>
 
           {/* Match Rate Over Time Chart */}
-          <div className="bg-white rounded-xl border border-gray-200/80 p-5">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-sm font-semibold text-gray-900">Match Rate Over Time</h2>
-              <div className="flex items-center gap-1 text-[11px] text-gray-400">
-                <TrendingUp size={12} className="text-emerald-500" />
+          <GlassCard padding="md">
+            <div className="mb-4 flex items-center justify-between">
+              <GlassCardTitle className="text-sm">Match Rate Over Time</GlassCardTitle>
+              <div className="flex items-center gap-1 text-xs text-ink-faint">
+                <TrendingUp size={12} className="text-success" />
                 <span>Trending {stats.matchRate > 70 ? 'up' : 'stable'}</span>
               </div>
             </div>
             {matchRateHistory.length > 0 ? (
-              <ResponsiveContainer width="100%" height={220}>
+              <ChartFrame height={220}>
                 <AreaChart data={matchRateHistory}>
-                  <defs>
-                    <linearGradient id="matchGradient" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.15} />
-                      <stop offset="95%" stopColor="#3b82f6" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11, fill: '#9ca3af' }} />
-                  <YAxis domain={[0, 100]} tick={{ fontSize: 11, fill: '#9ca3af' }} />
-                  <Tooltip
-                    contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e5e7eb' }}
-                    formatter={(value: number) => [`${value}%`, 'Match Rate']}
-                  />
-                  <Area
+                  {areaFade('firmMatchGrad', CHART_COLORS.brand)}
+                  <CartesianGrid {...GRID_PROPS} />
+                  <XAxis dataKey="date" tick={AXIS_TICK} axisLine={false} tickLine={false} />
+                  <YAxis domain={[0, 100]} tick={AXIS_TICK} axisLine={false} tickLine={false} />
+                  <Tooltip {...TOOLTIP_PROPS} formatter={(value: number) => [`${value}%`, 'Match Rate']} />
+                  <Area {...NO_TWEEN}
                     type="monotone"
                     dataKey="rate"
-                    stroke="#3b82f6"
+                    stroke={CHART_COLORS.brand}
                     strokeWidth={2}
-                    fill="url(#matchGradient)"
+                    fill="url(#firmMatchGrad)"
                   />
                 </AreaChart>
-              </ResponsiveContainer>
+              </ChartFrame>
             ) : (
-              <div className="h-[220px] flex items-center justify-center text-gray-400 text-[13px]">
-                <BarChart3 size={20} className="mr-2" /> Process documents to see match rate trends
-              </div>
+              <ChartEmpty height={220}>
+                <BarChart3 size={20} /> Process documents to see match rate trends
+              </ChartEmpty>
             )}
-          </div>
-        </div>
+          </GlassCard>
 
-        {/* ── Right Column (4 cols) ─────────────────── */}
-        <div className="col-span-4 space-y-5">
-          {/* Review Queue */}
-          <div className="bg-white rounded-xl border border-gray-200/80 overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-gray-900">Review Queue</h2>
-              <div className="flex items-center gap-2">
-                <button className="p-1 hover:bg-gray-100 rounded transition">
-                  <Filter size={13} className="text-gray-400" />
-                </button>
-                <span className="text-[11px] px-2 py-0.5 bg-amber-100 text-amber-700 rounded-full font-medium">
-                  {reviewQueue.length}
-                </span>
-              </div>
-            </div>
-            <div className="divide-y divide-gray-50 max-h-[320px] overflow-y-auto">
-              {reviewQueue.length === 0 ? (
-                <div className="px-4 py-8 text-center text-gray-400 text-[13px]">
-                  <CheckCircle size={20} className="mx-auto mb-2 text-emerald-400" />
-                  All checks are matched!
-                </div>
-              ) : (
-                reviewQueue.map((item) => {
-                  const sc = statusConfig[item.status];
+          {/* ── Extraction Methods (from the retired Analytics page) ── */}
+          {processing.methodEntries.length > 0 && (
+            <GlassCard padding="md">
+              <GlassCardTitle className="mb-4 text-sm">Extraction Methods</GlassCardTitle>
+              <div className="space-y-3">
+                {processing.methodEntries.map(([method, count], i) => {
+                  const pct = processing.extracted.length > 0
+                    ? Math.round((count / processing.extracted.length) * 100)
+                    : 0;
+                  // Engines are a series, not a state, so they take the brand
+                  // ramp in order rather than three unrelated hues.
+                  const fill = ['bg-brand', 'bg-brand-light', 'bg-brand-deep'][i % 3];
                   return (
-                    <div key={`${item.job_id}-${item.check_id}`} className="px-4 py-2.5 hover:bg-gray-50/50 transition">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="text-[12px] font-mono text-gray-500 flex-shrink-0">#{item.checkNumber}</span>
-                          <span className="text-[12px] font-medium text-gray-900 truncate">{item.payee}</span>
-                        </div>
-                        <span className="text-[12px] font-medium text-gray-700 flex-shrink-0 ml-2">{item.amount}</span>
+                    <div key={method}>
+                      <div className="mb-1 flex items-center justify-between">
+                        <span className="text-sm font-medium capitalize text-ink-strong">{method}</span>
+                        <span className="nums text-xs text-ink-faint">{count} cheques &middot; {pct}%</span>
                       </div>
-                      <div className="flex items-center justify-between mt-1">
-                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${sc.bg} ${sc.text}`}>
-                          {sc.label}
-                        </span>
-                        <div className="flex items-center gap-1">
-                          <Link
-                            href={`/reconciliation?job=${item.job_id}&check=${item.check_id}`}
-                            className="text-[10px] text-blue-500 hover:text-blue-700 font-medium"
-                          >
-                            Review
-                          </Link>
-                          <span className="text-gray-300">·</span>
-                          <button className="text-[10px] text-red-500 hover:text-red-700 font-medium">
-                            Override
-                          </button>
-                          <span className="text-gray-300">·</span>
-                          <button className="text-[10px] text-orange-500 hover:text-orange-700 font-medium">
-                            Flag
-                          </button>
-                        </div>
+                      <div className={`glass-track h-2 overflow-hidden rounded-full`}>
+                        <div
+                          className={`h-full rounded-full transition-[width] duration-settle ease-settle ${fill}`}
+                          style={{ width: `${pct}%` }}
+                        />
                       </div>
                     </div>
                   );
-                })
+                })}
+              </div>
+            </GlassCard>
+          )}
+
+          {/* ── Job Status (from the retired Analytics page) ── */}
+          {processing.statusSplit.length > 0 && (
+            <GlassCard padding="md">
+              <GlassCardTitle className="mb-4 text-sm">Job Status</GlassCardTitle>
+              <div className="flex flex-wrap gap-2">
+                {processing.statusSplit.map(s => (
+                  <Badge key={s.label} tone={s.tone} size="lg" className="nums font-semibold">
+                    {s.count} <span className="font-normal">{s.label}</span>
+                  </Badge>
+                ))}
+              </div>
+            </GlassCard>
+          )}
+
+          {processing.totalDocs === 0 && (
+            <GlassCard padding="lg" className="text-center">
+              <BarChart3 className="mx-auto mb-3 text-ink-faint" size={36} />
+              <p className="text-sm font-medium text-ink-body">No data yet</p>
+              <p className="mt-1 text-xs text-ink-faint">Upload and process documents to see processing metrics</p>
+            </GlassCard>
+          )}
+        </div>
+
+        {/* ── Right Column ─────────────────────── */}
+        <div className="col-span-12 space-y-5 xl:col-span-4">
+          {/* Review Queue */}
+          <GlassCard padding="none" className="overflow-hidden">
+            <div className="flex items-center justify-between border-b border-glass-hairline px-4 py-3">
+              <GlassCardTitle className="text-sm">Review Queue</GlassCardTitle>
+              <div className="flex items-center gap-2">
+                <Filter size={13} className="text-ink-faint" />
+                <Badge tone="warning" size="sm" className="nums">{reviewQueue.length}</Badge>
+              </div>
+            </div>
+            <div className="glass-divider scroll-region max-h-[320px]">
+              {reviewQueue.length === 0 ? (
+                <div className="px-4 py-8 text-center text-sm text-ink-body">
+                  <CheckCircle size={20} className="mx-auto mb-2 text-success" />
+                  All checks are matched!
+                </div>
+              ) : (
+                reviewQueue.map((item) => (
+                  <div key={`${item.job_id}-${item.check_id}`} className="px-4 py-2.5 transition-colors hover:bg-brand/[0.045]">
+                    <div className="flex items-center justify-between">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="nums shrink-0 font-mono text-xs text-ink-faint">#{item.checkNumber}</span>
+                        <span className="truncate text-xs font-medium text-ink-strong">{item.payee}</span>
+                      </div>
+                      <span className="nums ml-2 shrink-0 text-xs font-medium text-ink-body">{item.amount}</span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between">
+                      <Badge tone={reviewTone[item.status]} size="sm" className="capitalize">{item.status}</Badge>
+                      <div className="flex items-center gap-1 text-xs font-medium">
+                        <Link
+                          href={`/reconciliation?job=${item.job_id}&check=${item.check_id}`}
+                          className="text-brand-deep hover:underline"
+                        >
+                          Review
+                        </Link>
+                        <span className="text-ink-faint">&middot;</span>
+                        <Link
+                          href={`/reconciliation?job=${item.job_id}&check=${item.check_id}`}
+                          className="text-error-text hover:underline"
+                        >
+                          Override
+                        </Link>
+                        <span className="text-ink-faint">&middot;</span>
+                        <Link
+                          href={`/reconciliation?job=${item.job_id}&check=${item.check_id}`}
+                          className="text-warning-text hover:underline"
+                        >
+                          Flag
+                        </Link>
+                      </div>
+                    </div>
+                  </div>
+                ))
               )}
             </div>
-          </div>
+          </GlassCard>
 
           {/* Audit Log */}
-          <div className="bg-white rounded-xl border border-gray-200/80 overflow-hidden">
-            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-gray-900">Audit Log</h2>
-              <Link
-                href="/analytics"
-                className="text-[11px] text-blue-500 hover:text-blue-700 font-medium flex items-center gap-0.5"
-              >
-                Trend Analysis <ChevronRight size={12} />
-              </Link>
+          <GlassCard padding="none" className="overflow-hidden">
+            <div className="flex items-center justify-between border-b border-glass-hairline px-4 py-3">
+              <GlassCardTitle className="text-sm">Audit Log</GlassCardTitle>
+              <span className="nums text-xs text-ink-faint">{auditLog.length} entries</span>
             </div>
-            <div className="divide-y divide-gray-50 max-h-[400px] overflow-y-auto">
+            <div className="glass-divider scroll-region max-h-[400px]">
               {auditLog.length === 0 ? (
-                <div className="px-4 py-8 text-center text-gray-400 text-[13px]">
-                  <Activity size={20} className="mx-auto mb-2" />
+                <div className="px-4 py-8 text-center text-sm text-ink-body">
+                  <Activity size={20} className="mx-auto mb-2 text-ink-faint" />
                   No audit entries yet
                 </div>
               ) : (
@@ -652,18 +801,18 @@ export default function FirmDashboardPage() {
                   const config = auditTypeConfig[entry.type];
                   const Icon = config.icon;
                   return (
-                    <div key={entry.id} className="px-4 py-2.5 hover:bg-gray-50/50 transition">
+                    <div key={entry.id} className="px-4 py-2.5 transition-colors hover:bg-brand/[0.045]">
                       <div className="flex items-start gap-2.5">
-                        <div className={`p-1 rounded ${config.bg} flex-shrink-0 mt-0.5`}>
-                          <Icon size={12} className={config.color} />
+                        <div className={`mt-0.5 shrink-0 rounded-input p-1 ${config.className}`}>
+                          <Icon size={12} />
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center justify-between">
-                            <span className="text-[12px] font-medium text-gray-900">{entry.description}</span>
-                            <span className="text-[10px] text-gray-400 flex-shrink-0 ml-2">{fmtTime(entry.time)}</span>
+                            <span className="text-xs font-medium text-ink-strong">{entry.description}</span>
+                            <span className="nums ml-2 shrink-0 text-xs text-ink-faint">{fmtTime(entry.time)}</span>
                           </div>
                           {entry.details && (
-                            <p className="text-[11px] text-gray-500 mt-0.5 truncate">{entry.details}</p>
+                            <p className="mt-0.5 truncate text-xs text-ink-faint">{entry.details}</p>
                           )}
                         </div>
                       </div>
@@ -672,7 +821,20 @@ export default function FirmDashboardPage() {
                 })
               )}
             </div>
-          </div>
+          </GlassCard>
+
+          {/* Per-engine usage summary, so the right rail still carries the
+              processing story when the left column is filtered. */}
+          {processing.methodEntries.length > 0 && (
+            <GlassPanel tone="neutral" radius="card" padding="md">
+              <p className="text-eyebrow mb-2 text-ink-faint">Engines in use</p>
+              <div className="flex flex-wrap gap-2">
+                {processing.methodEntries.map(([m, c]) => (
+                  <Badge key={m} tone="outline" size="sm" className="nums capitalize">{m} · {c}</Badge>
+                ))}
+              </div>
+            </GlassPanel>
+          )}
         </div>
       </div>
     </div>

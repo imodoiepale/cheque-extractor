@@ -3,14 +3,23 @@
 import { useState, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { Search, RefreshCw, ChevronRight, Mail } from 'lucide-react';
+import {
+  Badge,
+  GlassCard,
+  Input,
+  KpiTile,
+  Select,
+  Table,
+  TableEmpty,
+  Tbody,
+  Td,
+  Th,
+  Thead,
+  Tr,
+} from '@/components/ui';
 
-const planColors: Record<string, string> = {
-  free: 'bg-gray-100 text-gray-500',
-  starter: 'bg-blue-50 text-blue-600',
-  professional: 'bg-indigo-50 text-indigo-600',
-  pro: 'bg-indigo-50 text-indigo-600',
-  enterprise: 'bg-purple-50 text-purple-600',
-};
+/** Plan is a tier, not a state. Free reads neutral, everything paid reads brand. */
+const planTone = (plan: string): 'neutral' | 'brand' => (plan === 'free' ? 'neutral' : 'brand');
 
 export default function AdminTenantsPage() {
   const [tenants, setTenants] = useState<any[]>([]);
@@ -54,110 +63,100 @@ export default function AdminTenantsPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <RefreshCw size={24} className="animate-spin text-blue-500" />
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <RefreshCw size={24} className="animate-spin text-brand" />
       </div>
     );
   }
 
   return (
-    <div className="p-6 sm:p-8 max-w-[1400px] mx-auto space-y-6">
+    <div className="mx-auto max-w-[1400px] space-y-6 p-6 sm:p-8">
       <div>
-        <h1 className="text-2xl font-black text-gray-900 tracking-tight">Accounts</h1>
-        <p className="text-sm text-gray-400 mt-1">{tenants.length} accounts on the platform</p>
+        <p className="text-eyebrow text-ink-faint">Super Admin</p>
+        <h1 className="font-heading text-2xl font-semibold tracking-display text-ink-strong">Accounts</h1>
+        <p className="nums mt-1 text-sm text-ink-body">{tenants.length} accounts on the platform</p>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row">
         <div className="relative flex-1">
-          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-          <input type="text" placeholder="Search accounts, emails..." value={search} onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-10 pr-4 py-2.5 bg-white border border-gray-200 rounded-lg shadow-sm text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" />
+          <Search size={16} className="pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 text-ink-faint" />
+          <Input
+            type="text"
+            placeholder="Search accounts, emails..."
+            aria-label="Search accounts"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="pl-10"
+          />
         </div>
-        <select value={planFilter} onChange={(e) => setPlanFilter(e.target.value)}
-          className="px-4 py-2.5 bg-white border border-gray-200 rounded-lg shadow-sm text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500">
+        <Select value={planFilter} onChange={(e) => setPlanFilter(e.target.value)} aria-label="Filter by plan" className="sm:w-44">
           {plans.map(p => (<option key={p} value={p}>{p === 'all' ? 'All Plans' : p.charAt(0).toUpperCase() + p.slice(1)}</option>))}
-        </select>
-        <select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)}
-          className="px-4 py-2.5 bg-white border border-gray-200 rounded-lg shadow-sm text-sm text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500">
+        </Select>
+        <Select value={sortBy} onChange={(e) => setSortBy(e.target.value as any)} aria-label="Sort accounts" className="sm:w-44">
           <option value="created_at">Newest First</option>
           <option value="check_count">Most Checks</option>
           <option value="mrr">Highest MRR</option>
           <option value="user_count">Most Users</option>
-        </select>
+        </Select>
       </div>
 
-      {/* Summary cards */}
-      <div className="grid grid-cols-4 gap-3">
-        <div className="bg-white border border-gray-100 rounded-lg shadow-sm p-4">
-          <div className="text-[10px] text-gray-400 uppercase tracking-wider font-bold">Total</div>
-          <div className="text-xl font-black text-gray-900">{filtered.length}</div>
-        </div>
-        <div className="bg-white border border-gray-100 rounded-lg shadow-sm p-4">
-          <div className="text-[10px] text-gray-400 uppercase tracking-wider font-bold">Users</div>
-          <div className="text-xl font-black text-gray-900">{filtered.reduce((s, t) => s + t.user_count, 0)}</div>
-        </div>
-        <div className="bg-white border border-gray-100 rounded-lg shadow-sm p-4">
-          <div className="text-[10px] text-gray-400 uppercase tracking-wider font-bold">Checks</div>
-          <div className="text-xl font-black text-gray-900">{filtered.reduce((s, t) => s + t.check_count, 0).toLocaleString()}</div>
-        </div>
-        <div className="bg-white border border-gray-100 rounded-lg shadow-sm p-4">
-          <div className="text-[10px] text-gray-400 uppercase tracking-wider font-bold">MRR</div>
-          <div className="text-xl font-black text-emerald-600">${filtered.reduce((s, t) => s + t.mrr, 0).toLocaleString()}</div>
-        </div>
+      {/* Summary */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <KpiTile label="Total" value={filtered.length} />
+        <KpiTile label="Users" value={filtered.reduce((s, t) => s + t.user_count, 0)} />
+        <KpiTile label="Checks" value={filtered.reduce((s, t) => s + t.check_count, 0).toLocaleString()} />
+        <KpiTile tone="success" label="MRR" value={`$${filtered.reduce((s, t) => s + t.mrr, 0).toLocaleString()}`} />
       </div>
 
-      {/* Table */}
-      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100 bg-gray-50/50">
-                <th className="text-center py-3 px-2 text-[10px] font-bold text-gray-400 uppercase w-10">#</th>
-                <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Account / Email</th>
-                <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Plan</th>
-                <th className="text-center py-3 px-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Jobs</th>
-                <th className="text-center py-3 px-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Checks</th>
-                <th className="text-right py-3 px-3 text-[10px] font-bold text-gray-400 uppercase tracking-wider">MRR</th>
-                <th className="text-right py-3 px-4 text-[10px] font-bold text-gray-400 uppercase tracking-wider">Joined</th>
-                <th className="py-3 px-2 w-8"></th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {filtered.map((t, idx) => (
-                <tr key={t.id} className="hover:bg-gray-50 transition-colors group">
-                  <td className="py-3 px-2 text-center text-[10px] text-gray-300 font-mono">{idx + 1}</td>
-                  <td className="py-3 px-4">
-                    <Link href={`/admin/tenants/${t.id}`} className="block">
-                      <div className="font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">{t.name}</div>
-                      <div className="flex items-center gap-1 text-[10px] text-gray-400 mt-0.5">
-                        <Mail size={9} />
-                        {t.users?.length > 0 ? t.users.map((u: any) => u.email).join(', ') : t.slug}
-                      </div>
-                    </Link>
-                  </td>
-                  <td className="py-3 px-4">
-                    <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider ${planColors[t.plan] || planColors.free}`}>{t.plan}</span>
-                  </td>
-                  <td className="py-3 px-3 text-center text-gray-500">{t.job_count}</td>
-                  <td className="py-3 px-3 text-center text-gray-500">{t.check_count}</td>
-                  <td className="py-3 px-3 text-right font-semibold text-emerald-600">${t.mrr}</td>
-                  <td className="py-3 px-4 text-right text-[11px] text-gray-400">{new Date(t.created_at).toLocaleDateString()}</td>
-                  <td className="py-3 px-2">
-                    <Link href={`/admin/tenants/${t.id}`} className="p-1 hover:bg-gray-100 rounded transition-colors inline-flex">
-                      <ChevronRight size={14} className="text-gray-300 group-hover:text-gray-500" />
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {filtered.length === 0 && (
-          <div className="py-12 text-center text-sm text-gray-400">No accounts match your filters</div>
-        )}
-      </div>
+      {/* Table. Shared Td recipe — py-3, the pre-redesign row height. */}
+      <GlassCard padding="none" className="overflow-hidden">
+        <Table>
+          <Thead>
+            <Tr>
+              <Th className="w-10 px-2 text-center">#</Th>
+              <Th>Account / Email</Th>
+              <Th>Plan</Th>
+              <Th numeric>Jobs</Th>
+              <Th numeric>Checks</Th>
+              <Th numeric>MRR</Th>
+              <Th numeric>Joined</Th>
+              <Th className="w-8 px-2" />
+            </Tr>
+          </Thead>
+          <Tbody>
+            {filtered.map((t, idx) => (
+              <Tr key={t.id} interactive className="group">
+                <Td muted className="px-2 text-center font-mono text-xs">{idx + 1}</Td>
+                <Td>
+                  <Link href={`/admin/tenants/${t.id}`} className="block">
+                    <div className="font-semibold text-ink-strong transition-colors group-hover:text-brand-deep">{t.name}</div>
+                    <div className="mt-0.5 flex items-center gap-1 truncate text-xs text-ink-faint">
+                      <Mail size={9} />
+                      {t.users?.length > 0 ? t.users.map((u: any) => u.email).join(', ') : t.slug}
+                    </div>
+                  </Link>
+                </Td>
+                <Td>
+                  <Badge tone={planTone(t.plan)} size="sm" className="uppercase">{t.plan}</Badge>
+                </Td>
+                <Td numeric>{t.job_count}</Td>
+                <Td numeric>{t.check_count}</Td>
+                <Td numeric className="nums-money font-semibold text-success-text">${t.mrr}</Td>
+                <Td numeric muted className="text-xs">{new Date(t.created_at).toLocaleDateString()}</Td>
+                <Td className="px-2">
+                  <Link href={`/admin/tenants/${t.id}`} aria-label={`Open ${t.name}`} className="inline-flex rounded-input p-1 text-ink-faint transition-colors hover:bg-brand/[0.08] hover:text-brand-deep">
+                    <ChevronRight size={14} />
+                  </Link>
+                </Td>
+              </Tr>
+            ))}
+            {filtered.length === 0 && (
+              <TableEmpty colSpan={8} title="No accounts match your filters" description="Clear the search or widen the plan filter." />
+            )}
+          </Tbody>
+        </Table>
+      </GlassCard>
     </div>
   );
 }

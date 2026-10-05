@@ -6,9 +6,25 @@ import Link from 'next/link';
 import {
   CheckCircle, AlertTriangle, Copy, Eye, Search,
   Loader2, RefreshCw, ArrowLeft, ChevronLeft, ChevronRight,
-  Flag, ShieldCheck, X, Filter, FileText, ArrowRight,
-  ThumbsUp, ThumbsDown, RotateCcw,
+  Flag, X, FileText, ThumbsUp, RotateCcw,
 } from 'lucide-react';
+import {
+  Badge,
+  Button,
+  GlassCard,
+  GlassCardTitle,
+  GlassPanel,
+  IconButton,
+  Input,
+  Select,
+  Table,
+  TableScroll,
+  Tbody,
+  Td,
+  Th,
+  Thead,
+  Tr,
+} from '@/components/ui';
 
 // ── Types ──────────────────────────────────────────────────
 interface JobCheck {
@@ -28,6 +44,15 @@ interface Job {
   created_at: string;
 }
 
+/**
+ * This grid ran `px-3 py-2.5` at 13px before the redesign — about a 40px row,
+ * where the shared `tdVariants` recipe (px-4 py-3 at 14px) is about 44px.
+ * Adopting the shared recipe wholesale would cost roughly one row in every
+ * eleven on a reviewer's screen, so the density is declared ONCE here instead
+ * of editing the primitive, exactly as parcel E's DENSE_GRID does.
+ */
+const DENSE_RECON = '[&_td]:px-3 [&_td]:py-2.5 [&_th]:px-3';
+
 // ── Helpers ────────────────────────────────────────────────
 function extVal(ext: any, field: string): string {
   if (!ext) return '';
@@ -45,26 +70,27 @@ function extConf(ext: any, field: string): number {
   return 0;
 }
 
+/** Confidence is a state, so it reads off the state tokens, never a raw palette. */
 function confColor(conf: number): string {
-  if (conf >= 0.9) return 'text-emerald-600';
-  if (conf >= 0.7) return 'text-blue-600';
-  if (conf >= 0.5) return 'text-amber-600';
-  return 'text-red-600';
+  if (conf >= 0.9) return 'text-success-text';
+  if (conf >= 0.7) return 'text-info-text';
+  if (conf >= 0.5) return 'text-warning-text';
+  return 'text-error-text';
 }
 
-function confBg(conf: number): string {
-  if (conf >= 0.9) return 'bg-emerald-50 border-emerald-200';
-  if (conf >= 0.7) return 'bg-blue-50 border-blue-200';
-  if (conf >= 0.5) return 'bg-amber-50 border-amber-200';
-  return 'bg-red-50 border-red-200';
+function confTone(conf: number) {
+  if (conf >= 0.9) return 'success' as const;
+  if (conf >= 0.7) return 'brand' as const;
+  if (conf >= 0.5) return 'warning' as const;
+  return 'error' as const;
 }
 
 // ── Wrapper with Suspense ──────────────────────────────────
 export default function ReconciliationPage() {
   return (
     <Suspense fallback={
-      <div className="flex items-center justify-center h-[60vh]">
-        <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+      <div className="flex h-[60vh] items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-brand" />
       </div>
     }>
       <ReconciliationContent />
@@ -84,7 +110,6 @@ function ReconciliationContent() {
   const [selectedCheckIdx, setSelectedCheckIdx] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'matched' | 'review' | 'mismatch'>('all');
-  const [viewMode, setViewMode] = useState<'table' | 'detail'>('table');
 
   // Action states
   const [actionStates, setActionStates] = useState<Record<string, 'confirmed' | 'flagged' | 'duplicate' | null>>({});
@@ -165,231 +190,236 @@ function ReconciliationContent() {
     setActionStates(prev => ({ ...prev, [key]: action }));
   };
 
-  // ── Status badge ───────────────────────────────────────
+  // ── Status badge. Mapped once; no page invents a status colour. ────
   const statusBadge = (status: string, actionState?: string | null) => {
     if (actionState === 'confirmed') {
-      return <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-[11px] font-medium"><CheckCircle size={10} /> Confirmed</span>;
+      return <Badge tone="success" size="sm"><CheckCircle size={10} /> Confirmed</Badge>;
     }
     if (actionState === 'flagged') {
-      return <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-orange-100 text-orange-700 rounded-full text-[11px] font-medium"><Flag size={10} /> Flagged</span>;
+      return <Badge tone="warning" size="sm"><Flag size={10} /> Flagged</Badge>;
     }
     if (actionState === 'duplicate') {
-      return <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-red-100 text-red-700 rounded-full text-[11px] font-medium"><Copy size={10} /> Duplicate</span>;
+      return <Badge tone="error" size="sm"><Copy size={10} /> Duplicate</Badge>;
     }
-    const config: Record<string, { bg: string; text: string; icon: any; label: string }> = {
-      matched: { bg: 'bg-emerald-50', text: 'text-emerald-700', icon: <CheckCircle size={10} />, label: 'Matched' },
-      review: { bg: 'bg-amber-50', text: 'text-amber-700', icon: <AlertTriangle size={10} />, label: 'Review' },
-      mismatch: { bg: 'bg-red-50', text: 'text-red-700', icon: <X size={10} />, label: 'Mismatch' },
-    };
-    const c = config[status] || config.mismatch;
-    return <span className={`inline-flex items-center gap-1 px-2 py-0.5 ${c.bg} ${c.text} rounded-full text-[11px] font-medium`}>{c.icon} {c.label}</span>;
+    if (status === 'matched') return <Badge tone="success" size="sm"><CheckCircle size={10} /> Matched</Badge>;
+    if (status === 'review') return <Badge tone="warning" size="sm"><AlertTriangle size={10} /> Review</Badge>;
+    return <Badge tone="error" size="sm"><X size={10} /> Mismatch</Badge>;
   };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-[60vh]">
-        <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+      <div className="flex h-[60vh] items-center justify-center">
+        <Loader2 className="h-6 w-6 animate-spin text-brand" />
       </div>
     );
   }
 
   return (
-    <div className="max-w-[1400px] mx-auto p-5 space-y-5">
+    <div className="mx-auto max-w-[1400px] space-y-5 p-5">
       {/* ── Header ──────────────────────────────────── */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex items-center gap-3">
-          <Link href="/firm-dashboard" className="p-1.5 hover:bg-gray-100 rounded-lg transition">
-            <ArrowLeft size={18} className="text-gray-500" />
+          <Link href="/firm-dashboard" aria-label="Back to firm dashboard" className="rounded-input p-1.5 text-ink-faint transition-colors hover:bg-brand/[0.08] hover:text-brand-deep">
+            <ArrowLeft size={18} />
           </Link>
           <div>
-            <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Reconciliation</h1>
-            <p className="text-[13px] text-gray-500 mt-0.5">Compare OCR extractions with QuickBooks data</p>
+            <h1 className="font-heading text-2xl font-semibold tracking-display text-ink-strong">Reconciliation</h1>
+            <p className="mt-0.5 text-sm text-ink-body">Compare OCR extractions with QuickBooks data</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input
+            <Search className="pointer-events-none absolute left-3 top-1/2 z-10 h-4 w-4 -translate-y-1/2 text-ink-faint" />
+            <Input
               type="text"
               placeholder="Search checks..."
+              aria-label="Search checks"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="pl-9 pr-3 py-2 text-[13px] border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 w-48"
+              className="w-48 pl-10"
             />
           </div>
-          <select
+          <Select
             value={filterStatus}
             onChange={(e) => setFilterStatus(e.target.value as any)}
-            className="px-3 py-2 text-[13px] border border-gray-200 rounded-lg bg-white"
+            aria-label="Filter by status"
+            className="w-40"
           >
             <option value="all">All Status</option>
             <option value="matched">Matched</option>
             <option value="review">Review</option>
             <option value="mismatch">Mismatch</option>
-          </select>
-          <button onClick={fetchJobs} className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition">
+          </Select>
+          <IconButton aria-label="Refresh" onClick={fetchJobs}>
             <RefreshCw size={16} />
-          </button>
+          </IconButton>
         </div>
       </div>
 
       {/* ── Job Selector ────────────────────────────── */}
       {!selectedJobId && (
-        <div className="bg-white rounded-xl border border-gray-200/80 overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-gray-100">
-            <h2 className="text-sm font-semibold text-gray-900">Select a Document to Reconcile</h2>
+        <GlassCard padding="none" className="overflow-hidden">
+          <div className="border-b border-glass-hairline px-5 py-3.5">
+            <GlassCardTitle className="text-sm">Select a Document to Reconcile</GlassCardTitle>
           </div>
-          <div className="divide-y divide-gray-50">
+          <div className="glass-divider">
             {jobs.map(job => (
               <button
                 key={job.job_id}
                 onClick={() => { setSelectedJobId(job.job_id); setSelectedCheckIdx(0); }}
-                className="w-full px-5 py-3 flex items-center justify-between hover:bg-gray-50 transition text-left"
+                className="press flex w-full items-center justify-between px-5 py-3 text-left transition-colors hover:bg-brand/[0.045]"
               >
                 <div className="flex items-center gap-3">
-                  <FileText size={16} className="text-gray-400" />
+                  <FileText size={16} className="text-ink-faint" />
                   <div>
-                    <p className="text-[13px] font-medium text-gray-900">{job.pdf_name}</p>
-                    <p className="text-[11px] text-gray-500">{job.total_checks} checks · {job.total_pages} pages</p>
+                    <p className="text-sm font-medium text-ink-strong">{job.pdf_name}</p>
+                    <p className="nums text-xs text-ink-faint">{job.total_checks} checks &middot; {job.total_pages} pages</p>
                   </div>
                 </div>
-                <ChevronRight size={16} className="text-gray-400" />
+                <ChevronRight size={16} className="text-ink-faint" />
               </button>
             ))}
             {jobs.length === 0 && (
-              <div className="px-5 py-12 text-center text-gray-400 text-[13px]">
+              <div className="px-5 py-12 text-center text-sm text-ink-faint">
                 No completed documents available for reconciliation.
               </div>
             )}
           </div>
-        </div>
+        </GlassCard>
       )}
 
       {/* ── Reconciliation Table ────────────────────── */}
       {selectedJob && (
         <>
           {/* Job header */}
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             <button
               onClick={() => { setSelectedJobId(null); setSelectedCheckIdx(0); }}
-              className="text-[12px] text-blue-500 hover:text-blue-700 font-medium flex items-center gap-1"
+              className="flex items-center gap-1 text-xs font-medium text-brand-deep hover:underline"
             >
               <ArrowLeft size={12} /> All Documents
             </button>
-            <span className="text-gray-300">·</span>
-            <span className="text-[13px] font-medium text-gray-900">{selectedJob.pdf_name}</span>
-            <span className="text-[11px] text-gray-400">{selectedJob.total_checks} checks</span>
+            <span className="text-ink-faint">&middot;</span>
+            <span className="text-sm font-medium text-ink-strong">{selectedJob.pdf_name}</span>
+            <span className="nums text-xs text-ink-faint">{selectedJob.total_checks} checks</span>
           </div>
 
           <div className="grid grid-cols-12 gap-5">
             {/* ── Table (left) ──────────────────────── */}
-            <div className="col-span-7">
-              <div className="bg-white rounded-xl border border-gray-200/80 overflow-hidden">
-                <div className="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
-                  <h2 className="text-sm font-semibold text-gray-900">Reconciliation</h2>
-                  <span className="text-[11px] text-gray-400">{reconciliationRows.length} items</span>
+            <div className="col-span-12 lg:col-span-7">
+              <GlassCard padding="none" className="overflow-hidden">
+                <div className="flex items-center justify-between border-b border-glass-hairline px-5 py-3">
+                  <GlassCardTitle className="text-sm">Reconciliation</GlassCardTitle>
+                  <span className="nums text-xs text-ink-faint">{reconciliationRows.length} items</span>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-[13px]">
-                    <thead>
-                      <tr className="border-b border-gray-50 bg-gray-50/30">
-                        <th className="px-3 py-2.5 text-left text-[11px] font-medium text-gray-400 uppercase tracking-wider">Check #</th>
-                        <th className="px-3 py-2.5 text-left text-[11px] font-medium text-gray-400 uppercase tracking-wider">Payee</th>
-                        <th className="px-3 py-2.5 text-right text-[11px] font-medium text-gray-400 uppercase tracking-wider">Amount</th>
-                        <th className="px-3 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">Date</th>
-                        <th className="px-3 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">Status</th>
-                        <th className="px-3 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">Confidence</th>
-                        <th className="px-3 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-50">
+                {/* One scroll container. The page does not scroll behind it. */}
+                <TableScroll className="max-h-[calc(100vh-18rem)]">
+                  <Table className={DENSE_RECON}>
+                    <Thead>
+                      <Tr>
+                        <Th>Check #</Th>
+                        <Th>Payee</Th>
+                        <Th numeric>Amount</Th>
+                        <Th numeric>Date</Th>
+                        <Th>Status</Th>
+                        <Th numeric>Conf.</Th>
+                        <Th>Action</Th>
+                      </Tr>
+                    </Thead>
+                    <Tbody>
                       {reconciliationRows.map((row) => (
-                        <tr
+                        <Tr
                           key={row.check.check_id}
-                          className={`hover:bg-blue-50/30 cursor-pointer transition ${selectedCheckIdx === row.idx ? 'bg-blue-50/50' : ''}`}
+                          interactive
+                          selected={selectedCheckIdx === row.idx}
                           onClick={() => setSelectedCheckIdx(row.idx)}
                         >
-                          <td className="px-3 py-2.5 font-mono text-gray-700">{row.checkNumber}</td>
-                          <td className="px-3 py-2.5 font-medium text-gray-900 truncate max-w-[140px]">{row.payee}</td>
-                          <td className="px-3 py-2.5 text-right font-medium text-gray-900">{row.amount}</td>
-                          <td className="px-3 py-2.5 text-center text-gray-600">{row.date}</td>
-                          <td className="px-3 py-2.5 text-center">{statusBadge(row.status, row.actionState)}</td>
-                          <td className="px-3 py-2.5 text-center">
-                            <span className={`inline-flex items-center justify-center w-10 h-5 rounded text-[11px] font-bold border ${confBg(row.confidence / 100)}`}>
+                          <Td className="nums font-mono text-ink-body">{row.checkNumber}</Td>
+                          <Td className="max-w-[140px] truncate font-medium">{row.payee}</Td>
+                          <Td numeric className="nums-money font-medium">{row.amount}</Td>
+                          <Td numeric muted>{row.date}</Td>
+                          <Td>{statusBadge(row.status, row.actionState)}</Td>
+                          <Td numeric>
+                            <Badge tone={confTone(row.confidence / 100)} size="sm" className="nums">
                               {row.confidence}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2.5 text-center">
-                            <div className="flex items-center justify-center gap-1">
+                            </Badge>
+                          </Td>
+                          <Td>
+                            <div className="flex items-center gap-1">
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleAction(row.check.check_id, 'confirmed'); }}
-                                className={`p-1 rounded transition ${row.actionState === 'confirmed' ? 'bg-emerald-100 text-emerald-600' : 'text-gray-400 hover:text-emerald-600 hover:bg-emerald-50'}`}
+                                className={`press rounded-input p-1 transition-colors ${row.actionState === 'confirmed' ? 'bg-success-bg text-success-text' : 'text-ink-faint hover:bg-success-bg hover:text-success-text'}`}
                                 title="Confirm Match"
+                                aria-label="Confirm match"
                               >
                                 <ThumbsUp size={12} />
                               </button>
                               <button
                                 onClick={(e) => { e.stopPropagation(); handleAction(row.check.check_id, 'duplicate'); }}
-                                className={`p-1 rounded transition ${row.actionState === 'duplicate' ? 'bg-red-100 text-red-600' : 'text-gray-400 hover:text-red-600 hover:bg-red-50'}`}
+                                className={`press rounded-input p-1 transition-colors ${row.actionState === 'duplicate' ? 'bg-error-bg text-error-text' : 'text-ink-faint hover:bg-error-bg hover:text-error-text'}`}
                                 title="Mark Duplicate"
+                                aria-label="Mark duplicate"
                               >
                                 <Copy size={12} />
                               </button>
                             </div>
-                          </td>
-                        </tr>
+                          </Td>
+                        </Tr>
                       ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+                    </Tbody>
+                  </Table>
+                </TableScroll>
+              </GlassCard>
             </div>
 
             {/* ── Detail Panel (right) ──────────────── */}
-            <div className="col-span-5 space-y-4">
+            <div className="col-span-12 space-y-4 lg:col-span-5">
               {selectedCheck && selectedCheck.extraction ? (
                 <>
                   {/* Check Image */}
-                  <div className="bg-white rounded-xl border border-gray-200/80 overflow-hidden">
-                    <div className="px-4 py-2.5 border-b border-gray-100 flex items-center justify-between">
-                      <span className="text-[12px] font-medium text-gray-700">
+                  <GlassCard padding="none" className="overflow-hidden">
+                    <div className="flex items-center justify-between border-b border-glass-hairline px-4 py-2.5">
+                      <span className="nums text-xs font-medium text-ink-body">
                         Check {selectedCheckIdx + 1} of {selectedJob.checks.length}
                       </span>
                       <div className="flex items-center gap-1">
                         <button
                           onClick={() => setSelectedCheckIdx(Math.max(0, selectedCheckIdx - 1))}
                           disabled={selectedCheckIdx === 0}
-                          className="p-1 hover:bg-gray-100 rounded disabled:opacity-30"
+                          aria-label="Previous check"
+                          className="press rounded-input p-1 text-ink-body hover:bg-brand/[0.08] disabled:opacity-disabled"
                         >
                           <ChevronLeft size={14} />
                         </button>
                         <button
                           onClick={() => setSelectedCheckIdx(Math.min(selectedJob.checks.length - 1, selectedCheckIdx + 1))}
                           disabled={selectedCheckIdx === selectedJob.checks.length - 1}
-                          className="p-1 hover:bg-gray-100 rounded disabled:opacity-30"
+                          aria-label="Next check"
+                          className="press rounded-input p-1 text-ink-body hover:bg-brand/[0.08] disabled:opacity-disabled"
                         >
                           <ChevronRight size={14} />
                         </button>
                       </div>
                     </div>
-                    <div className="bg-gray-50 flex items-center justify-center p-3">
+                    {/* A recessed track behind the scan, not a second glass pane. */}
+                    <div className="glass-track flex items-center justify-center rounded-none p-3">
                       <img
                         src={`/api/check-image/${selectedJob.job_id}/${selectedCheck.check_id}`}
                         alt="Check image"
-                        className="max-h-[160px] object-contain rounded"
+                        className="max-h-[160px] rounded-input object-contain"
                         onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                       />
                     </div>
-                  </div>
+                  </GlassCard>
 
                   {/* Side-by-side OCR vs QBO Data */}
                   <div className="grid grid-cols-2 gap-3">
                     {/* OCR Data */}
-                    <div className="bg-white rounded-xl border border-gray-200/80 overflow-hidden">
-                      <div className="px-3 py-2 border-b border-gray-100 bg-blue-50/50">
-                        <h3 className="text-[12px] font-semibold text-blue-800">OCR Data</h3>
+                    <GlassCard padding="none" className="overflow-hidden">
+                      <div className="border-b border-glass-hairline bg-info-bg/50 px-3 py-2">
+                        <h3 className="text-xs font-semibold text-info-text">OCR Data</h3>
                       </div>
-                      <div className="p-3 space-y-2">
+                      <div className="space-y-2 p-3">
                         {[
                           { label: 'Check #', field: 'checkNumber' },
                           { label: 'Payee', field: 'payee' },
@@ -399,11 +429,11 @@ function ReconciliationContent() {
                           { label: 'Memo', field: 'memo' },
                         ].map(({ label, field }) => (
                           <div key={field}>
-                            <p className="text-[10px] text-gray-400 uppercase tracking-wider">{label}</p>
-                            <div className="flex items-center justify-between">
-                              <p className="text-[12px] font-medium text-gray-900">{extVal(selectedCheck.extraction, field) || '—'}</p>
+                            <p className="text-eyebrow text-ink-faint">{label}</p>
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="truncate text-xs font-medium text-ink-strong">{extVal(selectedCheck.extraction, field) || '—'}</p>
                               {extConf(selectedCheck.extraction, field) > 0 && (
-                                <span className={`text-[10px] font-bold ${confColor(extConf(selectedCheck.extraction, field))}`}>
+                                <span className={`nums shrink-0 text-xs font-semibold ${confColor(extConf(selectedCheck.extraction, field))}`}>
                                   {Math.round(extConf(selectedCheck.extraction, field) * 100)}%
                                 </span>
                               )}
@@ -411,14 +441,14 @@ function ReconciliationContent() {
                           </div>
                         ))}
                       </div>
-                    </div>
+                    </GlassCard>
 
                     {/* QBO Data (placeholder until connected) */}
-                    <div className="bg-white rounded-xl border border-gray-200/80 overflow-hidden">
-                      <div className="px-3 py-2 border-b border-gray-100 bg-emerald-50/50">
-                        <h3 className="text-[12px] font-semibold text-emerald-800">QBO Data</h3>
+                    <GlassCard padding="none" className="overflow-hidden">
+                      <div className="border-b border-glass-hairline bg-success-bg/50 px-3 py-2">
+                        <h3 className="text-xs font-semibold text-success-text">QBO Data</h3>
                       </div>
-                      <div className="p-3 space-y-2">
+                      <div className="space-y-2 p-3">
                         {[
                           { label: 'TxnNumber', value: extVal(selectedCheck.extraction, 'checkNumber') || '—' },
                           { label: 'TxnDesc', value: extVal(selectedCheck.extraction, 'payee') || '—' },
@@ -428,81 +458,92 @@ function ReconciliationContent() {
                           { label: 'Memo', value: extVal(selectedCheck.extraction, 'memo') || '—' },
                         ].map(({ label, value }) => (
                           <div key={label}>
-                            <p className="text-[10px] text-gray-400 uppercase tracking-wider">{label}</p>
-                            <p className="text-[12px] font-medium text-gray-900">{value}</p>
+                            <p className="text-eyebrow text-ink-faint">{label}</p>
+                            <p className="truncate text-xs font-medium text-ink-strong">{value}</p>
                           </div>
                         ))}
                       </div>
-                    </div>
+                    </GlassCard>
                   </div>
 
                   {/* Action Buttons */}
                   <div className="flex items-center gap-2">
-                    <button
+                    <Button
+                      size="sm"
+                      className="flex-1"
+                      icon={<CheckCircle size={14} />}
                       onClick={() => handleAction(selectedCheck.check_id, 'confirmed')}
-                      className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 text-[13px] font-medium transition shadow-sm"
                     >
-                      <CheckCircle size={14} /> Confirm Match
-                    </button>
-                    <button
+                      Confirm Match
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      className="flex-1"
+                      icon={<Copy size={14} />}
                       onClick={() => handleAction(selectedCheck.check_id, 'duplicate')}
-                      className="flex-1 flex items-center justify-center gap-1.5 px-4 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 text-[13px] font-medium transition shadow-sm"
                     >
-                      <Copy size={14} /> Mark Duplicate
-                    </button>
+                      Mark Duplicate
+                    </Button>
                   </div>
                   <div className="flex items-center gap-2">
-                    <button
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="flex-1 text-warning-text"
+                      icon={<Flag size={13} />}
                       onClick={() => handleAction(selectedCheck.check_id, 'flagged')}
-                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 border border-orange-300 text-orange-700 bg-orange-50 rounded-lg hover:bg-orange-100 text-[12px] font-medium transition"
                     >
-                      <Flag size={13} /> Flag for Review
-                    </button>
-                    <button
+                      Flag for Review
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="flex-1"
+                      icon={<RotateCcw size={13} />}
                       onClick={() => handleAction(selectedCheck.check_id, null)}
-                      className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 border border-gray-200 text-gray-600 rounded-lg hover:bg-gray-50 text-[12px] font-medium transition"
                     >
-                      <RotateCcw size={13} /> Reset
-                    </button>
+                      Reset
+                    </Button>
                   </div>
 
                   {/* Audit Trail for this check */}
-                  <div className="bg-white rounded-xl border border-gray-200/80 overflow-hidden">
-                    <div className="px-4 py-2.5 border-b border-gray-100">
-                      <h3 className="text-[12px] font-semibold text-gray-700">Audit Log</h3>
+                  <GlassCard padding="none" className="overflow-hidden">
+                    <div className="border-b border-glass-hairline px-4 py-2.5">
+                      <h3 className="text-xs font-semibold text-ink-body">Audit Log</h3>
                     </div>
-                    <div className="divide-y divide-gray-50">
-                      <div className="px-4 py-2 flex items-center gap-2">
-                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                        <span className="text-[11px] text-gray-500">
+                    <div className="glass-divider">
+                      <div className="flex items-center gap-2 px-4 py-2">
+                        <div className="h-1.5 w-1.5 rounded-full bg-success" />
+                        <span className="nums text-xs text-ink-faint">
                           {new Date(selectedJob.created_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
                         </span>
-                        <span className="text-[11px] font-medium text-gray-700">OCR Extracted Data</span>
+                        <span className="text-xs font-medium text-ink-body">OCR Extracted Data</span>
                       </div>
                       {selectedCheck.methods_used?.map(method => (
-                        <div key={method} className="px-4 py-2 flex items-center gap-2">
-                          <div className="w-1.5 h-1.5 rounded-full bg-blue-500" />
-                          <span className="text-[11px] text-gray-500">Engine</span>
-                          <span className="text-[11px] font-medium text-gray-700 capitalize">{method}</span>
+                        <div key={method} className="flex items-center gap-2 px-4 py-2">
+                          <div className="h-1.5 w-1.5 rounded-full bg-brand" />
+                          <span className="text-xs text-ink-faint">Engine</span>
+                          <span className="text-xs font-medium capitalize text-ink-body">{method}</span>
                         </div>
                       ))}
                       {actionStates[`${selectedJob.job_id}-${selectedCheck.check_id}`] && (
-                        <div className="px-4 py-2 flex items-center gap-2">
-                          <div className="w-1.5 h-1.5 rounded-full bg-purple-500" />
-                          <span className="text-[11px] text-gray-500">Now</span>
-                          <span className="text-[11px] font-medium text-gray-700 capitalize">
+                        <div className="flex items-center gap-2 px-4 py-2">
+                          <div className="h-1.5 w-1.5 rounded-full bg-brand-deep" />
+                          <span className="text-xs text-ink-faint">Now</span>
+                          <span className="text-xs font-medium capitalize text-ink-body">
                             {actionStates[`${selectedJob.job_id}-${selectedCheck.check_id}`]}
                           </span>
                         </div>
                       )}
                     </div>
-                  </div>
+                  </GlassCard>
                 </>
               ) : (
-                <div className="bg-white rounded-xl border border-gray-200/80 p-8 text-center">
-                  <Eye size={24} className="mx-auto text-gray-300 mb-2" />
-                  <p className="text-[13px] text-gray-500">Select a check from the table to view details</p>
-                </div>
+                <GlassCard padding="lg" className="text-center">
+                  <Eye size={24} className="mx-auto mb-2 text-ink-faint" />
+                  <p className="text-sm text-ink-body">Select a check from the table to view details</p>
+                </GlassCard>
               )}
             </div>
           </div>
