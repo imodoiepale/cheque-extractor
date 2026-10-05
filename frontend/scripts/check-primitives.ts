@@ -231,4 +231,33 @@ console.log('  ok  glass fallbacks, motion tokens and state utilities all presen
   console.log(`  ok  ${pairs.length} backdrop-filter pairs authored prefix-first`);
 }
 
+// ── No boxShadow key may also be a colour name ────────────────────────────
+// Tailwind generates a utility for both maps, so a name present in each emits
+// TWO rules for the same class: a shadow rule and a shadow-*colour* rule. The
+// colour rule wins by source order and the layered shadow silently never
+// renders. This hit `shadow-glass-panel`, `-modal`, `-toast` and `-selected`
+// at once, and it is invisible in source — the class looks right, the variable
+// exists, nothing errors.
+{
+  const theme = (config as any).theme?.extend ?? (config as any).theme ?? {};
+  const shadowKeys = Object.keys(theme.boxShadow ?? {});
+  const colourNames = new Set<string>();
+  const walk = (obj: any, path: string[]) => {
+    for (const [k, v] of Object.entries(obj ?? {})) {
+      const p = k === 'DEFAULT' ? path : [...path, k];
+      if (v && typeof v === 'object') walk(v, p);
+      else colourNames.add(p.join('-'));
+    }
+  };
+  walk(theme.colors ?? {}, []);
+  const clashes = shadowKeys.filter((k) => colourNames.has(k));
+  assert.deepStrictEqual(
+    clashes,
+    [],
+    'these names are BOTH a boxShadow key and a colour, so shadow-<name> is ' +
+      `ambiguous and the shadow will not render: ${clashes.join(', ')}`
+  );
+  console.log(`  ok  ${shadowKeys.length} shadow keys, none collide with a colour name`);
+}
+
 console.log('\nall primitive checks passed');

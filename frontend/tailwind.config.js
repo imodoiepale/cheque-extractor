@@ -133,13 +133,18 @@ module.exports = {
           tint: t("surface-tint"),
           sunken: t("surface-sunken"),
         },
+        // NOTE: `panel`, `modal`, `toast` and `selected` are deliberately NOT
+        // colour entries here. Each one is also a boxShadow key, and Tailwind
+        // emits a rule for both — so `.shadow-glass-modal` got a shadow rule AND
+        // a shadow-*colour* rule, the colour rule came last, and the layered
+        // glow silently never rendered. The shadow utilities are used; these
+        // colour names were used nowhere, so removing them de-ambiguates all
+        // four with no call-site churn. The surfaces get their background from
+        // the .glass-* classes in globals.css, which read the same variables
+        // directly. check-primitives.ts fails if a collision reappears.
         glass: {
           card: "var(--glass-card-bg)",
-          panel: "var(--glass-panel-bg)",
-          modal: "var(--glass-modal-bg)",
           chrome: "var(--glass-chrome-bg)",
-          toast: "var(--glass-toast-bg)",
-          selected: "var(--glass-selected-bg)",
           border: "var(--glass-border)",
           hairline: "var(--glass-hairline)",
           "border-dark": "var(--glass-border-dark)",
