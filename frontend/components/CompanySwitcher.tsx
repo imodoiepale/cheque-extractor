@@ -1,6 +1,8 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import toast from 'react-hot-toast';
+import { createClient } from '@/lib/supabase/client';
 import { useQBConnections } from '@/hooks/useQBConnections';
 import { Building2, ChevronDown, Plus, Search, Check, Loader2, X, Unplug } from 'lucide-react';
 
@@ -26,6 +28,36 @@ export default function CompanySwitcher() {
   const [search, setSearch] = useState('');
   const ref = useRef<HTMLDivElement>(null);
 
+  // /api/qbo/auth answers with {authUrl} as JSON; it does not redirect. An
+  // <a href> pointed at it navigated the browser to a raw JSON document instead
+  // of starting OAuth, so "Connect QuickBooks" and "Add Company" never worked
+  // from this switcher. Same fetch-then-redirect the Settings page uses.
+  const [connecting, setConnecting] = useState(false);
+  const startConnect = useCallback(async () => {
+    if (connecting) return;
+    setConnecting(true);
+    try {
+      const { data: { session } } = await createClient().auth.getSession();
+      if (!session?.access_token) {
+        toast.error('Session expired. Please refresh the page.');
+        return;
+      }
+      const res = await fetch('/api/qbo/auth', {
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const body = await res.json().catch(() => ({} as any));
+      if (!res.ok || !body?.authUrl) {
+        toast.error(body?.detail || body?.error || 'Could not start the QuickBooks connection.');
+        return;
+      }
+      window.location.href = body.authUrl;
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not start the QuickBooks connection.');
+    } finally {
+      setConnecting(false);
+    }
+  }, [connecting]);
+
   // Close on outside click
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -49,13 +81,15 @@ export default function CompanySwitcher() {
   if (!hasConnections) {
     return (
       <div className="px-3 py-2 mb-2">
-        <a
-          href="/api/qbo/auth"
-          className="flex items-center gap-2 text-xs text-brand-light hover:text-shell-active transition-colors duration-tap ease-settle"
+        <button
+          type="button"
+          onClick={startConnect}
+          disabled={connecting}
+          className="flex items-center gap-2 text-xs text-brand-light hover:text-shell-active transition-colors duration-tap ease-settle disabled:opacity-disabled"
         >
-          <Plus className="w-3.5 h-3.5" />
+          {connecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
           Connect QuickBooks
-        </a>
+        </button>
       </div>
     );
   }
@@ -149,13 +183,15 @@ export default function CompanySwitcher() {
 
           {/* Footer */}
           <div className="border-t border-glass-border-dark px-3 py-2 flex items-center justify-between">
-            <a
-              href="/api/qbo/auth"
-              className="flex items-center gap-1 text-[11px] text-brand-light hover:text-shell-active"
+            <button
+              type="button"
+              onClick={startConnect}
+              disabled={connecting}
+              className="flex items-center gap-1 text-[11px] text-brand-light hover:text-shell-active disabled:opacity-disabled"
             >
-              <Plus className="w-3 h-3" />
+              {connecting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
               Add Company
-            </a>
+            </button>
             {active && (
               <button
                 onClick={async () => {

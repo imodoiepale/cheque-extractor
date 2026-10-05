@@ -51,6 +51,7 @@ export async function updateSession(request: NextRequest) {
     '/legal/privacy',
     '/legal/terms',
     '/legal/eula',
+    '/invite',
   ];
 
   const isPublicRoute = publicRoutes.some(
@@ -73,6 +74,62 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  // ── MFA gate ───────────────────────────────────────────────────────────────
+  // MFA is required for Administrators (CHECKLIST.md section 5). This is the
+  // one place it is forced, so there is no page an Administrator can reach at
+  // aal1. An Administrator with no factor yet cannot reach aal2, so the same
+  // rule produces forced enrolment and forced challenge.
+  if (user && !isPublicRoute && !isApiRoute && !pathname.startsWith('/mfa')) {
+    const { data: { session } } = await supabase.auth.getSession();
+    const aal = readAalClaim(session?.access_token);
+
+    if (aal !== 'aal2') {
+      const { data: profile } = await supabase
+        .from('user_profiles')
+        .select('role, tenant_id')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      let mustMfa = profile?.role === 'admin';
+
+      // A firm may additionally require it of everyone (tenants.require_mfa_all_users).
+      if (!mustMfa && profile?.tenant_id) {
+        const { data: tenant } = await supabase
+          .from('tenants')
+          .select('require_mfa_all_users')
+          .eq('id', profile.tenant_id)
+          .maybeSingle();
+        mustMfa = tenant?.require_mfa_all_users === true;
+      }
+
+      if (mustMfa) {
+        const url = request.nextUrl.clone();
+        url.pathname = '/mfa';
+        url.search = '';
+        url.searchParams.set('next', pathname);
+        return NextResponse.redirect(url);
+      }
+    }
+  }
+
   // IMPORTANT: Always return supabaseResponse, not a new NextResponse.next()
   return supabaseResponse;
+}
+
+/**
+ * Read the `aal` claim from an access token already validated by
+ * supabase.auth.getUser() above. No signature check here on purpose — this is
+ * reading a claim out of a token the auth server just vouched for, not
+ * accepting an unverified one.
+ */
+function readAalClaim(token: string | undefined): string | null {
+  if (!token) return null;
+  try {
+    const payload = JSON.parse(
+      Buffer.from(token.split('.')[1], 'base64').toString('utf8')
+    );
+    return typeof payload?.aal === 'string' ? payload.aal : null;
+  } catch {
+    return null;
+  }
 }

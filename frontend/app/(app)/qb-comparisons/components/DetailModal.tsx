@@ -80,6 +80,11 @@ export const DetailModal: React.FC<DetailModalProps> = ({ row, onClose, onSave, 
   }, [row?.id, row?.date, row?.qbData?.date]);
   // #endregion
 
+  // Must sit ABOVE the early return: when `row` goes from set to null this
+  // component returns before the hook, so React sees fewer hooks than the
+  // previous render and throws. The `row ?` guard already makes it safe here.
+  const corrections = useMemo(() => row ? computeCorrections(row) : {}, [row]);
+
   if (!row) return null;
 
   const handleApprove = async () => {
@@ -99,7 +104,6 @@ export const DetailModal: React.FC<DetailModalProps> = ({ row, onClose, onSave, 
     }
   };
 
-  const corrections = useMemo(() => row ? computeCorrections(row) : {}, [row]);
   const correctionCount = Object.keys(corrections).length;
 
   const handleFixInQB = async () => {

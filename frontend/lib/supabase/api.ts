@@ -132,6 +132,43 @@ export function createClientFromCookies(req: NextApiRequest) {
 }
 
 /**
+ * Create an authenticated client from whichever transport the caller used.
+ *
+ * API routes in this repo are hit two ways: hooks send an `Authorization:
+ * Bearer` header (see hooks/useMatches.ts), while plain `fetch('/api/...')`
+ * from a page sends only cookies (see app/(app)/settings/team/page.tsx).
+ * createAuthenticatedClient() throws on the second case, which is why the team
+ * page failed silently. This picks the right one instead of adding a third
+ * auth path — the cookie branch uses @supabase/ssr, the same mechanism as
+ * lib/supabase/proxy.ts and pages/api/admin/*.
+ */
+export async function createClientFromRequest(req: NextApiRequest) {
+  const authHeader = req.headers.authorization;
+  if (authHeader?.startsWith('Bearer ')) {
+    return createAuthenticatedClient(req);
+  }
+
+  const { createServerClient } = await import('@supabase/ssr');
+  return createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return Object.entries(req.cookies).map(([name, value]) => ({
+            name,
+            value: value || '',
+          }));
+        },
+        setAll() {
+          /* API routes here do not rotate the session cookie */
+        },
+      },
+    }
+  );
+}
+
+/**
  * Create a service role Supabase client (bypasses RLS).
  * ⚠️ Only use this for admin operations where you need to bypass RLS.
  * For normal user operations, use createAuthenticatedClient() instead.

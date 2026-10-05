@@ -2675,6 +2675,21 @@ class IntegrationSettings(BaseModel):
     gemini_api_key: Optional[str] = None
 
 
+def _redact_settings(data: dict) -> dict:
+    """Field names and value lengths only — never the values.
+
+    This used to print `update_data` straight out, which put the tenant's Gemini
+    API key into the server log in plaintext on every save.
+    """
+    out = {}
+    for k, v in (data or {}).items():
+        if any(t in k.lower() for t in ("key", "token", "secret", "password")):
+            out[k] = f"<redacted {len(str(v))} chars>" if v else "<empty>"
+        else:
+            out[k] = v
+    return out
+
+
 @app.get("/api/settings/integrations")
 def get_integration_settings(_auth=Depends(_verify_token)):
     """
@@ -2745,7 +2760,7 @@ async def update_integration_settings(settings: IntegrationSettings, _auth=Depen
             setting_id = existing[0].get("id")
             print(f"📝 Updating existing record with id={setting_id}")
             print(f"   URL: {_sb_url}/rest/v1/app_settings?id=eq.{setting_id}")
-            print(f"   Data: {update_data}")
+            print(f"   Fields: {_redact_settings(update_data)}")
             resp = _requests.patch(
                 f"{_sb_url}/rest/v1/app_settings?id=eq.{setting_id}",
                 headers=_sb_headers(),
@@ -2758,7 +2773,7 @@ async def update_integration_settings(settings: IntegrationSettings, _auth=Depen
             update_data["created_at"] = datetime.utcnow().isoformat()
             print(f"➕ Creating new record")
             print(f"   URL: {_sb_url}/rest/v1/app_settings")
-            print(f"   Data: {update_data}")
+            print(f"   Fields: {_redact_settings(update_data)}")
             resp = _requests.post(
                 f"{_sb_url}/rest/v1/app_settings",
                 headers=_sb_headers(),

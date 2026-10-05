@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useRef, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
-import { Save, AlertCircle, Key, ExternalLink, CheckCircle, XCircle, Users, Settings as SettingsIcon, Plug, Upload, FileText, Loader2 } from 'lucide-react'
+import { Save, AlertCircle, Key, ExternalLink, CheckCircle, XCircle, Users, Settings as SettingsIcon, Plug, Upload, FileText, Loader2, ShieldCheck } from 'lucide-react'
+import Link from 'next/link'
 import QuickBooksFilters, { FilterParams } from '@/components/QuickBooksFilters'
 import { createClient } from '@/lib/supabase/client'
 import toast from 'react-hot-toast'
@@ -524,6 +525,7 @@ function SettingsPageContent() {
         { id: 'general', label: 'General', icon: SettingsIcon },
         { id: 'integrations', label: 'Integrations', icon: Plug },
         { id: 'team', label: 'Team', icon: Users },
+        { id: 'security', label: 'Security', icon: ShieldCheck },
     ]
 
     return (
@@ -1126,7 +1128,42 @@ function SettingsPageContent() {
                 <div className="space-y-6">
                     <div className="bg-white rounded-lg shadow p-6">
                         <h2 className="text-xl font-semibold text-gray-900 mb-4">Team Management</h2>
-                        <p className="text-gray-600">Team management features coming soon...</p>
+                        <p className="text-gray-600 mb-4">
+                            Invite Administrators and Users, change roles, and remove access.
+                            Administrator only.
+                        </p>
+                        <Link
+                            href="/settings/team"
+                            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
+                        >
+                            <Users size={16} />
+                            Open team management
+                        </Link>
+                    </div>
+                </div>
+            )}
+
+            {activeTab === 'security' && (
+                <div className="space-y-6">
+                    <div className="bg-white rounded-lg shadow p-6">
+                        <h2 className="text-xl font-semibold text-gray-900 mb-4">Two-Factor Authentication</h2>
+                        <p className="text-gray-600 mb-4">
+                            Kyriq uses an authenticator app (TOTP) for two-factor authentication.
+                            It is <strong>required for Administrators</strong> &mdash; an
+                            Administrator signing in without it is sent to set it up before any
+                            page loads.
+                        </p>
+                        <Link
+                            href="/mfa"
+                            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium"
+                        >
+                            <ShieldCheck size={16} />
+                            Manage two-factor authentication
+                        </Link>
+                        <p className="text-xs text-gray-500 mt-4">
+                            Lost your authenticator? Use a recovery code on that page. Each code
+                            works once and removes the old authenticator so you can set up a new one.
+                        </p>
                     </div>
                 </div>
             )}
