@@ -1,0 +1,1 @@
+{"nodes": [{"id": "$graphify-root$_supabase_migrations_010_fix_user_profiles_rls_recursion_sql", "label": "010_fix_user_profiles_rls_recursion.sql", "file_type": "code", "source_file": "supabase/migrations/010_fix_user_profiles_rls_recursion.sql", "source_location": null}], "edges": []}

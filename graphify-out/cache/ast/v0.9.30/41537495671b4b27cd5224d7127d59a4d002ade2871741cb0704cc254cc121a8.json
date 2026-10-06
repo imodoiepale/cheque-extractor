@@ -1,0 +1,1 @@
+{"nodes": [{"id": "$graphify-root$_supabase_migrations_008_add_company_name_to_integrations_sql", "label": "008_add_company_name_to_integrations.sql", "file_type": "code", "source_file": "supabase/migrations/008_add_company_name_to_integrations.sql", "source_location": null}], "edges": []}
