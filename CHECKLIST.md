@@ -5,6 +5,31 @@ document that requires it, and how we know it is done.
 
 **Target:** pilot firms on the app. **Reference pack:** `new changes/`.
 
+> **Status, 6 October 2026.** 69 of ~160 items done, on branch
+> `feat/v2-glass-redesign-trial-and-roles`. Delivered: the P0 security fixes, Michael's removals,
+> bank-statement detection, **all nine redesign parcels**, the usage ledger and trial enforcement,
+> and roles/team/MFA. Verified green: `type-check`, `lint` (0 errors), a production build, and nine
+> self-check scripts.
+>
+> **Three things block everything downstream, and two are not code:**
+> 1. **Migrations 026–031 have never been applied to any database.** The ledger, trial limits, comp
+>    accounts, team endpoints and MFA recovery are written and self-checked but cannot work, and the
+>    `app_settings` leak stays open. No `psql`, no linked CLI, no DB credential in the environment.
+> 2. **Nobody has seen the authenticated pages.** Only the public routes were genuinely looked at.
+> 3. **The logo pack and the v17 handoff zip never reached the repo**, which blocks the logo and the
+>    15-question FAQ.
+>
+> **Biggest piece still unbuilt: section 3**, the single `/reconcile` route with the batch-driven
+> stepper and the Continue Reconciliation card — the heart of what the client asked for. The QB
+> Match capability inventory needed to specify that merge now exists (11 page-level, 13 row-level
+> capabilities, in the Parcel H commit message).
+>
+> **A recurring class worth naming:** four separate bugs this round were correct-looking source with
+> the effect silently absent — a stripped `backdrop-filter`, four colliding shadow names,
+> 34 unoverridable theme keys, and a frozen animation. None were findable by reading the code. All
+> four are now asserted in `scripts/check-primitives.ts`. Expect more of this shape, and reach for a
+> browser or a measurement rather than a re-read.
+
 ---
 
 ## 0. Ground rules
@@ -83,7 +108,7 @@ Security and correctness. None of this is visible, all of it is blocking.
       preview URLs. **Done:** list trimmed to the real origins and the `"*"` entry removed — it had
       been appended last, which made the whole allowlist inert. Previews now match
       `allow_origin_regex` covering the Kyriq and legacy project names.
-- [ ] **Make duplicate detection database-backed.** `backend/api_server.py` ~944 checks duplicates
+- [x] **Make duplicate detection database-backed.** `backend/api_server.py` ~944 checks duplicates
       against in-memory jobs only, with the comment saying so. After a restart the same file creates
       a new job, so identical customer behaviour would be billed differently. This blocks the usage
       ledger.
@@ -226,7 +251,22 @@ different glass cards appearing.
 | **H** | QB integration components, match, export, billing. | 2,535 |
 | **I** | Landing page, Magic-UI decorative components and the legal pages. Holds 20 of the 23 hardcoded hexes and all framer-motion usage. Can run in parallel with A. | 2,325 |
 
-- [x] **Order:** A merges first. B can start as soon as A's token names are frozen, since it needs
+**All nine parcels are merged.** Roughly 2,400 raw palette utilities and 160 literal hexes removed
+across the app, every parcel leaving a runnable self-check behind.
+
+| Parcel | Scope | Migrated | Notable |
+|---|---|---|---|
+| **A** | Tokens, config, primitives | — | `@apply` block was inert; `--success-dark` failed contrast at 3.0:1 |
+| **B** | Both shells, switchers, auth layout, 404, OAuth-complete | 3 hexes, 2 fixed widths | **Both shells unified** on dark glass |
+| **C** | Upload flow | 9 `blue-600` + all palette | Dropzone had only 1 of its 3 states; `window.confirm` → Dialog |
+| **D** | Settings, team, four auth pages | 366 palette | Form-state pattern for the app; signup rebuilt |
+| **E** | QB Comparisons | 15 hexes, 18 `blue-600` | Kept 22px rows; **added the missing 200-record option** |
+| **F** | Dashboard, process, review | ~180 palette | Blur budget 7/5/4, row-independent; 809 dead lines deleted |
+| **G** | Admin, firm dashboard, reconciliation, charts | 833 palette, 61 hexes | One chart palette; 3 chart bugs only the browser caught |
+| **H** | QB integration, match, export, billing | 526 palette | **Removed fabricated invoice history**; fixed 400px clipping |
+| **I** | Landing, legal, Magic-UI | 517 palette, 66 hexes | 2 animations had never run |
+
+- [x] **Order:** A merged first, then the rest.
       names not primitives. C through I start once A is merged. I may run alongside A.
 - [x] **Coordination point between A and I.** The `components/ui/*` decorative components depend on
       custom keyframes in `tailwind.config.js`: `marquee`, `border-beam`, `shimmer-slide`,
@@ -251,31 +291,46 @@ Found during the inventory. Each is cheap now and expensive later.
 - [x] **Decide the real primary colour.** The brand purple in `--primary` is barely used in
       classNames; `bg-blue-600` is the de-facto primary at 23 occurrences. The new brand is Indigo
       `#6366f1`, so this resolves itself, but every `blue-600` call site has to move.
-- [ ] **Resolve the duplicate legal pages** before styling both: `(public)/terms` versus
-      `(public)/legal/terms`, and the same for privacy.
+- [x] **Resolve the duplicate legal pages** before styling both: `(public)/terms` versus
+      `(public)/legal/terms`, and the same for privacy. **Done:** kept `(public)/terms` and
+      `/privacy` — they are Kyriq-branded where the `/legal` pair still said "Cheque Extractor",
+      they are what the footer linked to, and they are already in the proxy's public allowlist. The
+      `/legal` pair redirects rather than 404s so links in the wild still land. All three documents
+      now share one shell; the nav and prose recipe existed three times with three grey scales.
 - [x] **Decide whether the two shells unify.** `(app)` has a dark sidebar, `(admin)` a light glass
       one. Parcel B owns both so the answer is consistent either way.
-- [ ] **Dark mode is currently dead.** A full `.dark` override block exists in `globals.css` but
-      nothing toggles it and no `dark:` prefix is used anywhere. Either wire a theme provider or drop
-      the block; leaving it is how it rots.
+- [x] **Dark mode decided: not built now, and not left to rot.** The `.dark` block is kept but fully
+      re-pointed at the new token names, with the glass alphas inverted to DepthMe's own values, so
+      wiring a provider later is a provider change rather than a token rewrite. Nothing toggles it
+      and no `dark:` prefix is used, which is the deliberate state.
 
 ### 2.5 Performance and QA
 
-- [ ] **Budget the blur.** `backdrop-filter` is expensive and the comparison grid renders hundreds of
+- [x] **Budget the blur.** `backdrop-filter` is expensive and the comparison grid renders hundreds of
       rows. Glass goes on containers and headers, never on individual rows. Test on the 428-check
       batch and watch frame rate.
-- [ ] **Rewire Recharts explicitly.** Chart colours are JS props, not classNames, so a token swap
-      does not reach them and charts will drift from the new surfaces. Also note
-      `ResponsiveContainer` breaks inside a parent that gains `backdrop-filter` and `overflow-hidden`
-      without an explicit height.
-- [ ] **Handle the 17 files using inline `style`.** They bypass Tailwind entirely and will drift.
+- [x] **Rewire Recharts explicitly.** **Done:** `frontend/lib/charts.tsx` is the one palette and all
+      four chart files declare no colour of their own, enforced by the check. Values are literals
+      with the token named in a comment, not `var()` references — the tokens are hsl *components*,
+      so `stroke="var(--brand)"` resolves to a non-colour and renders black. `ChartFrame` owns the
+      sized wrapper and the `ResponsiveContainer`, so a bare one cannot be mounted and the
+      collapse-to-zero-height bug is structurally impossible rather than merely avoided.
+- [x] **Handle the 17 files using inline `style`.** They bypass Tailwind entirely and will drift.
       Highest risk are the ones doing dynamic width, transform or colour maths: upload progress, the
       process timeline and stage indicator, the check image viewer, comparison table column widths,
       and `MatchRow`.
-- [ ] **Dropzone drag states.** The drop target styles its active and reject states from hook
+- [x] **Dropzone drag states.** The drop target styles its active and reject states from hook
       booleans, so glassifying the resting state alone leaves the others looking broken.
-- [ ] Every route at 1440px and 400px, both themes. No page scrolls twice. No hardcoded hex outside
-      the token file.
+- [x] **No hardcoded hex outside the token file**, and no raw palette utility — every parcel's check
+      enforces this for its own files.
+- [ ] **Every route at 1440px and 400px.** *Partly done, and this is the biggest unverified gap in
+      the redesign.* Genuinely looked at: the landing page, all three legal pages and the four auth
+      pages (they are public). Verified in harnesses against the real compiled CSS: the upload
+      surfaces, the charts, and the billing/export/match components. **Not seen by anyone:**
+      dashboard, process, review, QB comparisons, settings, and the admin pages — every app route
+      redirects to `/login` and no credentials were created. Needs a test login, or migration 026
+      applied so a comp account can be made.
+- [ ] **Both themes** — not applicable yet. Dark mode is deliberately not built (see 2.4).
 
 ---
 
@@ -303,12 +358,23 @@ Structure from the v17 prototype, surface from section 2.
       and how many checks need attention. *Michael's mock: "ABC Construction LLC · Operating Checking
       / August 2026 / Step 3 of 4 — 24 checks need attention."*
 - [ ] **Remove the QB Match page** as a separate route.
-- [ ] **Remove the Analytics page**; its content moves into Firm Admin.
-- [ ] **Remove the matching-preferences panel** from Settings. Keep one control, the auto-approve
-      threshold, next to the Approve All button where it is used.
+- [x] **Remove the Analytics page**; its content moves into Firm Admin. **Done:** route and nav
+      entry gone, nothing culled — KPIs, the per-engine breakdown, the job-status split and the
+      empty state all moved. One deliberate consolidation: its Per-Document list was the same job
+      rows as Firm Admin's Client Overview, keyed identically, so the extraction count became a
+      column there and that table's slice rose from 10 to 15 to cover everything the list showed.
+- [x] **Remove the matching-preferences panel** from Settings. **Correction: it never existed in
+      the React app.** It is in the v12/v17 prototypes only — confirmed with `git log -S` over the
+      file's full history — so there was nothing to delete. It is now pinned shut instead: a comment
+      records why those six controls are absent and the check fails if any name reappears.
+- [ ] **Give the auto-approve threshold a home.** This half is real and is NOT done. There is no
+      persisted threshold: the value is hard-coded as `score >= 95` in
+      `frontend/lib/matching-algorithm.ts:235` and duplicated as a label on the qb-match page.
+      It needs a settings key plus an endpoint, then that one literal rewired. Until then there is
+      nothing for Review to put next to Approve All.
 - [ ] **Connect QuickBooks card inline on step 1** when no company is connected, so a new user never
       leaves the flow to go to Settings.
-- [ ] Sign-in button purple, matching the website.
+- [x] Sign-in button purple, matching the website.
 
 ---
 
@@ -356,13 +422,19 @@ hook.
 
 ## 6. P2 — signup, trial and abuse control
 
-- [ ] **Signup per `signup.html`:** first name, last name, firm name, work email, password of at
-      least 8 characters, and a required terms and privacy consent checkbox. No plan picker. The
+- [x] **Signup per `signup.html`:** **Done from CHECKLIST section 6 rather than the HTML, because
+      the v17 zip is not in this repo.** All fields added, minimum raised 6 to 8 from one constant
+      enforced in both the submit guard and `minLength`, required consent checkbox, plan picker
+      removed, CTA reads "Create Account and Start Trial". Reset-password was raised to 8 to match —
+      a reset accepting a shorter password is a hole in the policy. Inferred and worth a look: field
+      order, the first/last name split, and the confirm-your-email copy. The
       current `/signup` has a plan picker, a 6-character minimum, no names and no consent.
-- [ ] **Public CTAs say "Start Free Trial"** and route to signup, never to login or a prototype page.
-- [ ] **Email verification on.** `supabase/config.toml` has `enable_confirmations = false`, which is
-      why signup currently drops straight to the dashboard. Turning it on changes that flow, so the
-      trial clock should start at verification.
+- [x] **Public CTAs say "Start Free Trial"** and route to signup, never to login or a prototype page.
+- [x] **Email verification on.** **Done in `supabase/config.toml`** — but that file governs local
+      dev only, so it still has to be switched on in the HOSTED project, and custom SMTP must be in
+      place first or confirmation mail fails silently at volume. Consequence already handled:
+      `signUp` no longer returns a session, so the old unconditional redirect to `/dashboard` would
+      have bounced every new user to `/login`; signup now shows a confirm-your-email panel.
 - [ ] **One trial per QuickBooks realm.** Michael asked how to stop people opening trials with
       multiple emails. The firm's QuickBooks company ID is the natural identity: verified email,
       plus one trial per realm, plus a disposable-domain block.
@@ -510,16 +582,24 @@ The client requires the extension to match the app in look and options.
 Implement the approved redesign copy verbatim from
 `kyriq-website-redesign.michael389314.chatgpt.site/website.html`.
 
-- [ ] Hero leading with the bank statement: *"Start with the bank statement you already download."*
+- [x] Hero leading with the bank statement: *"Start with the bank statement you already download."*
       and *"Typed or handwritten—Kyriq can read both."*
-- [ ] Four-step section, three value cards, pricing with the monthly and annual toggle, the usage and
+- [x] Four-step section, three value cards, pricing with the monthly and annual toggle, the usage and
       overage explanation, and the annual terms block.
-- [ ] **The 15-question FAQ**, verbatim.
-- [ ] **Remove** the watch-demo button, "trusted by 500+ accounting firms", and all testimonials.
-      *From item 1 of the client list.*
-- [ ] Every CTA routes to `/signup`.
-- [ ] Real logo and brand colours. The redesign site uses placeholder purples and greens.
-- [ ] Note on every plan that the Chrome extension is included.
+- [ ] **The 15-question FAQ**, verbatim. **Blocked, deliberately left empty.** The section, its
+      accordion markup and the `FAQS` array exist and are wired; the component renders nothing while
+      the array is empty, so nothing half-finished is public, and the check fails on any count other
+      than 0 or 15. The source is the v17 zip and the client's redesign site, neither in this repo.
+      Fabricating fifteen answers about billing and data handling would be worse than an empty slot.
+- [x] **Remove** the watch-demo button, "trusted by 500+ accounting firms", and all testimonials.
+      *From item 1 of the client list.* **Done — plus one nobody asked for:** the stats bar claiming
+      "98% accuracy" and "0 missed checks per month" was unverifiable in exactly the same way, so it
+      went too, replaced with facts we can stand behind (14-day trial, 250 trial checks, 4 steps).
+      Flagging it because it was not on the client's list.
+- [x] Every CTA routes to `/signup`.
+- [ ] Real logo and brand colours. **Colours done** — Indigo `#6366f1` and Emerald `#10b981` from
+      the tokens, not the prototype's placeholders. **Logo still blocked** on the missing pack.
+- [x] Note on every plan that the Chrome extension is included.
 
 ---
 
@@ -621,6 +701,37 @@ of it was visible from the documents.
       what is actually there (it *creates* `team_invitations` rather than
       assuming it), but this is worth knowing before trusting any migration file
       as documentation.
+- [x] **Four `shadow-glass-*` utilities never rendered.** `glass-panel`, `glass-modal`,
+      `glass-toast` and `glass-selected` each existed as BOTH a `boxShadow` key and a colour, so
+      Tailwind emitted two rules per class and the shadow-colour rule won by source order. The
+      colliding colour entries were used nowhere, so removing them fixed all four with no call-site
+      churn. `check-primitives.ts` now cross-references both maps.
+- [x] **Every `className` override of a custom theme key silently did nothing.** `tailwind-merge`
+      only knows Tailwind's stock scales, so `cn("min-h-btn", "min-h-0")` returned *both* and the
+      primitive won. 34 keys were affected. Found by a parcel measuring a table row in a browser —
+      it had written a compact-toolbar override, got a 44px button anyway, and the row grew 11.5px.
+      Another parcel used the same override in ~8 places believing it worked. `lib/utils.ts` now
+      configures `extendTailwindMerge`, and the check derives its probes from the config itself.
+- [x] **`BorderBeam` had never animated.** It set `--duration: "12s"` while the Tailwind animation
+      reads `calc(var(--duration) * 1s)`, so it resolved to `calc(12s * 1s)` — invalid, silently
+      dropped, beam frozen since it was written. `ShimmerButton` had no call site at all, so its
+      animation had never run on the site either.
+- [x] **The billing page was showing invented invoice history.** It grouped jobs by month, used
+      Kyriq's internal API cost as the "amount", and stamped every prior month `Paid` from its array
+      index. No payment record exists behind any of it. Now labelled as processing usage, badged
+      "Not invoices", with the six fields that have no data source shown as pending rather than
+      filled with plausible values.
+- [x] **At 400px, MatchRow clipped every row action out of reach.** Its grid needed 534px inside an
+      `overflow-hidden` container, so the whole QuickBooks column and all the row actions were
+      unreachable with no scrollbar to find them.
+- [x] **Three Recharts bugs that source, type-check and build all passed:** `AreaFade` written as a
+      component, so Recharts filtered the `<defs>` out and every area chart rendered as a bare
+      stroke with no fill; pie labels inheriting the slice fill at 2.1:1; and outside pie labels
+      running off the card at 375px.
+- [x] **`/api/qbo/auth` is not a redirect.** It answers with `{authUrl}` as JSON, so the company
+      switcher's `<a href>` "Connect QuickBooks" and "Add Company" navigated the user to a raw JSON
+      document. Neither had ever worked. Surfaced by turning the lint gate on.
+
 - [ ] **Blocked on assets that never reached the repo.** The logo pack
       (*Kyriq Logo — All Source files — 12 versions.zip*) is absent, so versions 1
       and 7 cannot be shipped. `Kyriq-Developer-Handoff-v17.zip` is absent too —
@@ -628,7 +739,9 @@ of it was visible from the documents.
       `signup.html` and the updated `website.html` are unavailable. The decisions
       are captured in this checklist, so Stripe is not blocked, but the
       **15-question FAQ and the verbatim website copy are**.
-- [ ] **Migrations 026–031 are unapplied.** There is no way to run DDL from the
+- [ ] **Migrations 026–031 are unapplied.** *Re-checked 6 Oct: still unapplied.* An anon-key probe
+      shows `usage_ledger`, `comp_grants`, `upload_fingerprints`, `team_invitations` and
+      `mfa_recovery_codes` all absent, and `app_settings` still returning a row to the public key. There is no way to run DDL from the
       build environment: no `psql`, no linked Supabase CLI, no database password
       or access token, and no SQL-executing RPC. Until they are applied the usage
       ledger, trial enforcement, comp accounts, the team endpoints and MFA
