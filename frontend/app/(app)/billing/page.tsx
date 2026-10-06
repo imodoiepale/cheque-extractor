@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import {
-  Receipt, FileText, CreditCard, Calendar, Zap, TrendingUp, AlertCircle, Clock,
+  Receipt, FileText, CreditCard, Calendar, Zap, TrendingUp, AlertCircle, Clock, ExternalLink,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import {
-  Badge, GlassCard, GlassCardTitle, GlassPanel, KpiTile, Skeleton,
+  Badge, Button, GlassCard, GlassCardTitle, GlassPanel, KpiTile, Skeleton,
 } from '@/components/ui';
 import { cn } from '@/lib/utils';
 
@@ -16,12 +16,17 @@ import { cn } from '@/lib/utils';
  * Two hard rules this page is held to, because it is the page a reader will
  * check numbers against:
  *
- *  1. Nothing on it is invented. Stripe is not built yet (CHECKLIST 7), so
- *     payment status, paid-through date, payment method, invoice documents and
- *     plan-change controls have NO data source — they are listed as pending
- *     rather than rendered with plausible-looking values. The per-month figures
- *     below are internal processing cost, which is real, and they are labelled
- *     as processing cost rather than dressed up as customer invoices.
+ *  1. Nothing on it is invented. The Stripe parcel now supplies payment status,
+ *     paid-through date, payment method, invoice history and the plan controls
+ *     through GET /api/billing/subscription — and that endpoint returns only
+ *     rows the signature-verified webhook wrote. When Stripe is not configured,
+ *     or no webhook has ever arrived, those fields have NO source and are
+ *     listed as pending (PENDING_FIELDS) exactly as before, rather than
+ *     rendered with plausible-looking values. Invoice rows come from
+ *     billing_invoices; a month with no invoice row produces no entry, and no
+ *     status label is derived from a date. The per-month figures further down
+ *     are internal processing cost, which is real, and they are labelled as
+ *     processing cost rather than dressed up as customer invoices.
  *  2. The trial meter reads `GET /api/usage/trial-status`, the same function
  *     the processing gate enforces, so the number shown and the number enforced
  *     cannot drift. Its migrations are not applied to any database yet, so a
@@ -116,9 +121,90 @@ interface TrialStatus {
   compReason: string | null;
 }
 
+interface InvoiceRow {
+  id: string;
+  number: string | null;
+  status: string;
+  /** Mapped server-side. The page never turns a status into a word itself. */
+  statusLabel: string;
+  currency: string;
+  totalMinor: number;
+  amountPaidMinor: number;
+  periodStart: string | null;
+  periodEnd: string | null;
+  settledAt: string | null;
+  hostedUrl: string | null;
+  pdfUrl: string | null;
+}
+
+interface SubscriptionState {
+  schemaPresent: boolean;
+  /** The catalogue, served from lib/billing/plans.ts so the control list and
+   *  the prices charged cannot disagree about which plans exist. */
+  plans: Array<{
+    key: string;
+    name: string;
+    monthly: number;
+    annual: number;
+    includedChecks: number;
+    overage: number;
+  }>;
+  stripe: { configured: boolean; env: string; annualEnabled: boolean; reason: string | null; missing: string[] };
+  subscription: {
+    plan: string | null;
+    planName: string | null;
+    billingFrequency: string | null;
+    basePrice: number | null;
+    commitment: string | null;
+    renewalTerms: string | null;
+    status: string | null;
+    paymentStatus: string | null;
+    paymentGraceUntil: string | null;
+    paidThrough: string | null;
+    cancelAtPeriodEnd: boolean;
+    cancelAt: string | null;
+    cancellationStatus: string | null;
+    includedChecks: number | null;
+    checksUsedThisPeriod: number | null;
+    checksRemaining: number | null;
+    periodStart: string | null;
+    periodEnd: string | null;
+    overage: { units: number; rate: number | null; estimateUsd: number | null };
+    stripeSubscriptionId: string | null;
+  } | null;
+  invoices: InvoiceRow[];
+  paymentMethod: { brand: string | null; last4: string | null; expMonth: number | null; expYear: number | null } | null;
+  controls: {
+    canChangePlan: boolean;
+    canCancel: boolean;
+    canReactivate: boolean;
+    canSubscribeMonthly?: boolean;
+    canSubscribeAnnual?: boolean;
+  };
+  message?: string;
+}
+
+/** The charges/credits disclosure a plan change must show before it is applied. */
+interface PlanChangePreview {
+  plan: string;
+  planName: string;
+  interval: string;
+  chargesMinor: number;
+  creditsMinor: number;
+  dueNowMinor: number;
+  effectiveAt: string;
+  nextInvoiceAt: string | null;
+  lines: Array<{ description: string | null; amountMinor: number }>;
+  allowanceNote: string;
+}
+
 const BACKEND = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090';
 
 const money = (n: number) => `$${n.toFixed(2)}`;
+/** Stripe sends minor units. Converted here, never summed as floats upstream. */
+const minor = (n: number) => `$${(n / 100).toFixed(2)}`;
+const day = (iso: string | null | undefined) =>
+  iso ? new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
 const whole = (n: number) => n.toLocaleString('en-US');
 
 export default function BillingPage() {
@@ -130,6 +216,14 @@ export default function BillingPage() {
   const [trial, setTrial] = useState<TrialStatus | null>(null);
   const [trialError, setTrialError] = useState<string | null>(null);
   const [trialLoading, setTrialLoading] = useState(true);
+
+  const [sub, setSub] = useState<SubscriptionState | null>(null);
+  const [subError, setSubError] = useState<string | null>(null);
+  const [subLoading, setSubLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionNote, setActionNote] = useState<string | null>(null);
+  const [preview, setPreview] = useState<PlanChangePreview | null>(null);
 
   const fetchData = useCallback(async () => {
     try {
@@ -177,7 +271,125 @@ export default function BillingPage() {
     }
   }, []);
 
-  useEffect(() => { fetchData(); fetchTrial(); }, [fetchData, fetchTrial]);
+  /** Bearer for the Next API routes, same transport as the trial meter. */
+  const authHeaders = useCallback(async () => {
+    const supabase = createClient();
+    const { data: { session } } = await supabase.auth.getSession();
+    return {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session?.access_token || ''}`,
+    };
+  }, []);
+
+  /**
+   * Subscription, invoices, payment method and which controls are legal.
+   * A failure is reported, never softened into "no subscription" — those look
+   * identical on screen and mean very different things to a customer.
+   */
+  const fetchSubscription = useCallback(async () => {
+    try {
+      const res = await fetch('/api/billing/subscription', { headers: await authHeaders() });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body?.message || body?.error || `subscription returned ${res.status}`);
+      }
+      setSub(body as SubscriptionState);
+      setSubError(null);
+    } catch (e: any) {
+      setSub(null);
+      setSubError(e?.message || 'Billing state unavailable.');
+    } finally {
+      setSubLoading(false);
+    }
+  }, [authHeaders]);
+
+  const post = useCallback(async (path: string, body?: any) => {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: await authHeaders(),
+      body: JSON.stringify(body ?? {}),
+    });
+    const parsed = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(parsed?.message || parsed?.error || `${path} returned ${res.status}`);
+    return parsed;
+  }, [authHeaders]);
+
+  const run = useCallback(async (key: string, fn: () => Promise<void>) => {
+    setBusy(key);
+    setActionError(null);
+    setActionNote(null);
+    try {
+      await fn();
+    } catch (e: any) {
+      setActionError(e?.message || 'That did not work.');
+    } finally {
+      setBusy(null);
+    }
+  }, []);
+
+  /** Starts Checkout. Returning from Stripe grants nothing; the webhook does. */
+  const startCheckout = (plan: string) =>
+    run(`checkout:${plan}`, async () => {
+      const { url } = await post('/api/billing/checkout', { plan, interval: 'monthly' });
+      if (!url) throw new Error('Stripe did not return a checkout URL.');
+      window.location.href = url;
+    });
+
+  const startAnnual = (plan: string) =>
+    run(`annual:${plan}`, async () => {
+      const { url } = await post('/api/billing/subscribe-annual', { plan });
+      if (!url) throw new Error('Stripe did not return a setup URL.');
+      window.location.href = url;
+    });
+
+  /** Disclosure first: charges, credits and the effective date, then Confirm. */
+  const askPlanChange = (plan: string) =>
+    run(`preview:${plan}`, async () => {
+      const body = await post('/api/billing/plan-change', { plan, preview: true });
+      setPreview(body?.preview ?? null);
+    });
+
+  const confirmPlanChange = () =>
+    run('confirm-plan', async () => {
+      if (!preview) return;
+      await post('/api/billing/plan-change', {
+        plan: preview.plan,
+        interval: preview.interval,
+        confirm: true,
+        acknowledgedTotalMinor: preview.dueNowMinor,
+      });
+      setPreview(null);
+      setActionNote('Plan change sent to Stripe. The plan updates here once Stripe confirms it.');
+      await fetchSubscription();
+    });
+
+  const cancelRenewal = () =>
+    run('cancel', async () => {
+      const body = await post('/api/billing/cancel');
+      setActionNote(body?.message || 'Renewal switched off.');
+      await fetchSubscription();
+    });
+
+  const reactivate = () =>
+    run('reactivate', async () => {
+      const body = await post('/api/billing/reactivate');
+      setActionNote(body?.message || 'Renewal switched back on.');
+      await fetchSubscription();
+    });
+
+  useEffect(() => { fetchData(); fetchTrial(); fetchSubscription(); }, [fetchData, fetchTrial, fetchSubscription]);
+
+  /**
+   * Returning from Stripe. This banner says "confirming", because a redirect is
+   * a URL the customer can type: paid access is applied by the verified webhook
+   * and by nothing else. The page re-reads the real state instead of believing
+   * the query string.
+   */
+  const [returnedFrom, setReturnedFrom] = useState<string | null>(null);
+  useEffect(() => {
+    const flag = new URLSearchParams(window.location.search).get('checkout');
+    if (flag) setReturnedFrom(flag);
+  }, []);
 
   /** Processing cost grouped by calendar month. Real figures, no payment state. */
   const months = useMemo<MonthUsage[]>(() => {
@@ -231,6 +443,290 @@ export default function BillingPage() {
           Processing usage, trial allowance and plan reference
         </p>
       </div>
+
+      {/* ── Back from Stripe. Says "confirming", never "active". ───── */}
+      {returnedFrom === 'confirming' && (
+        <GlassCard padding="md">
+          <div className="flex items-start gap-3">
+            <Clock className="mt-0.5 h-4 w-4 shrink-0 text-ink-faint" aria-hidden />
+            <div>
+              <GlassCardTitle className="text-base">Confirming with Stripe</GlassCardTitle>
+              <p className="mt-1 text-xs text-ink-body">
+                Stripe has taken the details. Access changes only once Stripe&apos;s signed
+                confirmation reaches us, which is usually seconds — returning to this page does not
+                grant it. Reload if the plan below has not updated.
+              </p>
+            </div>
+          </div>
+        </GlassCard>
+      )}
+      {returnedFrom === 'cancelled' && (
+        <p className="rounded-card border border-glass-hairline bg-surface-sunken px-4 py-3 text-sm text-ink-body">
+          Checkout was closed before anything was charged. Nothing changed.
+        </p>
+      )}
+
+      {/* ── Subscription: payment status, paid-through, method, controls ── */}
+      {subLoading ? (
+        <GlassCard padding="md">
+          <Skeleton shape="heading" className="w-48" />
+          <div className="mt-3 space-y-2">
+            <Skeleton shape="text" className="w-full" />
+          </div>
+        </GlassCard>
+      ) : subError ? (
+        <GlassCard padding="md">
+          <div className="flex items-start gap-3 rounded-tile border border-warning-border bg-warning-bg px-4 py-3">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning-text" aria-hidden />
+            <div className="text-sm text-warning-text">
+              <p className="font-semibold">Billing state unavailable</p>
+              <p className="mt-1 text-xs">
+                <code className="rounded bg-warning-bg px-1">GET /api/billing/subscription</code>{' '}
+                failed: {subError}
+              </p>
+              <p className="mt-1 text-xs">
+                No payment figure is shown rather than a blank that would read as nothing owed.
+              </p>
+            </div>
+          </div>
+        </GlassCard>
+      ) : sub?.subscription?.stripeSubscriptionId ? (
+        <GlassCard padding="md">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <GlassCardTitle className="text-base">Subscription</GlassCardTitle>
+              <p className="mt-0.5 text-xs text-ink-faint">
+                {sub.subscription.planName} ·{' '}
+                {sub.subscription.billingFrequency === 'annual' ? 'billed annually' : 'billed monthly'}
+                {sub.subscription.basePrice != null
+                  ? ` · $${whole(sub.subscription.basePrice)} ${
+                      sub.subscription.billingFrequency === 'annual' ? '/ year' : '/ month'
+                    }`
+                  : ''}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone="outline" size="sm">{sub.stripe.env} mode</Badge>
+              {sub.subscription.status === 'past_due' && (
+                <Badge tone="error" size="sm">Payment overdue</Badge>
+              )}
+              {sub.subscription.cancelAtPeriodEnd && (
+                <Badge tone="warning" size="sm">Renewal off</Badge>
+              )}
+            </div>
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <GlassPanel tone="plain" radius="tile" padding="sm">
+              <p className="text-eyebrow text-ink-faint">Payment status</p>
+              <p className="mt-1 text-sm font-semibold capitalize text-ink-strong">
+                {sub.subscription.paymentStatus || 'no invoice yet'}
+              </p>
+              <p className="mt-0.5 text-[11px] capitalize text-ink-faint">
+                {sub.subscription.status || 'unknown'}
+              </p>
+            </GlassPanel>
+            <GlassPanel tone="plain" radius="tile" padding="sm">
+              <p className="text-eyebrow text-ink-faint">Paid through</p>
+              <p className="nums mt-1 text-sm font-semibold text-ink-strong">
+                {day(sub.subscription.paidThrough)}
+              </p>
+              <p className="mt-0.5 text-[11px] text-ink-faint">
+                {sub.subscription.cancelAtPeriodEnd ? 'then it ends' : 'then it renews'}
+              </p>
+            </GlassPanel>
+            <GlassPanel tone="plain" radius="tile" padding="sm">
+              <p className="text-eyebrow text-ink-faint">Payment method</p>
+              <p className="mt-1 text-sm font-semibold capitalize text-ink-strong">
+                {sub.paymentMethod?.last4
+                  ? `${sub.paymentMethod.brand || 'card'} ····${sub.paymentMethod.last4}`
+                  : 'none on file'}
+              </p>
+              <p className="nums mt-0.5 text-[11px] text-ink-faint">
+                {sub.paymentMethod?.expMonth
+                  ? `expires ${String(sub.paymentMethod.expMonth).padStart(2, '0')}/${sub.paymentMethod.expYear}`
+                  : 'held by Stripe'}
+              </p>
+            </GlassPanel>
+            <GlassPanel tone="plain" radius="tile" padding="sm">
+              <p className="text-eyebrow text-ink-faint">Overage this period</p>
+              <p className="nums-money mt-1 text-sm font-semibold text-ink-strong">
+                {sub.subscription.overage.estimateUsd != null
+                  ? money(sub.subscription.overage.estimateUsd)
+                  : '—'}
+              </p>
+              <p className="nums mt-0.5 text-[11px] text-ink-faint">
+                {whole(sub.subscription.overage.units)} over ·{' '}
+                {sub.subscription.overage.rate != null ? money(sub.subscription.overage.rate) : '—'} each
+              </p>
+            </GlassPanel>
+          </div>
+
+          {sub.subscription.renewalTerms && (
+            <p className="mt-3 text-xs text-ink-faint">
+              {sub.subscription.commitment} · {sub.subscription.renewalTerms}
+              {sub.subscription.periodStart
+                ? ` Current period ${day(sub.subscription.periodStart)} to ${day(sub.subscription.periodEnd)}.`
+                : ''}
+            </p>
+          )}
+
+          {/* Payment failure: a warning while Stripe retries. Processing is not
+              restricted until Stripe gives up and moves the subscription to
+              past_due, and history is never gated either way. */}
+          {sub.subscription.paymentStatus === 'failed' && (
+            <p
+              role="alert"
+              className="mt-3 rounded-tile border border-warning-border bg-warning-bg px-3 py-2 text-xs text-warning-text"
+            >
+              The last payment did not go through.{' '}
+              {sub.subscription.paymentGraceUntil
+                ? `Stripe retries on ${day(sub.subscription.paymentGraceUntil)}.`
+                : 'Stripe is retrying.'}{' '}
+              Update the card to avoid processing being restricted. Past documents stay available
+              either way.
+            </p>
+          )}
+          {sub.subscription.status === 'past_due' && (
+            <p
+              role="alert"
+              className="mt-3 rounded-tile border border-error-border bg-error-bg px-3 py-2 text-xs text-error-text"
+            >
+              Processing is restricted while payment is outstanding. Everything already processed
+              stays viewable and exportable.
+            </p>
+          )}
+
+          {/* ── Controls. Only offered when the server would accept them. ── */}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            {sub.controls.canChangePlan &&
+              sub.plans
+                .filter(pl => pl.key !== sub.subscription?.plan)
+                .map(pl => (
+                  <Button
+                    key={pl.key}
+                    variant="secondary"
+                    size="sm"
+                    loading={busy === `preview:${pl.key}`}
+                    onClick={() => askPlanChange(pl.key)}
+                  >
+                    Move to {pl.name}
+                  </Button>
+                ))}
+            {sub.controls.canCancel && (
+              <Button variant="ghost" size="sm" loading={busy === 'cancel'} onClick={cancelRenewal}>
+                Cancel renewal
+              </Button>
+            )}
+            {sub.controls.canReactivate && (
+              <Button variant="primary" size="sm" loading={busy === 'reactivate'} onClick={reactivate}>
+                Reactivate
+              </Button>
+            )}
+          </div>
+
+          {/* Charges, credits and the effective date, before anything applies. */}
+          {preview && (
+            <GlassPanel tone="neutral" radius="tile" padding="md" className="mt-3">
+              <p className="font-heading text-sm font-semibold text-ink-strong">
+                Moving to {preview.planName} ({preview.interval})
+              </p>
+              <dl className="mt-2 space-y-1 text-xs text-ink-body">
+                <div className="flex justify-between gap-2">
+                  <dt className="text-ink-faint">Charges</dt>
+                  <dd className="nums-money font-medium">{minor(preview.chargesMinor)}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-ink-faint">Credits</dt>
+                  <dd className="nums-money font-medium">{minor(preview.creditsMinor)}</dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-ink-faint">Due now</dt>
+                  <dd className="nums-money font-semibold text-ink-strong">
+                    {minor(preview.dueNowMinor)}
+                  </dd>
+                </div>
+                <div className="flex justify-between gap-2">
+                  <dt className="text-ink-faint">Effective</dt>
+                  <dd className="font-medium">{day(preview.effectiveAt)}</dd>
+                </div>
+                {preview.nextInvoiceAt && (
+                  <div className="flex justify-between gap-2">
+                    <dt className="text-ink-faint">Next invoice</dt>
+                    <dd className="font-medium">{day(preview.nextInvoiceAt)}</dd>
+                  </div>
+                )}
+              </dl>
+              <p className="mt-2 text-[11px] text-ink-faint">{preview.allowanceNote}</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button size="sm" loading={busy === 'confirm-plan'} onClick={confirmPlanChange}>
+                  Confirm and charge {minor(preview.dueNowMinor)}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setPreview(null)}>
+                  Keep current plan
+                </Button>
+              </div>
+            </GlassPanel>
+          )}
+
+          {actionError && (
+            <p
+              role="alert"
+              className="mt-3 rounded-tile border border-error-border bg-error-bg px-3 py-2 text-xs text-error-text"
+            >
+              {actionError}
+            </p>
+          )}
+          {actionNote && (
+            <p className="mt-3 rounded-tile border border-glass-hairline bg-surface-sunken px-3 py-2 text-xs text-ink-body">
+              {actionNote}
+            </p>
+          )}
+        </GlassCard>
+      ) : null}
+
+      {/* ── Invoice history: rows from billing_invoices, or nothing ─── */}
+      {sub && sub.invoices.length > 0 && (
+        <GlassCard padding="none" className="overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-glass-hairline px-5 py-3.5">
+            <GlassCardTitle className="text-base">Invoices</GlassCardTitle>
+            <Badge tone="outline" size="sm">From Stripe</Badge>
+          </div>
+          <ul className="divide-y divide-glass-hairline">
+            {sub.invoices.map(inv => (
+              <li key={inv.id} className={cn('flex items-center gap-3', MONTH_ROW)}>
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-input bg-surface-sunken">
+                  <Receipt size={14} className="text-ink-faint" aria-hidden />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-ink-strong">{inv.number || inv.id}</div>
+                  <div className="nums mt-0.5 text-[11px] text-ink-faint">
+                    {day(inv.periodStart)} – {day(inv.periodEnd)} · {inv.statusLabel}
+                  </div>
+                </div>
+                {inv.hostedUrl && (
+                  <a
+                    href={inv.hostedUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-brand-deep underline-offset-2 hover:underline"
+                  >
+                    View <ExternalLink size={12} aria-hidden />
+                  </a>
+                )}
+                <div className="shrink-0 text-right">
+                  <div className="nums-money text-sm font-semibold text-ink-strong">
+                    {minor(inv.totalMinor)}
+                  </div>
+                  <div className="nums mt-0.5 text-[10px] text-ink-faint">
+                    {inv.settledAt ? `settled ${day(inv.settledAt)}` : inv.currency.toUpperCase()}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </GlassCard>
+      )}
 
       {/* ── Trial / allowance meter ─────────────────── */}
       <GlassCard padding="md">
@@ -537,15 +1033,20 @@ export default function BillingPage() {
         </div>
       </GlassCard>
 
-      {/* ── What this page cannot yet show ──────────── */}
+      {/* Still unsourced, and shown only while that is true. */}
+      {!sub?.subscription?.stripeSubscriptionId && (
       <GlassCard padding="md">
         <div className="flex items-start gap-3">
           <CreditCard className="mt-0.5 h-4 w-4 shrink-0 text-ink-faint" aria-hidden />
           <div className="min-w-0">
             <GlassCardTitle className="text-base">Not connected yet</GlassCardTitle>
             <p className="mt-1 text-xs text-ink-body">
-              These fields have no data source until Stripe billing is built. They are listed
-              rather than rendered, so nothing on this page can be read as a real payment record.
+              These fields come from Stripe, and no verified Stripe webhook has set them for this
+              firm. They are listed rather than rendered, so nothing on this page can be read as a
+              real payment record.
+              {sub?.stripe && !sub.stripe.configured && sub.stripe.reason
+                ? ` Stripe is not configured here: ${sub.stripe.reason}`
+                : ''}
             </p>
             <ul className="mt-2 flex flex-wrap gap-2">
               {PENDING_FIELDS.map(f => (
@@ -560,6 +1061,7 @@ export default function BillingPage() {
           </div>
         </div>
       </GlassCard>
+      )}
     </div>
   );
 }

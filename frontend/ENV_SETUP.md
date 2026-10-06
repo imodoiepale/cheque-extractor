@@ -207,3 +207,61 @@ echo $NEXT_PUBLIC_SUPABASE_URL
 
 **Last Updated:** March 2, 2026  
 **Status:** Production Ready
+
+---
+
+## 💳 Stripe billing (CHECKLIST section 7)
+
+None of these are set in this repo. With them absent, every billing endpoint
+answers `503 stripe_not_configured` with the list of what is missing, and the
+billing page keeps showing payment status, paid-through date, payment method and
+the plan controls as *pending* rather than rendering blanks. That is the intended
+behaviour, not a bug to work around.
+
+```bash
+# Keys. The ENVIRONMENT IS DERIVED FROM THE SECRET KEY (sk_test_ / sk_live_), so
+# a mislabelled STRIPE_ENV cannot point live keys at test prices — the
+# integration reports itself unconfigured instead of guessing.
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_WEBHOOK_SECRET=whsec_...          # Stripe CLI or the dashboard endpoint
+STRIPE_ENV=test                          # optional; must agree with the key
+NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=pk_test_...   # only if Elements is added later
+
+# Price ids — nine per environment, never hardcoded in source.
+# Pattern: STRIPE_PRICE_<TEST|LIVE>_<PLAN>_<MONTHLY|ANNUAL|OVERAGE>
+# OVERAGE is the metered per-cheque price and is billed MONTHLY on every plan,
+# including annual ones.
+STRIPE_PRICE_TEST_ESSENTIAL_MONTHLY=price_...      # $147/mo,   1,200 cheques
+STRIPE_PRICE_TEST_ESSENTIAL_ANNUAL=price_...       # $1,617/yr
+STRIPE_PRICE_TEST_ESSENTIAL_OVERAGE=price_...      # $0.15 per cheque
+STRIPE_PRICE_TEST_PROFESSIONAL_MONTHLY=price_...   # $497/mo,   4,500 cheques
+STRIPE_PRICE_TEST_PROFESSIONAL_ANNUAL=price_...    # $5,467/yr
+STRIPE_PRICE_TEST_PROFESSIONAL_OVERAGE=price_...   # $0.12 per cheque
+STRIPE_PRICE_TEST_SCALE_MONTHLY=price_...          # $997/mo,  10,000 cheques
+STRIPE_PRICE_TEST_SCALE_ANNUAL=price_...           # $10,967/yr
+STRIPE_PRICE_TEST_SCALE_OVERAGE=price_...          # $0.10 per cheque
+# ... and the nine STRIPE_PRICE_LIVE_* equivalents.
+
+# Metered usage. Must match the meter's event_name in the Stripe dashboard.
+STRIPE_METER_EVENT_NAME=kyriq_checks_processed
+
+# Cron endpoints: POST /api/billing/report-usage and
+# POST /api/billing/renewal-reminders, sent as `Authorization: Bearer <secret>`.
+# An UNSET secret denies every caller — these endpoints move money.
+BILLING_CRON_SECRET=<random 32+ chars>
+
+# Annual billing is BUILT BUT UNVERIFIED. An annual base plus a monthly metered
+# overage is a mixed-interval subscription, and it has never been exercised
+# against a real Stripe account. Leave this unset until the first annual
+# subscription has been confirmed in the Stripe dashboard; while unset, the
+# annual endpoints answer 501 and say why.
+STRIPE_ANNUAL_ENABLED=false
+```
+
+**Webhook endpoint:** `POST /api/billing/webhook`, subscribed to exactly eight
+events — `checkout.session.completed`, `customer.subscription.created`,
+`.updated`, `.deleted`, `invoice.created`, `invoice.finalized`, `invoice.paid`,
+`invoice.payment_failed`. Paid access is applied **only** from this verified
+endpoint; the Checkout return URL says `checkout=confirming` and grants nothing.
+
+**Self-check:** `npx tsx scripts/check-stripe-billing.ts`

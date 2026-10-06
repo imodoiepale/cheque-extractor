@@ -12,12 +12,18 @@
  *   comp_grants                  the Super Admin comp account      (029)
  *   usage_ledger                 read only through tenant_usage_state (027)
  *
- * Still genuinely absent from the schema, so these read null and the UI says so:
- *   billing frequency (monthly / annual), payment status, paid-through date,
- *   cancellation status, Stripe customer and subscription ids.
- * tenants carries only `subscription_status`; there is no subscriptions table
- * and no Stripe id column anywhere yet. When the Stripe parcel adds them, fill
- * in STRIPE_FIELDS below — that is the only place to change.
+ *   tenants (033)                billing_frequency, payment_status,
+ *                                paid_through, cancel_at_period_end,
+ *                                cancel_at, stripe_customer_id,
+ *                                stripe_subscription_id
+ *
+ * FILLED IN. Those last fields had no source when this file was written; the
+ * Stripe parcel (migration 033) puts them on tenants, written only by the
+ * signature-verified webhook. They are read below, and STRIPE_FIELDS now lists
+ * them as "needs 033" rather than "needs building": if the migration is not
+ * applied, the columns are simply absent from the SELECT * rows, every value
+ * reads null, and the page says which fields have no source — exactly as
+ * before. Nothing here invents a payment state.
  */
 
 export interface FirmBilling {
@@ -70,8 +76,10 @@ export interface FirmBillingSources {
 }
 
 /**
- * Fields that need the Stripe parcel. Listed rather than guessed, so the page
- * can say "no source yet" instead of showing a confident blank.
+ * Fields whose only source is the Stripe parcel's columns on tenants
+ * (migration 033). Listed rather than guessed, so the page can say "no source"
+ * instead of showing a confident blank — reported as missing only when those
+ * columns are genuinely absent.
  */
 const STRIPE_FIELDS = [
   'billing_frequency',
@@ -80,6 +88,28 @@ const STRIPE_FIELDS = [
   'cancellation_status',
   'stripe_ids',
 ];
+
+/**
+ * Is migration 033 applied? The rows come from `select('*')`, so an unapplied
+ * migration means the key is simply not there. Checked on a row rather than by
+ * probing, because a probe would be a second round trip to learn the same
+ * thing.
+ */
+function haveStripeColumns(tenants: Array<Record<string, any>>): boolean {
+  return tenants.some((t) => 'stripe_customer_id' in t && 'cancel_at_period_end' in t);
+}
+
+/**
+ * 'active' | 'renewal_disabled' | 'ended' — the same derivation
+ * /api/billing/subscription uses, so the firm view and the customer's own
+ * billing page cannot disagree about whether a firm is cancelling.
+ */
+function cancellationStatus(tenant: any): string | null {
+  if (!('cancel_at_period_end' in (tenant || {}))) return null;
+  if (tenant.subscription_status === 'canceled') return 'ended';
+  if (tenant.cancel_at_period_end === true) return 'renewal_disabled';
+  return tenant.stripe_subscription_id ? 'active' : null;
+}
 
 function tableExists(error: any) {
   const code = String(error?.code || '');
@@ -159,6 +189,7 @@ export async function loadFirmBilling(
     for (const [id, state] of results) if (state) states.set(id, state);
   }
 
+  const haveStripe = haveStripeColumns(tenants);
   const byTenant: Record<string, FirmBilling> = {};
 
   for (const tenant of tenants) {
@@ -176,8 +207,7 @@ export async function loadFirmBilling(
 
     byTenant[tenant.id] = {
       plan: state?.plan ?? tenant.plan ?? null,
-      // No source yet. See STRIPE_FIELDS.
-      billing_frequency: null,
+      billing_frequency: tenant.billing_frequency ?? null,
 
       trial_status: trialStatus(tenant, state),
       trial_ends_at: state?.trial_ends_at ?? tenant.trial_ends_at ?? null,
@@ -194,12 +224,14 @@ export async function loadFirmBilling(
       billing_period_start: state?.billing_period_start ?? null,
       billing_period_end: state?.billing_period_end ?? null,
 
-      payment_status: null,
-      paid_through: null,
-      cancellation_status: null,
-      cancel_at: null,
-      stripe_customer_id: null,
-      stripe_subscription_id: null,
+      // Written only by the verified Stripe webhook (apply_stripe_subscription
+      // / the invoice handlers). Null here means no webhook has said otherwise.
+      payment_status: tenant.payment_status ?? null,
+      paid_through: tenant.paid_through ?? null,
+      cancellation_status: cancellationStatus(tenant),
+      cancel_at: tenant.cancel_at ?? null,
+      stripe_customer_id: tenant.stripe_customer_id ?? null,
+      stripe_subscription_id: tenant.stripe_subscription_id ?? null,
 
       processing_allowed:
         typeof state?.processing_allowed === 'boolean' ? state.processing_allowed : null,
@@ -218,7 +250,7 @@ export async function loadFirmBilling(
     };
   }
 
-  const missing = [...STRIPE_FIELDS];
+  const missing = haveStripe ? [] : [...STRIPE_FIELDS];
   if (!haveResolver) missing.unshift('trial', 'usage', 'subscription');
   if (!haveComp) missing.unshift('comp');
 
@@ -227,7 +259,11 @@ export async function loadFirmBilling(
     sources: {
       trial: haveResolver ? 'tenants + tenant_usage_state()' : null,
       usage: haveResolver ? 'usage_ledger via tenant_usage_state()' : null,
-      subscription: haveResolver ? 'tenants.subscription_status' : null,
+      subscription: haveResolver
+        ? haveStripe
+          ? 'tenants.subscription_status + tenants.stripe_* (033)'
+          : 'tenants.subscription_status'
+        : null,
       comp: haveComp ? 'comp_grants' : null,
       missing,
     },

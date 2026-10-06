@@ -3,6 +3,7 @@ import { createServiceClient } from '@/lib/supabase/api';
 import { isSuperAdmin } from '@/lib/super-admin';
 import { loadFirmBilling, stripeLinks } from '@/lib/admin/billing-data';
 import { productRole } from '@/lib/roles';
+import { stripeEnvFromKey } from '@/lib/billing/stripe';
 
 /**
  * GET /api/admin/firms
@@ -63,7 +64,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const { byTenant, sources } = await loadFirmBilling(service, tenants);
 
-    const liveStripe = !(process.env.STRIPE_SECRET_KEY || '').startsWith('sk_test');
+    // Derived from the key by the same helper the billing routes use, so a
+    // restricted (rk_) or absent key cannot produce live dashboard links.
+    const liveStripe = stripeEnvFromKey(process.env.STRIPE_SECRET_KEY) === 'live';
 
     const firms = tenants.map((tenant: any) => {
       const members = profiles.filter((p: any) => p.tenant_id === tenant.id);
