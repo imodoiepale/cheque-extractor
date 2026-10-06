@@ -18,7 +18,7 @@
     <div class="logo">
       <svg class="logo-mark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
         <defs><linearGradient id="hStemGrad" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#6366f1"/></linearGradient></defs>
-        <rect width="100" height="100" rx="22" fill="#1a1a2e"/>
+        <rect width="100" height="100" rx="22" fill="#0d1226"/>
         <rect x="22" y="20" width="11" height="60" rx="5.5" fill="url(#hStemGrad)"/>
         <line x1="33" y1="50" x2="68" y2="20" stroke="#10b981" stroke-width="11" stroke-linecap="round"/>
         <line x1="33" y1="50" x2="68" y2="80" stroke="#6366f1" stroke-width="11" stroke-linecap="round"/>
@@ -101,7 +101,7 @@
       <div class="auth-brand">
         <svg class="auth-logo-mark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
           <defs><linearGradient id="aStemGrad" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox"><stop offset="0%" stop-color="#10b981"/><stop offset="100%" stop-color="#6366f1"/></linearGradient></defs>
-          <rect width="100" height="100" rx="22" fill="#1a1a2e"/>
+          <rect width="100" height="100" rx="22" fill="#0d1226"/>
           <rect x="22" y="20" width="11" height="60" rx="5.5" fill="url(#aStemGrad)"/>
           <line x1="33" y1="50" x2="68" y2="20" stroke="#10b981" stroke-width="11" stroke-linecap="round"/>
           <line x1="33" y1="50" x2="68" y2="80" stroke="#6366f1" stroke-width="11" stroke-linecap="round"/>
@@ -179,7 +179,7 @@
         </div>
       </div>
       <button id="btn-qb-connect" class="btn-qb full">
-        <svg width="18" height="18" viewBox="0 0 32 32" fill="none" style="flex-shrink:0"><circle cx="16" cy="16" r="16" fill="#2CA01C"/><text x="16" y="21" text-anchor="middle" font-family="Arial" font-weight="900" font-size="17" fill="white">QB</text></svg>
+        <svg width="18" height="18" viewBox="0 0 32 32" fill="none" style="flex-shrink:0"><circle cx="16" cy="16" r="16" fill="#059669"/><text x="16" y="21" text-anchor="middle" font-family="Arial" font-weight="900" font-size="17" fill="white">QB</text></svg>
         Connect QuickBooks Online
       </button>
       <div id="qb-connect-info" class="alert alert-success" style="display:none;margin-top:10px;"></div>
@@ -204,21 +204,54 @@
       <span id="sync-icon">↻</span> Sync
     </button>
     <button id="btn-qb-reconnect" class="btn-qb-reconnect" title="Re-authenticate with QuickBooks Online">↻ QB</button>
+
+    <!-- Connection status + usage meter + open-QB (client list item 7) -->
+    <div class="company-bar-status">
+      <span id="qb-status" class="qb-status" title="QuickBooks connection">Connected</span>
+      <div id="usage-meter" class="usage-meter" style="display:none;">
+        <div class="usage-meter-top">
+          <span>Checks this period</span>
+          <span id="usage-meter-val" class="usage-meter-val">—</span>
+        </div>
+        <div class="usage-meter-track"><div id="usage-meter-fill" class="usage-meter-fill"></div></div>
+      </div>
+      <button id="btn-open-qb" class="btn-open-qb" title="Open QuickBooks on the active company">↗ QuickBooks</button>
+    </div>
   </div>
 
-  <!-- Tabs -->
+  <!-- Tabs — the approved /extension order: Upload · Match · Review · Approve · History.
+       Docs and QB keep the two data views the panel already had. -->
   <div id="tabs" style="display:none;">
-    <button class="tab active" data-tab="matches">Matches</button>
     <button class="tab" data-tab="upload">Upload</button>
+    <button class="tab active" data-tab="matches">Match</button>
+    <button class="tab" data-tab="cheques">Review</button>
+    <button class="tab" data-tab="approve">Approve</button>
     <button class="tab" data-tab="documents">Docs</button>
-    <button class="tab" data-tab="cheques">Cheques</button>
-    <button class="tab" data-tab="qb">QB Data</button>
+    <button class="tab" data-tab="qb">QB</button>
     <button class="tab" data-tab="history">History</button>
   </div>
 
   <!-- ── TAB: Matches ── -->
   <div id="view-matches" class="view tab-view" style="display:none;">
     <div id="match-banner" class="match-banner" style="display:none;"></div>
+
+    <!-- Needs Attention chips. Each filters the list below to that one
+         problem; counts come from the loaded matches, never from a guess. -->
+    <div id="attention-bar" class="attention-bar">
+      <span class="attention-label">Needs attention</span>
+      <button class="attention-chip chip-lowconf" data-attention="lowconf">
+        Lower confidence <span class="chip-n" id="att-lowconf">0</span>
+      </button>
+      <button class="attention-chip chip-duplicate" data-attention="duplicate">
+        Duplicates <span class="chip-n" id="att-duplicate">0</span>
+      </button>
+      <button class="attention-chip chip-discrepancy" data-attention="discrepancy">
+        Discrepancies <span class="chip-n" id="att-discrepancy">0</span>
+      </button>
+      <button class="attention-chip chip-nomatch" data-attention="unmatched">
+        No match <span class="chip-n" id="att-unmatched">0</span>
+      </button>
+    </div>
     <div class="filter-row">
       <button class="pill active" data-status="all">All <span class="cnt" id="cnt-all">0</span></button>
       <button class="pill" data-status="pending">Pending <span class="cnt" id="cnt-pending">0</span></button>

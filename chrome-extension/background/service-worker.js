@@ -1279,6 +1279,71 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             return { connections: [], error: connErr.message };
           }
         }
+        // ── Usage meter (header) ────────────────────────────────────────
+        // Reads the SAME endpoint the app's trial meter reads, so the number
+        // in the panel and the number the processing gate enforces cannot
+        // drift apart. Reports only; never gates anything here.
+        case 'GET_USAGE': {
+          const s = await getSession();
+          if (!s?.access_token) return { error: 'Not logged in' };
+          const bootstrap = getBootstrapConfig();
+          const host = (bootstrap.frontendUrl || bootstrap.backendUrl || '').replace(/\/$/, '');
+          if (!host) return { error: 'No frontend host configured' };
+          try {
+            const res = await fetch(`${host}/api/usage/trial-status`, {
+              headers: { Authorization: `Bearer ${s.access_token}` },
+            });
+            if (!res.ok) return { error: `Usage fetch failed (${res.status})` };
+            const usage = await res.json();
+            log('GET_USAGE', { plan: usage?.plan, used: usage?.checksUsedThisPeriod });
+            return { usage };
+          } catch (e) {
+            logErr('GET_USAGE failed', e);
+            return { error: e.message };
+          }
+        }
+
+        // ── Open QuickBooks on the company the user is working on ───────
+        // Client list item 7: the user watches Kyriq clear each approved item,
+        // so QB has to be open on the RIGHT company.
+        //
+        // The realm comes from getValidQBToken(), which reads
+        // qb_connections.is_active server-side. Deliberately not from local
+        // storage: a locally-held "active company" lets the panel and the
+        // backend disagree about which books are being cleared.
+        case 'OPEN_QB_COMPANY': {
+          let realmId = null;
+          try { ({ realmId } = await getValidQBToken()); } catch (e) {
+            logErr('OPEN_QB_COMPANY: no valid QB token', e);
+            return { success: false, error: 'No active QuickBooks connection' };
+          }
+          if (!realmId) return { success: false, error: 'No active QuickBooks connection' };
+
+          const company = `company=${encodeURIComponent(realmId)}`;
+          // qbo.intuit.com is canonical; app.qbo.intuit.com 301s to it, so
+          // chrome.tabs.update lands on a stable URL.
+          const targetUrl = msg.accountId
+            ? `https://qbo.intuit.com/app/register?accountId=${encodeURIComponent(msg.accountId)}&${company}`
+            : `https://qbo.intuit.com/app/homepage?${company}`;
+          try {
+            // Reuse an Intuit tab rather than stacking up new ones, but only
+            // if it is already on this realm — retargeting a tab that is open
+            // on another company is exactly the confusion this case prevents.
+            const tabs = await chrome.tabs.query({ url: ['https://qbo.intuit.com/*', 'https://app.qbo.intuit.com/*'] });
+            const sameRealm = (tabs || []).find(t => t.url?.includes(`company=${realmId}`));
+            if (sameRealm) {
+              await chrome.tabs.update(sameRealm.id, { active: true, url: targetUrl });
+              if (sameRealm.windowId) await chrome.windows.update(sameRealm.windowId, { focused: true });
+              return { success: true, realmId, focused: true, tabId: sameRealm.id };
+            }
+            const tab = await chrome.tabs.create({ url: targetUrl });
+            return { success: true, realmId, focused: false, tabId: tab.id };
+          } catch (e) {
+            logErr('OPEN_QB_COMPANY failed', e);
+            return { success: false, error: e?.message || String(e) };
+          }
+        }
+
         case 'SWITCH_COMPANY': {
           const s = await getSession();
           if (!s) return { error: 'Not logged in' };

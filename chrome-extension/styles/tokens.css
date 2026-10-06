@@ -1,0 +1,177 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   Kyriq extension — design tokens, hand-ported from the app.
+
+   SOURCE OF TRUTH: frontend/app/globals.css  (:root in @layer base)
+   The extension is plain CSS with no Tailwind, so the VALUES are copied here,
+   never the utility classes. When a token changes in globals.css, change it
+   here too — this file is the only place the extension states them, so the
+   sync is one file, not 1,500 lines.
+
+   Ported on 2026-10-06 from the Indigo #6366f1 / Emerald #10b981 token set.
+   globals.css stores most colours as bare HSL triples for Tailwind's
+   hsl(var(--x)) wrapper; here they are written as the hex they resolve to,
+   because nothing in the extension wraps them.
+
+   ── THREE TRAPS, ALREADY PAID FOR IN THE APP. Do not re-introduce them. ──
+
+   1. On EVERY glass surface, author `-webkit-backdrop-filter` FIRST and
+      `backdrop-filter` LAST. The other way round, a minifier drops the
+      standard property and leaves only the prefix, which computes to
+      `backdrop-filter: none` in Chrome (verified, Chrome 152). Every glass
+      surface then renders as a flat tint and the @supports fallback cannot
+      catch it, because the browser DOES support the property.
+
+   2. Keep the `@supports not ((backdrop-filter: blur(1px)) or
+      (-webkit-backdrop-filter: blur(1px)))` block at the end of each
+      stylesheet, raising background opacity so a surface that loses its blur
+      still looks deliberate rather than washed out.
+
+   3. Glass goes on CONTAINERS and HEADERS, never on list rows. backdrop-filter
+      is expensive and these lists get long (hundreds of cheques). Never nest
+      two blurred surfaces.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Brand ─────────────────────────────────────────────────────────────── */
+  --brand:        #6366f1;  /* 239 84% 67% */
+  --brand-light:  #818cf8;
+  --brand-dark:   #4f46e5;
+  --brand-deep:   #4338ca;
+  --brand-tint:   #e0e7ff;
+  --brand-wash:   #eef2ff;
+  --brand-text:   #3730a3;  /* --primary-text — 7.8:1 on --brand-tint */
+
+  --emerald:       #10b981;  /* 160 84% 39% */
+  --emerald-dark:  #065f46;
+  --emerald-mid:   #059669;
+  --emerald-tint:  #d1fae5;
+
+  /* ── State families. Each `-text` is verified >= 4.5:1 against its own
+        `-bg`, not against white (DESIGN-SYSTEM 7). ─────────────────────── */
+  --success:        #10b981;
+  --success-bg:     #d1fae5;
+  --success-text:   #065f46;  /* 5.9:1 on --success-bg */
+  --success-border: #6ee7b7;
+
+  --warning:        #f59e0b;
+  --warning-bg:     #fef3c7;
+  --warning-text:   #b45309;  /* 4.6:1 on --warning-bg */
+  --warning-border: #fcd34d;
+
+  --error:          #ef4444;
+  --error-bg:       #fee2e2;
+  --error-text:     #b91c1c;  /* 5.1:1 on --error-bg */
+  --error-border:   #fca5a5;
+
+  --info:           #6366f1;
+  --info-bg:        #e0e7ff;
+  --info-text:      #3730a3;
+  --info-border:    #a5b4fc;
+
+  --neutral-bg:     #f1f5f9;
+  --neutral-text:   #334155;  /* 9.6:1 on white */
+  --neutral-border: #e2e8f0;
+
+  /* ── Ink. Body text is full strength over glass, never muted. ─────────── */
+  --ink-strong: #0f172a;
+  --ink-body:   #334155;
+  --ink-soft:   #3f4d61;  /* the floor for text on glass */
+  --ink-faint:  #64748b;  /* labels + meta only, never prose. 4.8:1 on white */
+  --ink-invert: #ffffff;
+
+  /* ── Opaque surfaces ─────────────────────────────────────────────────── */
+  --app-bg:        #f5f6fb;
+  --surface:       #ffffff;
+  --surface-tint:  #fbfcff;
+  --surface-sunken:#eef0f6;
+
+  /* ── Glass. Raw rgba because the alpha IS the token. ──────────────────── */
+  --glass-card-bg:     rgba(255, 255, 255, 0.72);
+  --glass-panel-bg:    rgba(255, 255, 255, 0.6);
+  --glass-modal-bg:    rgba(255, 255, 255, 0.92);
+  --glass-chrome-bg:   rgba(255, 255, 255, 0.7);
+  --glass-toast-bg:    rgba(255, 255, 255, 0.8);
+  --glass-selected-bg: rgba(255, 255, 255, 0.86);
+  --glass-border:      rgba(255, 255, 255, 0.7);
+  --glass-hairline:    rgba(15, 23, 42, 0.07);
+
+  /* Opacity ladder for degradation: 0.72 translucent -> 0.94 @supports. */
+  --glass-fallback-bg: rgba(255, 255, 255, 0.94);
+  --glass-opaque-bg:   rgba(255, 255, 255, 0.97);
+
+  /* The one blur value. Used by every glass surface. */
+  --glass-blur: blur(18px) saturate(120%);
+
+  /* ── Dark shell (app chrome — here, the panel header). ────────────────── */
+  --shell-bg:          rgba(13, 18, 38, 0.72);
+  --shell-bg-fallback: rgba(13, 18, 38, 0.94);
+  --shell-solid:       #0d1226;
+  --shell-text:        #f1f4fb;
+  /* DELIBERATE DIVERGENCE from the app's --shell-text-muted (#adb8d0).
+     In the app the shell sits over a dark substrate. Here it is translucent
+     over LIGHT ones -- the panel body and, for the overlay pill, QuickBooks'
+     own white page -- which lightens the flattened background and drops
+     #adb8d0 to a measured 3.91:1. #c9d2e4 measures 5.3:1 on the same
+     flattened surface. Keep this lighter than the app's value. */
+  --shell-text-muted:  #c9d2e4;
+  --shell-active-text: #c7d2fe;
+  --shell-border:      rgba(255, 255, 255, 0.08);
+  --shell-hairline:    rgba(255, 255, 255, 0.06);
+
+  /* ── Bevel + shadows. Never pure black; tinted rgba(15,23,42,…).
+        Shadows layer two deep; blur ~= 2.2x the y-offset. ──────────────── */
+  --bevel:      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  --bevel-dark: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+
+  --shadow-hairline: 0 0 0 1px rgba(15, 23, 42, 0.05);
+  --shadow-contact:  0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-glass:    inset 0 1px 0 rgba(255, 255, 255, 0.9),
+                     0 1px 2px rgba(15, 23, 42, 0.04),
+                     0 10px 30px rgba(15, 23, 42, 0.08);
+  --shadow-glass-hover: inset 0 1px 0 rgba(255, 255, 255, 0.95),
+                     0 1px 2px rgba(15, 23, 42, 0.05),
+                     0 20px 44px rgba(15, 23, 42, 0.1);
+  --shadow-glass-panel: inset 0 1px 0 rgba(255, 255, 255, 0.8),
+                     0 1px 2px rgba(15, 23, 42, 0.03),
+                     0 10px 30px rgba(15, 23, 42, 0.06);
+  --shadow-glass-modal: inset 0 1px 0 rgba(255, 255, 255, 0.95),
+                     0 2px 4px rgba(15, 23, 42, 0.06),
+                     0 24px 60px rgba(15, 23, 42, 0.18);
+  --shadow-glass-sheet: inset 0 1px 0 rgba(255, 255, 255, 0.95),
+                     0 -8px 48px rgba(15, 23, 42, 0.18);
+  --shadow-glass-toast: inset 0 1px 0 rgba(255, 255, 255, 0.95),
+                     0 2px 4px rgba(15, 23, 42, 0.05),
+                     0 30px 80px rgba(15, 23, 42, 0.16);
+  --shadow-glass-selected: inset 0 1px 0 rgba(255, 255, 255, 0.95),
+                     0 0 0 1px rgba(99, 102, 241, 0.55),
+                     0 22px 56px rgba(99, 102, 241, 0.16);
+  --shadow-brand-glow: 0 8px 26px rgba(99, 102, 241, 0.32);
+  --shadow-inner-track: inset 0 1px 2px rgba(15, 23, 42, 0.08),
+                     inset 0 0 0 1px rgba(15, 23, 42, 0.05);
+
+  /* ── Radius. Nothing sharp, nothing under 10px. ───────────────────────── */
+  --radius-input: 14px;
+  --radius-btn:   16px;
+  --radius-pill:  20px;
+  --radius-tile:  20px;
+  --radius-card:  24px;
+  --radius-modal: 26px;
+
+  /* ── Motion. One house curve. ─────────────────────────────────────────── */
+  --ease-settle: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-exit:   cubic-bezier(0.4, 0, 1, 1);
+  --dur-tap:     120ms;
+  --dur-quick:   200ms;
+  --dur-settle:  240ms;
+  --dur-reveal:  280ms;
+  --press-scale: 0.96;
+  --disabled-opacity: 0.45;
+
+  /* ── Type ─────────────────────────────────────────────────────────────── */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter',
+    'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-heading: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter',
+    'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+}
