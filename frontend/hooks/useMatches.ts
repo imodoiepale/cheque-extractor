@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { createClient } from '@/lib/supabase/client';
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
@@ -31,13 +31,25 @@ function useDebounce(value: string, delay: number): string {
 }
 
 interface UseMatchesOptions {
+  /** One status, 'all', or a comma-separated union (the Review step's tabs). */
   status?: string;
   search?: string;
   sort?: string;
+  /** 1-based. */
+  page?: number;
+  /** Records per page. The grid offers up to 2000; do not cap it lower here. */
+  limit?: number;
 }
 
-export function useMatches({ status = 'all', search = '', sort = 'confidence' }: UseMatchesOptions = {}) {
+export function useMatches({
+  status = 'all',
+  search = '',
+  sort = 'confidence',
+  page = 1,
+  limit = 50,
+}: UseMatchesOptions = {}) {
   const [matches, setMatches] = useState<any[]>([]);
+  const [total, setTotal] = useState(0);
   const [statusCounts, setStatusCounts] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
@@ -45,23 +57,40 @@ export function useMatches({ status = 'all', search = '', sort = 'confidence' }:
 
   const searchDebounced = useDebounce(search, 350);
 
+  /**
+   * Which statuses the current view is showing. `status` may be a union, so the
+   * optimistic "did this row just leave the list?" decision has to be set
+   * membership, not string equality: with `status` = 'pending,flagged,...',
+   * `status === 'flagged'` is false, and flagging a row would have dropped it
+   * out of the very tab that is supposed to contain it.
+   */
+  const viewStatuses = useMemo(
+    () => new Set(status.split(',').map((s) => s.trim()).filter(Boolean)),
+    [status]
+  );
+  const showsStatus = useCallback(
+    (s: string) => status === 'all' || viewStatuses.has(s),
+    [status, viewStatuses]
+  );
+
   const fetchMatches = useCallback(async () => {
     setError(null);
     setIsLoading(true);
     try {
-      const params = new URLSearchParams({ sort });
+      const params = new URLSearchParams({ sort, page: String(page), limit: String(limit) });
       if (status && status !== 'all') params.set('status', status);
       if (searchDebounced) params.set('search', searchDebounced);
 
       const data = await apiFetch(`/api/matches?${params}`);
       setMatches(data.matches || []);
+      setTotal(typeof data.total === 'number' ? data.total : (data.matches || []).length);
       setStatusCounts(data.statusCounts || {});
     } catch (e: any) {
       setError(e.message);
     } finally {
       setIsLoading(false);
     }
-  }, [status, searchDebounced, sort]);
+  }, [status, searchDebounced, sort, page, limit]);
 
   useEffect(() => {
     fetchMatches();
@@ -93,15 +122,13 @@ export function useMatches({ status = 'all', search = '', sort = 'confidence' }:
       updateLocal(matchId, { status: 'approved' });
       try {
         await apiFetch(`/api/matches/${matchId}/approve`, { method: 'POST' });
-        if (status && !['all', 'approved'].includes(status)) {
-          removeLocal(matchId);
-        }
+        if (!showsStatus('approved')) removeLocal(matchId);
       } catch (e: any) {
         setError(e.message);
         await fetchMatches();
       }
     },
-    [updateLocal, removeLocal, fetchMatches, status]
+    [updateLocal, removeLocal, fetchMatches, showsStatus]
   );
 
   const bulkApprove = useCallback(
@@ -129,15 +156,13 @@ export function useMatches({ status = 'all', search = '', sort = 'confidence' }:
           method: 'POST',
           body: JSON.stringify({ reason }),
         });
-        if (status && !['all', 'flagged'].includes(status)) {
-          removeLocal(matchId);
-        }
+        if (!showsStatus('flagged')) removeLocal(matchId);
       } catch (e: any) {
         setError(e.message);
         await fetchMatches();
       }
     },
-    [updateLocal, removeLocal, fetchMatches, status]
+    [updateLocal, removeLocal, fetchMatches, showsStatus]
   );
 
   const addNote = useCallback(
@@ -164,13 +189,13 @@ export function useMatches({ status = 'all', search = '', sort = 'confidence' }:
           method: 'POST',
           body: JSON.stringify({ resolution, amount, notes }),
         });
-        if (status === 'discrepancy') removeLocal(matchId);
+        if (!showsStatus('matched')) removeLocal(matchId);
       } catch (e: any) {
         setError(e.message);
         await fetchMatches();
       }
     },
-    [updateLocal, removeLocal, fetchMatches, status]
+    [updateLocal, removeLocal, fetchMatches, showsStatus]
   );
 
   const remapMatch = useCallback(
@@ -195,13 +220,13 @@ export function useMatches({ status = 'all', search = '', sort = 'confidence' }:
       updateLocal(matchId, { status: 'matched', approved_at: null, approved_by: null });
       try {
         await apiFetch(`/api/matches/${matchId}/undo-approval`, { method: 'POST' });
-        if (status === 'approved') removeLocal(matchId);
+        if (!showsStatus('matched')) removeLocal(matchId);
       } catch (e: any) {
         setError(e.message);
         await fetchMatches();
       }
     },
-    [updateLocal, removeLocal, fetchMatches, status]
+    [updateLocal, removeLocal, fetchMatches, showsStatus]
   );
 
   const createInQB = useCallback(
@@ -256,6 +281,7 @@ export function useMatches({ status = 'all', search = '', sort = 'confidence' }:
 
   return {
     matches,
+    total,
     statusCounts,
     isLoading,
     isSyncing,

@@ -15,7 +15,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!realmId) return res.status(400).json({ error: 'No active QB connection' });
 
     const { status, search, sort = 'confidence', page = '1', limit = '50' } = req.query;
-    const offset = (parseInt(page as string) - 1) * parseInt(limit as string);
+    /* Trust boundary: page/limit arrive from the query string. A NaN would make
+       `range()` throw, and a negative offset would silently return nothing.
+       The ceiling is 2000, matching the grid's largest per-page option — the
+       up-to-200-record view must never be capped below what the UI offers. */
+    const pageNum = Math.max(1, Math.floor(Number(page)) || 1);
+    const pageSize = Math.min(2000, Math.max(1, Math.floor(Number(limit)) || 50));
+    const offset = (pageNum - 1) * pageSize;
 
     let query = supabase
       .from('matches')
@@ -34,8 +40,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       .eq('tenant_id', tenantId)
       .eq('realm_id', realmId);
 
+    /**
+     * `status` accepts a comma-separated list, because the Review step's
+     * "Needs Attention" tab is the UNION of four statuses (see
+     * NEEDS_ATTENTION_STATUSES in lib/batch-state.ts) and filtering that set
+     * client-side would make `total` — and therefore pagination — wrong.
+     */
     if (status && status !== 'all') {
-      query = query.eq('status', status as string);
+      const wanted = String(status)
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (wanted.length === 1) query = query.eq('status', wanted[0]);
+      else if (wanted.length > 1) query = query.in('status', wanted);
     }
 
     if (search) {
@@ -60,7 +77,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         query = query.order('confidence_score', { ascending: true });
     }
 
-    query = query.range(offset, offset + parseInt(limit as string) - 1);
+    query = query.range(offset, offset + pageSize - 1);
 
     const { data, count, error } = await query;
     if (error) return res.status(500).json({ error: error.message });
@@ -82,8 +99,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       matches: data,
       total: count,
       statusCounts,
-      page: parseInt(page as string),
-      limit: parseInt(limit as string),
+      page: pageNum,
+      limit: pageSize,
     });
   } catch (error: any) {
     console.error('Matches fetch error:', error);

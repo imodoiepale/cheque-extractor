@@ -6,9 +6,19 @@ import { GlassCard, GlassCardTitle, GlassPanel, IconButton } from '@/components/
 
 interface Props {
   imageUrl: string;
+  /**
+   * Render the outer surface as a non-blurring panel.
+   *
+   * The viewer's default shell is a GlassCard, which is correct on the review
+   * page where it is the top surface. Inside the Review step's side-by-side
+   * modal it would be a `glass-card` nested in a `glass-modal` — two stacked
+   * backdrop-filters, which the design system forbids. One optional prop beats
+   * a second copy of the viewer.
+   */
+  inset?: boolean;
 }
 
-export default function CheckImageViewer({ imageUrl }: Props) {
+export default function CheckImageViewer({ imageUrl, inset }: Props) {
   const [zoom, setZoom] = useState(100);
   const [rotation, setRotation] = useState(0);
 
@@ -17,7 +27,7 @@ export default function CheckImageViewer({ imageUrl }: Props) {
   const handleRotate = () => setRotation(prev => (prev + 90) % 360);
 
   return (
-    <GlassCard padding="none" className="overflow-hidden">
+    <GlassCard tier={inset ? 'panel' : 'card'} padding="none" className="overflow-hidden">
       {/* Controls */}
       <div className="flex items-center justify-between gap-3 border-b border-glass-hairline px-4 py-3">
         <GlassCardTitle className="text-base">Check Image</GlassCardTitle>

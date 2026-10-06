@@ -19,6 +19,29 @@
  * round-trip to the RPC if the rule ever grows past a few conditions.
  */
 
+/**
+ * The match statuses that count as "needs attention", and the ONE place the set
+ * is spelled out on the client.
+ *
+ * Three things have to agree about this set or the product lies to the user:
+ *
+ *   - public.batch_counts() in migration 032 (`status IN (...)`), which produces
+ *     counts.needs_attention;
+ *   - deriveBatchSteps() below, where step 3 is complete when that count is 0;
+ *   - the Review step's "Needs Attention" tab, which must show exactly the rows
+ *     the count is counting — otherwise the stepper says "24 need attention"
+ *     while the tab the user is looking at is empty, or vice versa.
+ *
+ * scripts/check-review-step.ts parses the SQL and asserts all three match.
+ */
+export const NEEDS_ATTENTION_STATUSES = [
+  'pending',
+  'flagged',
+  'discrepancy',
+  'unmatched',
+] as const;
+export type NeedsAttentionStatus = (typeof NEEDS_ATTENTION_STATUSES)[number];
+
 export const BATCH_STEPS = ['upload', 'match', 'review', 'approve'] as const;
 export type BatchStepKey = (typeof BATCH_STEPS)[number];
 /** 1 = Upload, 2 = Match, 3 = Review, 4 = Approve. */
@@ -34,7 +57,7 @@ export interface BatchCounts {
   jobs_running: number;
   checks_total: number;
   matches_total: number;
-  /** matches still in pending | flagged | discrepancy | unmatched. */
+  /** matches still in one of NEEDS_ATTENTION_STATUSES. */
   needs_attention: number;
   matched: number;
   approved: number;

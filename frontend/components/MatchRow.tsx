@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import {
   Check, Flag, FileText, ChevronDown, ChevronUp, Search, Plus, Undo2,
-  AlertTriangle, Pencil, CheckCircle2, Repeat, HelpCircle,
+  AlertTriangle, Pencil, CheckCircle2, Repeat, HelpCircle, Columns,
 } from 'lucide-react';
 import {
   GlassPanel, StatusPill, Badge, Input, Textarea, Field,
@@ -127,6 +127,12 @@ interface MatchRowProps {
   onUndoApproval: () => void;
   onCreateInQB: () => void;
   onUpdateQBTransaction: (qbTxnId: string, fields: { txnDate?: string; docNumber?: string; memo?: string }) => Promise<any>;
+  /**
+   * Opens the side-by-side review modal (cheque image beside the QuickBooks
+   * record). Optional so the row keeps working on surfaces that do not host a
+   * modal — the button is simply not rendered there.
+   */
+  onOpenSideBySide?: () => void;
 }
 
 export default function MatchRow({
@@ -141,6 +147,7 @@ export default function MatchRow({
   onUndoApproval,
   onCreateInQB,
   onUpdateQBTransaction,
+  onOpenSideBySide,
 }: MatchRowProps) {
   const [expanded, setExpanded] = useState(false);
   const [showFlagMenu, setShowFlagMenu] = useState(false);
@@ -362,6 +369,17 @@ export default function MatchRow({
                 className="press rounded-input border border-glass-hairline p-1 text-ink-faint hover:text-success-text"
               >
                 <Pencil className="h-3 w-3" />
+              </button>
+            )}
+            {onOpenSideBySide && (
+              <button
+                type="button"
+                onClick={onOpenSideBySide}
+                aria-label="Review side by side"
+                title="Review side by side"
+                className="press rounded-input border border-glass-hairline p-1 text-ink-faint hover:text-brand-deep"
+              >
+                <Columns className="h-3 w-3" />
               </button>
             )}
             <button
