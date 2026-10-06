@@ -28,7 +28,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!gate) return
 
     try {
-        const { job_id, methods, page_range, cheque_range, force } = req.body
+        const { job_id, methods, page_range, cheque_range, force, batch_id } = req.body
         const confirmReupload = Boolean(
             req.body?.confirm_reupload ?? req.body?.confirmReupload
         )
@@ -46,6 +46,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 cheque_range,
                 force: !!force,
                 confirm_reupload: confirmReupload,
+                // Late attach: only used when upload-analyze ran before the
+                // batch existed. The backend validates it against the tenant.
+                batch_id: typeof batch_id === 'string' ? batch_id : null,
             }),
         })
 

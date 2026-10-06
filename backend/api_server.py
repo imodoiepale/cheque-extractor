@@ -629,6 +629,71 @@ def _auth_context(request) -> dict:
     return {"user_id": user_id, "tenant_id": tenant_id}
 
 
+# ── Batches (migration 032) ──────────────────────────────────────────────────
+# A batch is one reconciliation run: company + bank account + period + position
+# in Upload -> Match -> Review -> Approve. Jobs carry batch_id; the batch itself
+# stores no step number, because every step's completion is derived from facts
+# (see supabase/migrations/032_batches.sql and frontend/lib/batch-state.ts).
+#
+# Same rule as tenant_id (migration 026): the backend resolves and validates the
+# link itself rather than trusting the caller, so a crafted batch_id cannot
+# attach a job to another firm's run.
+
+def _resolve_batch(tenant_id: str, batch_id: str) -> Optional[str]:
+    """The batch id when it is an open batch of this tenant, else None.
+
+    Returns None — never raises — when the batches table is absent, so a
+    database without migration 032 keeps processing uploads as before.
+    """
+    if not tenant_id or not batch_id:
+        return None
+    rows = _supabase_select(
+        "batches", "id,status", {"id": batch_id, "tenant_id": tenant_id}, limit=1
+    )
+    if not rows:
+        print(f"  Batch {batch_id} not found for this tenant (or table absent) — job left unattached")
+        return None
+    if rows[0].get("status") != "open":
+        print(f"  Batch {batch_id} is {rows[0].get('status')}, not open — job left unattached")
+        return None
+    return rows[0].get("id")
+
+
+def _attach_checks_to_batch(job_id: str, tenant_id: str, check_ids: list):
+    """Stamp checks.batch_id for the cheques a finished job produced.
+
+    Runs after flatten_checks_from_job(). The cheques are matched by check_id
+    rather than job_id because the live checks table has no job_id column —
+    migration 020 dropped it from the insert list. matches.batch_id follows via
+    the triggers in migration 032, in either arrival order.
+    """
+    if not _supabase_ok or not tenant_id or not check_ids:
+        return
+    batch_id = None
+    rows = _supabase_select("check_jobs", "batch_id", {"job_id": job_id}, limit=1)
+    if rows:
+        batch_id = rows[0].get("batch_id")
+    if not batch_id:
+        return
+    ids = ",".join(f'"{str(c)}"' for c in check_ids if c)
+    if not ids:
+        return
+    try:
+        resp = _requests.patch(
+            f"{_sb_url}/rest/v1/checks"
+            f"?tenant_id=eq.{tenant_id}&batch_id=is.null&check_id=in.({ids})",
+            headers=_sb_headers(),
+            json={"batch_id": batch_id},
+            timeout=30,
+        )
+        if resp.status_code >= 400:
+            print(f"  Batch attach error ({resp.status_code}): {resp.text[:200]}")
+        else:
+            print(f"  ✓ Attached {len(check_ids)} cheque(s) of job {job_id} to batch {batch_id}")
+    except Exception as e:
+        print(f"  Batch attach exception: {e}")
+
+
 def _usage_state(tenant_id: str) -> Optional[dict]:
     """public.tenant_usage_state() for one tenant, or None if unavailable."""
     if not tenant_id:
@@ -1044,6 +1109,13 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
         # Flatten checks_data into individual rows in the checks table
         _supabase_rpc("flatten_checks_from_job", {"p_job_id": job_id})
 
+        # The cheques now exist as rows, so they can be attached to the run.
+        # This is what moves the batch's step 1 (Upload) to complete.
+        _attach_checks_to_batch(
+            job_id, _job.get("tenant_id") or jobs.get(job_id, {}).get("tenant_id"),
+            [c.get("check_id") for c in checks],
+        )
+
         # ── Cleanup local files after successful DB save ───────────
         # All files are now in Storage, safe to delete everything locally
         _cleanup_local_files(job_id, pdf_path, keep_images=False)
@@ -1173,12 +1245,17 @@ async def upload_analyze(
     request: Request,
     file: UploadFile = File(...),
     confirm_reupload: bool = False,
+    batch_id: str = None,
     _auth=Depends(_verify_token),
 ):
     """Upload a PDF, detect cheques, return page info with dimensions — no OCR yet.
 
     `confirm_reupload` (query param) is the user opting in after being warned
     the file was uploaded before and will be counted again.
+
+    `batch_id` (query param) attaches this PDF to a reconciliation run
+    (migration 032). It is validated against the resolved tenant and ignored if
+    it does not name an open batch of that firm.
     """
     if not file or not file.filename:
         raise HTTPException(400, "No file provided")
@@ -1307,6 +1384,11 @@ async def upload_analyze(
             "_manifest": manifest,
         }
 
+        # Attach this PDF to a reconciliation run, if the caller named one that
+        # really belongs to this firm and is still open.
+        resolved_batch = _resolve_batch(tenant_id, batch_id)
+        jobs[job_id]["batch_id"] = resolved_batch
+
         # Record the fingerprint, and remember whether this was a confirmed
         # re-upload so the ledger row carries is_reupload.
         if tenant_id:
@@ -1319,7 +1401,7 @@ async def upload_analyze(
         # Save to DB immediately. tenant_id was missing here, which is why
         # check_jobs rows had no owner and api_usage_logs fell back to the
         # all-zero UUID.
-        _supabase_insert("check_jobs", {
+        job_row = {
             "job_id": job_id,
             "tenant_id": tenant_id,
             "user_id": user_id,
@@ -1330,7 +1412,13 @@ async def upload_analyze(
             "total_checks": len(manifest),
             "file_size": file_size,
             "checks_data": json.dumps([]),
-        })
+        }
+        # Only when resolved: on a database without migration 032 the column
+        # does not exist, and sending it would fail the whole insert — which is
+        # how check_jobs rows lost their owner the last time.
+        if resolved_batch:
+            job_row["batch_id"] = resolved_batch
+        _supabase_insert("check_jobs", job_row)
 
         # Upload PDF to storage
         try:
@@ -1394,6 +1482,9 @@ class StartExtractionRequest(BaseModel):
     force: bool = False  # Force re-extraction even if results exist
     # The user opting in after being warned this file was uploaded before.
     confirm_reupload: bool = False
+    # The reconciliation run this job belongs to (migration 032). Only used when
+    # the job is not already attached — upload-analyze is the normal place.
+    batch_id: Optional[str] = None
 
 
 @app.post("/api/start-extraction")
@@ -1427,6 +1518,15 @@ def start_extraction(req: StartExtractionRequest, request: Request, _auth=Depend
 
     tenant_id = job.get("tenant_id") or ctx["tenant_id"]
     _assert_processing_allowed(tenant_id)
+
+    # Attach to a reconciliation run if upload-analyze could not: it is called
+    # before the batch exists in some flows, and the tenant is only certain
+    # here. Never re-points a job that is already attached.
+    if req.batch_id and not job.get("batch_id"):
+        resolved_batch = _resolve_batch(tenant_id, req.batch_id)
+        if resolved_batch:
+            job["batch_id"] = resolved_batch
+            _supabase_update("check_jobs", {"job_id": req.job_id}, {"batch_id": resolved_batch})
 
     # ── Duplicate warning, at the point where it can actually be given ───────
     # Detection (upload-analyze) is free; extraction is the billable act, so the
@@ -1812,6 +1912,13 @@ def start_extraction(req: StartExtractionRequest, request: Request, _auth=Depend
 
             # Flatten checks_data into individual rows in the checks table
             _supabase_rpc("flatten_checks_from_job", {"p_job_id": req.job_id})
+
+            # The cheques now exist as rows, so they can be attached to the run.
+            # This is what moves the batch's step 1 (Upload) to complete.
+            _attach_checks_to_batch(
+                req.job_id, job.get("tenant_id"),
+                [c.get("check_id") for c in checks],
+            )
 
             # ── Cleanup local files after successful extraction ────
             # All files are now in Storage, safe to delete everything locally

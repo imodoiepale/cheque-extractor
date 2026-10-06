@@ -40,7 +40,16 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
         if (gate.accessToken) headers.Authorization = `Bearer ${gate.accessToken}`
 
-        const url = `${PYTHON_API}/api/upload-analyze?confirm_reupload=${confirmReupload}`
+        // batch_id attaches this PDF to a reconciliation run (migration 032).
+        // Shape-checked here and re-validated against the tenant by the
+        // backend, which is the only side that knows whose batch it is.
+        const batchId = String(req.query.batch_id || '')
+        const batchParam =
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(batchId)
+                ? `&batch_id=${batchId}`
+                : ''
+
+        const url = `${PYTHON_API}/api/upload-analyze?confirm_reupload=${confirmReupload}${batchParam}`
         const response = await fetch(url, { method: 'POST', headers, body })
 
         const data = await response.json()
