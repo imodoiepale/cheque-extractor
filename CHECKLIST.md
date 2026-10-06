@@ -732,6 +732,24 @@ of it was visible from the documents.
       switcher's `<a href>` "Connect QuickBooks" and "Add Company" navigated the user to a raw JSON
       document. Neither had ever worked. Surfaced by turning the lint gate on.
 
+- [ ] **Eleven separate copies of the QuickBooks token refresh**, and they have already
+      drifted. Every one of these carries its own `grant_type: 'refresh_token'` exchange:
+      `lib/match-helpers.ts`, `pages/api/extension/qb/refresh-token.ts`, and
+      `pages/api/qbo/{accounts,clear-transaction,company-info,create-check,diagnose,explore,preview,pull-checks,update-transaction}.ts`.
+      Two concrete drifts, both of them this repo's own named non-negotiables:
+      **four never read `qb_connections` at all** (`accounts`, `company-info`, `explore`,
+      `preview` read only the legacy `integrations` table, so they silently operate on the
+      wrong company for any firm with more than one connected), and **only two of eleven trim
+      their credential values** — a trailing space in a client secret fails OAuth in a way that
+      reads as a bad credential. CLAUDE.md also requires a refresh to update both token stores;
+      not all of them do. One shared resolver, then migrate the call sites. The health-write
+      helper is being created as part of section 9 so there is one function to call rather than
+      eleven chances to forget.
+- [ ] **`pages/api/qbo/accounts.ts` cannot back the account switcher** (section 4). It queries
+      `WHERE AccountType = 'Bank'`, so credit cards are invisible; it reads `integrations`, so it
+      is single-company; and it returns no last four. Section 4 wants accounts grouped into Bank
+      and Credit Card with name, last four, sub-type and balance.
+
 - [ ] **Blocked on assets that never reached the repo.** The logo pack
       (*Kyriq Logo — All Source files — 12 versions.zip*) is absent, so versions 1
       and 7 cannot be shipped. `Kyriq-Developer-Handoff-v17.zip` is absent too —
