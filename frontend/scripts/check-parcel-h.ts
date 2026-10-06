@@ -149,7 +149,7 @@ console.log('  ok  blur budget 0 raw tiers in all 12 files (count is row-indepen
    */
   assert.doesNotMatch(
     src,
-    /<Button/,
+    /<Button\b/,
     `${MATCH_ROW} renders the Button primitive. Inside a row that costs either a ` +
       'backdrop-filter (secondary is .glass-card, ghost is backdrop-blur-[8px]) or 44px of ' +
       'row height (size="sm" is min-h-tap, and tailwind-merge does not know that custom key ' +
