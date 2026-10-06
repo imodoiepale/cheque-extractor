@@ -23,18 +23,37 @@ export const buttonVariants = cva(
   {
     variants: {
       variant: {
-        /** 90-degree indigo gradient + coloured lift. */
+        /**
+         * 90-degree indigo gradient + coloured lift.
+         *
+         * Starts at `brand-dark`, not `brand`, because this variant carries WHITE
+         * text. White on `--brand` (#6366f1) measures 4.47:1 — three hundredths
+         * under AA for normal text — and the old hover LIGHTENED to `brand-light`
+         * (#818cf8), which is 2.98:1. So hovering a primary button used to make
+         * its own label harder to read than not hovering it.
+         *
+         * `--brand` is still the brand colour and still correct for borders,
+         * accents, tints and chart series. It is only unusable *behind white
+         * text*. Hover now darkens rather than lightens, which is also the right
+         * direction for a filled button. check-primitives.ts asserts every white
+         * -on-fill pair stays at 4.5:1.
+         */
         primary:
-          'bg-gradient-to-r from-brand to-brand-dark text-white border border-brand-dark/40 shadow-brand-glow hover:from-brand-light hover:to-brand',
+          'bg-gradient-to-r from-brand-dark to-brand-deep text-white border border-brand-deep/40 shadow-brand-glow hover:from-brand-deep hover:to-brand-deep',
         /** Light glass pill. The default for anything that is not the one action. */
         secondary:
           'glass-card text-ink-strong hover:bg-white/85 shadow-contact',
         /** Hairline pill over a faint tint, with its own light blur. */
         ghost:
           'border border-ink-strong/[0.14] bg-ink-strong/[0.035] text-ink-body backdrop-blur-[8px] hover:bg-ink-strong/[0.07] hover:text-ink-strong',
-        /** Commit-to-destroy. Never the default in a confirmation. */
+        /**
+         * Commit-to-destroy. Never the default in a confirmation.
+         * Starts at `error-dark` for the same reason as primary: white on
+         * `--error` (#ef4444) is 3.76:1. `--error` stays correct for borders,
+         * tints and status marks — just not behind white text.
+         */
         destructive:
-          'bg-gradient-to-r from-error to-error-dark text-white border border-error-dark/40 shadow-danger-glow hover:from-error-dark hover:to-error-dark',
+          'bg-gradient-to-r from-error-dark to-error-text text-white border border-error-text/40 shadow-danger-glow hover:from-error-text hover:to-error-text',
         /** Text-only affordance inside dense chrome. */
         link: 'text-brand-deep underline-offset-2 hover:underline',
       },

@@ -291,4 +291,82 @@ console.log('  ok  glass fallbacks, motion tokens and state utilities all presen
   console.log(`  ok  all ${probes.length} custom theme keys are overridable via cn()`);
 }
 
+// ── White text must never sit on a fill below 4.5:1 ───────────────────────
+// Found by measuring the Chrome extension's ported tokens, then confirmed here.
+// The primary button's gradient started at --brand (#6366f1), which is 4.47:1
+// with white — and its hover LIGHTENED to --brand-light (#818cf8) at 2.98:1, so
+// hovering a primary button made its own label harder to read. The destructive
+// variant started at --error (#ef4444) at 3.76:1. Both now start at their
+// family's dark step. --brand and --error are still correct for borders, tints,
+// accents and chart series; they are only unusable behind white text.
+// CHECKLIST 2.2 rule 9: "every state colour verified to 4.5:1".
+{
+  const hslTriple = (name: string): [number, number, number] => {
+    // Parsed rather than regexed: a template literal swallows \s and \d, which
+    // silently turned the first version of this into a literal match that found
+    // nothing and reported the token as missing.
+    const key = '--' + name + ':';
+    const at = css.indexOf(key);
+    assert.ok(at !== -1, 'token ' + key + ' not found in globals.css');
+    const raw = css.slice(at + key.length, css.indexOf(';', at)).trim();
+    const parts = raw.split(/\s+/);
+    assert.strictEqual(parts.length, 3, key + ' is not an hsl triple: ' + raw);
+    return [
+      Number(parts[0]),
+      Number(parts[1].replace('%', '')) / 100,
+      Number(parts[2].replace('%', '')) / 100,
+    ];
+  };
+  const toRgb = ([h, sat, l]: [number, number, number]): [number, number, number] => {
+    const c = (1 - Math.abs(2 * l - 1)) * sat;
+    const hp = h / 60;
+    const x = c * (1 - Math.abs((hp % 2) - 1));
+    const seg: [number, number, number][] = [
+      [c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x],
+    ];
+    const [r, g, b] = seg[Math.floor(hp) % 6];
+    const m = l - c / 2;
+    return [r + m, g + m, b + m];
+  };
+  const relLum = (rgb: [number, number, number]) => {
+    const [r, g, b] = rgb.map((v) =>
+      v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)
+    );
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const vsWhite = (name: string) => {
+    const l = relLum(toRgb(hslTriple(name)));
+    return 1.05 / (l + 0.05);
+  };
+
+  // Every token the filled variants actually paint behind white text.
+  const whiteOnFill = ['brand-dark', 'brand-deep', 'error-dark', 'error-text'];
+  for (const tok of whiteOnFill) {
+    const r = vsWhite(tok);
+    assert.ok(
+      r >= 4.5,
+      `white text on --${tok} is ${r.toFixed(2)}:1, below AA 4.5:1 — a filled ` +
+        'button variant must start at its family\'s dark step'
+    );
+  }
+
+  // And the tokens that must NOT appear behind white text, so a later edit that
+  // "brightens" a button is caught rather than shipped.
+  for (const tok of ['brand', 'brand-light', 'error']) {
+    assert.ok(
+      vsWhite(tok) < 4.5,
+      `--${tok} now passes 4.5:1 with white; if the palette changed, move it ` +
+        'into whiteOnFill above rather than leaving this assertion stale'
+    );
+  }
+  const primary = buttonVariants({ variant: 'primary' });
+  for (const banned of ['from-brand ', 'from-brand-light', 'to-brand ']) {
+    assert.ok(
+      !primary.includes(banned),
+      `the primary button paints "${banned.trim()}" behind white text, which is below AA`
+    );
+  }
+  console.log(`  ok  white-on-fill contrast: ${whiteOnFill.length} fills at or above 4.5:1`);
+}
+
 console.log('\nall primitive checks passed');
