@@ -34,14 +34,25 @@ export default async function handler(
     // the caller's tenant, so no explicit tenant filter is needed here.
     const { data: integration } = await supabase
       .from('integrations')
-      .select('gemini_api_key, qb_client_id')
+      .select('gemini_api_key')
       .eq('provider', 'quickbooks')
       .maybeSingle();
 
+    // `qbClientId` is deliberately NOT returned. It was served here and is read
+    // by nothing in the extension — the service worker only ever logged it. The
+    // OAuth flow goes through /api/qbo/auth, which keeps the client id and
+    // secret server-side where they belong.
+    //
+    // `geminiApiKey` IS still returned, because it is genuinely consumed:
+    // extractCheckData() in the service worker calls Gemini directly with it.
+    // That path is only reachable from popup/popup.js, which the manifest never
+    // mounts (there is no default_popup) — so it is dead today, but removing the
+    // key would break it the moment anyone wires the popup up. Worth replacing
+    // with a backend proxy so a tenant's provider key never reaches a client at
+    // all; until then, this route requires a session and extension-only CORS.
     return res.status(200).json({
       supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL || '',
       supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
-      qbClientId: integration?.qb_client_id || process.env.QUICKBOOKS_CLIENT_ID || '',
       geminiApiKey: integration?.gemini_api_key || process.env.GEMINI_API_KEY || '',
     });
   } catch (error: any) {
