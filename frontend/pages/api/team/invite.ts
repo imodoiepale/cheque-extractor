@@ -3,6 +3,8 @@ import { requireCapability } from '@/lib/match-helpers';
 import { isDbRole } from '@/lib/roles';
 import { createServiceClient } from '@/lib/supabase/api';
 import { auditLog, inviteUrl, normaliseEmail } from '@/lib/team-helpers';
+import { sendOnce } from '@/lib/email/send';
+import { productRoleLabel } from '@/lib/roles';
 
 /**
  * POST /api/team/invite
@@ -94,12 +96,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const url = inviteUrl(invitation.token);
 
-    // No mail transport is configured in this repo yet (no resend/nodemailer/
-    // postmark dependency, and Supabase's inviteUserByEmail would create the
-    // auth user outside this firm's tenant). The link is returned so the
-    // Administrator can pass it on, and logged server-side. Wiring a transport
-    // is a one-line swap here.
-    console.log(`[team/invite] invitation for ${email} -> ${url}`);
+    // Transactional: the recipient cannot join without this link, so it is not
+    // subject to unsubscribe. Send-once is keyed on the invitation id, so a
+    // double-submit cannot send two emails, while re-inviting the same address
+    // deletes the old pending row above and therefore gets a new id and a new
+    // email — which is what "resend the invitation" has to mean.
+    const firm = await firmName(ctx.tenantId);
+    const mail = await sendOnce({
+      tenantId: ctx.tenantId,
+      kind: 'team_invitation',
+      periodKey: invitation.id,
+      to: email,
+      template: 'team_invitation',
+      vars: {
+        firmName: firm,
+        inviterName: ctx.email,
+        roleLabel: productRoleLabel(role),
+        inviteUrl: url,
+        expiresAt: invitation.expires_at,
+      },
+    });
+
+    if (!mail.sent) {
+      // The link is still returned either way, so an Administrator is never
+      // stuck when the transport is unconfigured — which it is today: there is
+      // no RESEND_API_KEY in this environment.
+      console.warn(`[team/invite] email not sent (${mail.status}): ${mail.reason ?? ''} -> ${url}`);
+    }
 
     return res.status(200).json({
       invitation: {
@@ -110,7 +133,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         expires_at: invitation.expires_at,
       },
       invite_url: url,
-      email_sent: false,
+      email_sent: mail.sent,
+      email_status: mail.status,
+      email_reason: mail.reason,
     });
   } catch (err: any) {
     console.error('[team/invite POST]', err);
@@ -119,4 +144,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       message: err?.message || 'Failed to send invitation',
     });
   }
+}
+
+/** The firm's display name, for the subject line. Never fails the invite. */
+async function firmName(tenantId: string): Promise<string | null> {
+  const { data } = await createServiceClient()
+    .from('tenants')
+    .select('name')
+    .eq('id', tenantId)
+    .maybeSingle();
+  return data?.name ?? null;
 }

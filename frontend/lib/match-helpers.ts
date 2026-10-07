@@ -1,5 +1,6 @@
 import { createClientFromRequest, createServiceClient } from '@/lib/supabase/api';
 import { can, toDbRole, type Capability, type DbRole } from '@/lib/roles';
+import { classifyRefreshFailure, markQbConnection } from '@/lib/qb-health';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 /**
@@ -159,6 +160,17 @@ export async function getValidToken(tenantId: string, realmId: string): Promise<
   const clientSecret = integration?.qb_client_secret || process.env.QUICKBOOKS_CLIENT_SECRET;
 
   if (!clientId || !clientSecret || !conn.refresh_token) {
+    // Refresh path 1 of 2. Nothing used to be persisted here, so a dead
+    // connection stayed invisible until a user clicked something.
+    await markQbConnection({
+      tenantId,
+      realmId,
+      // 'unknown', not 'needs_reconnect': absent credentials are OUR
+      // misconfiguration, and a firm must not be emailed "reconnect
+      // QuickBooks" for something only we can fix.
+      status: 'unknown',
+      detail: 'Cannot refresh token — missing QuickBooks credentials',
+    });
     throw new Error('Cannot refresh token — missing credentials');
   }
 
@@ -176,6 +188,13 @@ export async function getValidToken(tenantId: string, realmId: string): Promise<
   });
 
   if (!refreshResponse.ok) {
+    const body = await refreshResponse.text().catch(() => '');
+    await markQbConnection({
+      tenantId,
+      realmId,
+      status: classifyRefreshFailure(refreshResponse.status, body),
+      detail: `Token refresh failed (${refreshResponse.status})`,
+    });
     throw new Error('Token refresh failed');
   }
 
@@ -191,6 +210,10 @@ export async function getValidToken(tenantId: string, realmId: string): Promise<
     })
     .eq('tenant_id', tenantId)
     .eq('realm_id', realmId);
+
+  // A recovered connection must clear its own status, or one transient Intuit
+  // 500 leaves a healthy firm flagged forever and emails them about it.
+  await markQbConnection({ tenantId, realmId, status: 'connected', detail: null });
 
   return newToken.access_token;
 }

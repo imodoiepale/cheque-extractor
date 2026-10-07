@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { adminRecipients, sendOnce } from '@/lib/email/send';
 import { createClientFromCookies, createServiceClient } from '@/lib/supabase/api';
 import { peekState, verifyState } from '@/lib/qbo-state';
 
@@ -252,6 +253,12 @@ export default async function handler(
           token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
           is_active: true,
           connected_at: new Date().toISOString(),
+          // Migration 034: health, as distinct from "currently selected".
+          // A fresh OAuth grant is the one moment we know it works.
+          status: 'connected',
+          status_detail: null,
+          status_checked_at: new Date().toISOString(),
+          status_changed_at: new Date().toISOString(),
         }, {
           onConflict: 'tenant_id,realm_id',
         });
@@ -263,6 +270,31 @@ export default async function handler(
       }
     } catch (connErr: any) {
       console.warn('⚠️ qb_connections upsert failed (non-critical):', connErr.message);
+    }
+
+    // Email 11: QuickBooks Online is connected. Transactional — the direct
+    // result of an action the administrator just completed. Send-once keyed on
+    // (tenant, realm, day), so re-authorising the same company tomorrow is a
+    // genuine new notice while a double callback today is not.
+    //
+    // NOTE (docs/EMAIL-SPEC-REVIEW.md 4.4): in the app as it stands a company
+    // IS a QuickBooks connection, so email 17 "company added" would fire for
+    // this same event. Email 17 is deliberately not built.
+    try {
+      const adminEmails = await adminRecipients(tenantId);
+      for (const to of adminEmails) {
+        await sendOnce({
+          tenantId,
+          kind: 'qb_connected',
+          periodKey: `${realmId}:${new Date().toISOString().slice(0, 10)}:${to}`,
+          to,
+          template: 'qb_connected',
+          vars: { companyName, firmName: null },
+          metadata: { realm_id: realmId },
+        });
+      }
+    } catch (mailErr: any) {
+      console.warn('[qbo/callback] connection email not sent:', mailErr?.message);
     }
 
     // Clear state cookie

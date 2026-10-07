@@ -1,8 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { requireCapability } from '@/lib/match-helpers';
 import { createServiceClient } from '@/lib/supabase/api';
-import { isDbRole, toDbRole } from '@/lib/roles';
+import { isDbRole, productRoleLabel, toDbRole } from '@/lib/roles';
 import { auditLog, decodeMemberId, isUuid, profileRowToMember } from '@/lib/team-helpers';
+import { sendEmail } from '@/lib/email/send';
 
 /**
  * DELETE /api/team/members/[id]  — remove a member, or cancel an invitation
@@ -173,7 +174,19 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         oldValues: { email: data.email, role: toDbRole(member.role) },
         metadata: { auth_deleted: !authErr },
       });
-      return res.status(200).json({ ok: true, removed: 'member' });
+
+      // Transactional: the recipient has just lost access and needs to know
+      // why their sign-in stopped working. Not send-once — the row is gone, so
+      // this handler cannot run twice for the same member.
+      const removalMail = await sendEmail({
+        to: String(data.email || '').toLowerCase(),
+        template: 'team_member_removed',
+        tenantId: ctx.tenantId,
+        vars: { firmName: await firmName(service, ctx.tenantId) },
+      });
+      return res
+        .status(200)
+        .json({ ok: true, removed: 'member', email_sent: removalMail.sent, email_status: removalMail.status });
     }
 
     const nextRole = req.body?.role;
@@ -207,9 +220,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       metadata: { email: updated.email },
     });
 
-    return res.status(200).json({ member: profileRowToMember(updated) });
+    // Transactional: what the person can do in the app just changed.
+    const roleMail = await sendEmail({
+      to: String(updated.email || '').toLowerCase(),
+      template: 'team_role_changed',
+      tenantId: ctx.tenantId,
+      vars: {
+        firmName: await firmName(service, ctx.tenantId),
+        oldRoleLabel: productRoleLabel(member.role),
+        newRoleLabel: productRoleLabel(nextRole),
+      },
+    });
+
+    return res.status(200).json({
+      member: profileRowToMember(updated),
+      email_sent: roleMail.sent,
+      email_status: roleMail.status,
+    });
   } catch (err: any) {
     console.error(`[team/members ${req.method}]`, err);
     return res.status(500).json({ error: 'server_error', message: err?.message || 'Request failed' });
   }
+}
+
+/** The firm's display name for a subject line. Never fails the action. */
+async function firmName(service: any, tenantId: string): Promise<string | null> {
+  const { data } = await service.from('tenants').select('name').eq('id', tenantId).maybeSingle();
+  return data?.name ?? null;
 }

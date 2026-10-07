@@ -2,6 +2,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { createAuthenticatedClient } from '@/lib/supabase/api';
 
+import { classifyRefreshFailure, markQbConnection } from '@/lib/qb-health';
+
 
 
 /**
@@ -166,7 +168,29 @@ async function refreshAccessToken(supabase: any, tokens: QBTokens): Promise<stri
 
 
 
-  if (!clientId || !clientSecret || !tokens.refresh_token) return null;
+  if (!clientId || !clientSecret || !tokens.refresh_token) {
+
+    // Refresh path 2 of 2 (the other is getValidToken in lib/match-helpers.ts).
+
+    // This used to return null silently, so a dead connection was invisible.
+
+    await markQbConnection({
+
+      realmId: tokens.realm_id,
+
+      // 'unknown', not 'needs_reconnect': absent credentials are OUR
+
+      // misconfiguration, and must not email a firm about reconnecting.
+
+      status: 'unknown',
+
+      detail: 'Cannot refresh token — missing QuickBooks credentials',
+
+    });
+
+    return null;
+
+  }
 
 
 
@@ -200,7 +224,19 @@ async function refreshAccessToken(supabase: any, tokens: QBTokens): Promise<stri
 
     if (!response.ok) {
 
-      console.error('Token refresh failed:', await response.text());
+      const body = await response.text().catch(() => '');
+
+      console.error('Token refresh failed:', body);
+
+      await markQbConnection({
+
+        realmId: tokens.realm_id,
+
+        status: classifyRefreshFailure(response.status, body),
+
+        detail: `Token refresh failed (${response.status})`,
+
+      });
 
       return null;
 
@@ -258,11 +294,29 @@ async function refreshAccessToken(supabase: any, tokens: QBTokens): Promise<stri
 
 
 
+    // A recovered connection clears its own status, or one transient Intuit 500
+
+    // leaves a healthy firm flagged and emailed about it forever.
+
+    await markQbConnection({ realmId: tokens.realm_id, status: 'connected', detail: null });
+
+
+
     return newTokens.access_token;
 
-  } catch (error) {
+  } catch (error: any) {
 
     console.error('Token refresh error:', error);
+
+    await markQbConnection({
+
+      realmId: tokens.realm_id,
+
+      status: 'error',
+
+      detail: `Token refresh threw: ${error?.message || 'unknown error'}`,
+
+    });
 
     return null;
 

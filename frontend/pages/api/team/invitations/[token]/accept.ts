@@ -1,7 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createClientFromRequest, createServiceClient } from '@/lib/supabase/api';
-import { toDbRole } from '@/lib/roles';
+import { productRoleLabel, toDbRole } from '@/lib/roles';
 import { auditLog } from '@/lib/team-helpers';
+import { sendOnce } from '@/lib/email/send';
 
 /**
  * POST /api/team/invitations/[token]/accept
@@ -49,7 +50,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const { data: invitation, error } = await service
       .from('team_invitations')
-      .select('id, tenant_id, email, role, status, expires_at')
+      .select('id, tenant_id, email, role, status, expires_at, invited_by')
       .eq('token', token)
       .maybeSingle();
     if (error) throw error;
@@ -69,6 +70,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       (invitation.expires_at && new Date(invitation.expires_at).getTime() <= Date.now());
     if (expired) {
       await service.from('team_invitations').update({ status: 'expired' }).eq('id', invitation.id);
+      // Transactional: the person is holding a dead link they just clicked.
+      // Send-once on the invitation id, so clicking the link five times does
+      // not send five emails.
+      await sendOnce({
+        tenantId: invitation.tenant_id,
+        kind: 'team_invitation_expired',
+        periodKey: invitation.id,
+        to: invitation.email,
+        template: 'team_invitation_expired',
+        vars: { firmName: tenantNameOf(await firmRow(service, invitation.tenant_id)), expiresAt: invitation.expires_at },
+      });
       return res.status(410).json({
         error: 'expired',
         message: 'This invitation has expired. Ask your Administrator to send a new one.',
@@ -157,6 +169,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         newValues: { email: userEmail, role },
         metadata: { moved_from: previousTenant },
       });
+      await notifyInviter(service, invitation, tenant?.name || null, userEmail, role);
       return res.status(200).json({ ok: true, firm: tenant?.name || null, role });
     }
 
@@ -187,9 +200,56 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       metadata: { created_profile: true },
     });
 
+    await notifyInviter(service, invitation, tenant?.name || null, userEmail, role);
+
     return res.status(200).json({ ok: true, firm: tenant?.name || null, role });
   } catch (err: any) {
     console.error('[team/invitations accept]', err);
     return res.status(500).json({ error: 'server_error', message: err?.message || 'Could not accept invitation' });
+  }
+}
+
+async function firmRow(service: any, tenantId: string) {
+  const { data } = await service.from('tenants').select('name').eq('id', tenantId).maybeSingle();
+  return data;
+}
+
+const tenantNameOf = (row: any) => row?.name ?? null;
+
+/**
+ * Tell the Administrator who sent the invitation that it was accepted.
+ *
+ * Transactional: it is the direct result of an action in their own firm, and
+ * it is the only signal that a seat is now in use. Send-once on the invitation
+ * id — the accept route is idempotent and re-runs for an already-joined user.
+ * Best-effort: a mail failure must not fail the join.
+ */
+async function notifyInviter(
+  service: any,
+  invitation: { id: string; tenant_id: string; invited_by?: string | null },
+  firmName: string | null,
+  memberEmail: string,
+  role: string
+) {
+  try {
+    const invitedBy = (invitation as any).invited_by;
+    if (!invitedBy) return;
+    const { data: inviter } = await service
+      .from('user_profiles')
+      .select('email')
+      .eq('id', invitedBy)
+      .maybeSingle();
+    if (!inviter?.email) return;
+
+    await sendOnce({
+      tenantId: invitation.tenant_id,
+      kind: 'team_invitation_accepted',
+      periodKey: invitation.id,
+      to: String(inviter.email).toLowerCase(),
+      template: 'team_invitation_accepted',
+      vars: { firmName, memberEmail, roleLabel: productRoleLabel(role) },
+    });
+  } catch (err: any) {
+    console.error('[team/accept] inviter notification failed:', err?.message);
   }
 }
