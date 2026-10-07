@@ -16,11 +16,14 @@ import {
  * The app shell's navigation, in CHECKLIST section 3's order, with Reconcile
  * first because that is the daily job.
  *
- * Two of section 3's labels have no route of their own yet, so each is served
- * by the page that does that job today rather than linking to a 404: Reports
- * by the firm dashboard, and Companies by Settings → Integrations, which is
- * literally the connected-company list, so it carries the label "Connections".
- * /qb-match stays until the Review merge removes it.
+ * History and Reports are now real routes (section 13). Companies is still
+ * served by Settings → Integrations, which is literally the connected-company
+ * list, so it carries the label "Connections" rather than linking to a 404.
+ * /qb-match stays until it is retired in one piece — that change spans three
+ * files plus two check scripts.
+ *
+ * Reports is Administrator-only, enforced server-side by `reports.view` /
+ * `reports.export`; this row being visible is a courtesy, not the gate.
  *
  * This lives outside app/(app)/layout.tsx so the shape is importable by
  * scripts/check-reconcile.ts — a layout may only export a component.
@@ -37,8 +40,8 @@ export const NAV_GROUPS: { label: string | null; items: ShellNavItem[] }[] = [
     items: [
       { href: '/reconcile', icon: Scale, label: 'Reconcile' },
       { href: '/upload', icon: Upload, label: 'Upload' },
-      { href: '/dashboard', icon: List, label: 'History' },
-      { href: '/firm-dashboard', icon: LayoutDashboard, label: 'Reports' },
+      { href: '/history', icon: List, label: 'History' },
+      { href: '/reports', icon: LayoutDashboard, label: 'Reports' },
     ],
   },
   {
