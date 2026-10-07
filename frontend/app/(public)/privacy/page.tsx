@@ -36,7 +36,7 @@ export default function PrivacyPolicyPage() {
 
       <h2>4. Data Storage and Security</h2>
       <p>
-        Your data is stored securely using industry-standard encryption (AES-256 at rest, TLS 1.3 in transit). We use Supabase as our database provider, which is SOC 2 Type II compliant. Check images are processed in memory and are not permanently stored after extraction unless you explicitly choose to retain them.
+        Your data is stored securely using industry-standard encryption (AES-256 at rest, TLS 1.3 in transit). We use Supabase as our database provider, which is SOC 2 Type II compliant. Uploaded documents and the images extracted from them are held in encrypted storage for the period described in Section 7 so that you can review, re-check, and reconcile them.
       </p>
 
       <h2>5. Third-Party Services</h2>
@@ -54,7 +54,16 @@ export default function PrivacyPolicyPage() {
 
       <h2>7. Data Retention</h2>
       <p>
-        We retain your account data for as long as your account is active. Financial data (check images and extracted data) is retained according to your plan settings. You may request deletion of your data at any time by contacting us.
+        We retain your account data for as long as your account is active.
+      </p>
+      <p>
+        <strong>Uploaded source documents are deleted 14 days after the reconciliation they belong to is completed.</strong> The 14 days are counted from completion, not from upload, so a reconciliation you pause mid-month keeps its documents until you have finished with it. Deletion removes the uploaded PDF from our storage.
+      </p>
+      <p>
+        What we keep is the result, not the document: the extracted cheque data, the match and approval results, and the reconciliation history remain available to you after the source document has been deleted, including for reconciliations you abandoned. Records we are required to keep for billing and security purposes are retained separately.
+      </p>
+      <p>
+        You may request deletion of your data at any time by contacting us.
       </p>
 
       <h2>8. Your Rights</h2>
