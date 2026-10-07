@@ -7,7 +7,6 @@ import {
   AlertTriangle,
   ArrowRight,
   CheckCircle2,
-  GitCompare,
   Upload as UploadIcon,
 } from 'lucide-react';
 import {
@@ -21,6 +20,7 @@ import {
 } from '@/components/ui';
 import { useQBConnections } from '@/hooks/useQBConnections';
 import { cn } from '@/lib/utils';
+import ReviewStep from '@/components/review/ReviewStep';
 import {
   EMPTY_COUNTS,
   deriveBatchSteps,
@@ -306,35 +306,18 @@ function UploadSlot({ batchId }: { batchId: string | null }) {
 }
 
 /**
- * Step 3 slot. The Review merge — QB Match and QB Comparisons into Needs
- * Attention / 100% Matches / All Checks — is a separate parcel. Until it
- * lands, this points at the two surfaces that do the job today rather than
- * pretending the step is empty.
+ * Step 3 slot. The Review merge has landed, so this mounts it rather than
+ * linking out. `ReviewStep` owns the three tabs, the status chips and every one
+ * of the 24 capabilities the old QB Match page carried; its Needs Attention tab
+ * and this stepper's step-3 completion both read NEEDS_ATTENTION_STATUSES from
+ * lib/batch-state.ts, so the tab and the step cannot disagree about whether the
+ * user is finished.
+ *
+ * `heading` is omitted deliberately: the stepper already titles the step, and
+ * passing one would render two headings.
  */
 function ReviewSlot() {
-  return (
-    <GlassCard className="space-y-3">
-      <div className="flex items-center gap-2">
-        <GitCompare className="h-4 w-4 text-brand-deep" aria-hidden />
-        <GlassCardTitle className="text-sm">Review</GlassCardTitle>
-      </div>
-      <p className="text-sm text-ink-body">
-        Settle anything Kyriq could not decide on its own. Needs Attention, 100% Matches and All
-        Checks are moving into this step; today they live on the two pages below.
-      </p>
-      <div className="flex flex-wrap gap-2">
-        <Link href="/qb-match" className={cn(buttonVariants({ variant: 'secondary', size: 'sm' }))}>
-          Open QB Match
-        </Link>
-        <Link
-          href="/qb-comparisons"
-          className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }))}
-        >
-          Open QB Comparisons
-        </Link>
-      </div>
-    </GlassCard>
-  );
+  return <ReviewStep />;
 }
 
 /** Step 4 slot. The Approve & Clear page is a separate parcel. */
