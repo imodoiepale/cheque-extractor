@@ -1,87 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createAuthenticatedClient } from '@/lib/supabase/api';
+import { getQbToken } from '@/lib/qb-token';
 
 const QBO_BASE = 'https://quickbooks.api.intuit.com';
 const QBO_SANDBOX = 'https://sandbox-quickbooks.api.intuit.com';
-
-interface QBTokens {
-  access_token: string;
-  refresh_token: string;
-  realm_id: string;
-  expires_at: string;
-  qb_client_id?: string;
-  qb_client_secret?: string;
-}
-
-async function getTokens(supabase: any): Promise<QBTokens | null> {
-  try {
-    const { data: activeConn } = await supabase
-      .from('qb_connections')
-      .select('access_token, refresh_token, realm_id, token_expires_at')
-      .eq('is_active', true)
-      .order('connected_at', { ascending: false })
-      .limit(1)
-      .single();
-
-    if (activeConn?.access_token && activeConn?.realm_id) {
-      const { data: creds } = await supabase
-        .from('integrations')
-        .select('qb_client_id, qb_client_secret')
-        .eq('provider', 'quickbooks')
-        .maybeSingle();
-
-      return {
-        access_token: activeConn.access_token,
-        refresh_token: activeConn.refresh_token,
-        realm_id: activeConn.realm_id,
-        expires_at: activeConn.token_expires_at,
-        qb_client_id: creds?.qb_client_id,
-        qb_client_secret: creds?.qb_client_secret,
-      };
-    }
-  } catch (_) {}
-
-  const { data } = await supabase
-    .from('integrations')
-    .select('access_token, refresh_token, realm_id, expires_at, qb_client_id, qb_client_secret')
-    .eq('provider', 'quickbooks')
-    .single();
-
-  if (!data?.access_token || !data?.realm_id) return null;
-  return data;
-}
-
-async function refreshAccessToken(supabase: any, tokens: QBTokens): Promise<string | null> {
-  const clientId = tokens.qb_client_id || process.env.QUICKBOOKS_CLIENT_ID;
-  const clientSecret = tokens.qb_client_secret || process.env.QUICKBOOKS_CLIENT_SECRET;
-  if (!clientId || !clientSecret || !tokens.refresh_token) return null;
-
-  try {
-    const response = await fetch('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`,
-      },
-      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token }),
-    });
-    if (!response.ok) return null;
-    const newTokens = await response.json();
-    const newExpiresAt = new Date(Date.now() + newTokens.expires_in * 1000).toISOString();
-    await supabase
-      .from('integrations')
-      .update({ access_token: newTokens.access_token, refresh_token: newTokens.refresh_token, expires_at: newExpiresAt, updated_at: new Date().toISOString() })
-      .eq('provider', 'quickbooks');
-    await supabase
-      .from('qb_connections')
-      .update({ access_token: newTokens.access_token, refresh_token: newTokens.refresh_token, token_expires_at: newExpiresAt })
-      .eq('realm_id', tokens.realm_id);
-    return newTokens.access_token;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Mark a single QB transaction as Cleared (C) for bank reconciliation.
@@ -258,21 +180,21 @@ export async function clearQBTransactionServer(
     return { cleared: false, status: 'skipped', warning: 'File import entry — approval saved in Kyriq. No QB Online record to update.' };
   }
 
-  const tokens = await getTokens(supabase);
-  if (!tokens) return { cleared: false, status: 'skipped', warning: 'QuickBooks not connected' };
-
-  let accessToken = tokens.access_token;
-  const isExpired = tokens.expires_at && new Date(tokens.expires_at) <= new Date(Date.now() + 60_000);
-  if (isExpired) {
-    const refreshed = await refreshAccessToken(supabase, tokens);
-    if (refreshed) accessToken = refreshed;
+  // One resolver (lib/qb-token.ts). Deliberate difference kept: a failed
+  // refresh is NOT fatal here — the stored token may still have seconds left
+  // and a clear attempt is worth making rather than failing the approval.
+  const token = await getQbToken(supabase);
+  if (!token.ok && token.reason === 'not_connected') {
+    return { cleared: false, status: 'skipped', warning: 'QuickBooks not connected' };
   }
+  const conn = token.ok ? token.connection : token.connection!;
+  const accessToken = token.ok ? token.accessToken : conn.accessToken;
 
   const useSandbox = process.env.QB_SANDBOX === 'true';
   const base = useSandbox ? QBO_SANDBOX : QBO_BASE;
   const txnType = entry.qb_type;
   const txnId = entry.intuit_id;
-  const realmId = tokens.realm_id;
+  const realmId = conn.realmId;
 
   // ── 1. GET the current entity (needed for SyncToken + required refs + ClearedStatus read) ──
   const readUrl = `${base}/v3/company/${realmId}/${txnType.toLowerCase()}/${txnId}?minorversion=73`;

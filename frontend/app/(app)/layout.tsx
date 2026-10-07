@@ -3,12 +3,10 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { Upload } from 'lucide-react';
 import UserProfile from '@/components/UserProfile';
 import QBProviderWrapper from '@/components/QBProviderWrapper';
-import SidebarCompanySwitcher from '@/components/SidebarCompanySwitcher';
+import ShellTopBar from '@/components/ShellTopBar';
 import SuperAdminLink from '@/components/SuperAdminLink';
-import AccountSwitcher from '@/components/AccountSwitcher';
 import { NAV_GROUPS, activeNavHref } from '@/lib/shell-nav';
 
 /**
@@ -56,9 +54,6 @@ export default function AppLayout({
             </Link>
           </div>
 
-          <SidebarCompanySwitcher />
-          <AccountSwitcher />
-
           {/* Scrolls inside the fixed shell, so the page itself still has
               exactly one scrollbar. */}
           <nav className="flex-1 px-3 py-3 space-y-0.5 scroll-region">
@@ -104,17 +99,11 @@ export default function AppLayout({
         {/* Main content. Deliberately NOT a scroll container: the document
             scrolls, and pages that need their own scroll (tables) declare it. */}
         <main className="flex-1 min-w-0 md:ml-60">
-          {/* Mobile header. The shell is hidden here, so this is the only
-              blurred chrome on screen. */}
-          <div className="md:hidden px-4 py-3 glass-chrome border-b flex justify-between items-center">
-            <Link href="/reconcile" className="font-semibold text-[15px] text-ink-strong flex items-center gap-2">
-              <Image src="/Kyriq_Logo_Files/kyriq-icon.svg" alt="Kyriq" width={24} height={24} className="rounded-md" />
-              Kyriq
-            </Link>
-            <Link href="/upload" className="p-1.5 bg-primary-bg rounded-input press">
-              <Upload className="w-4 h-4 text-primary-text" />
-            </Link>
-          </div>
+          {/* Both switchers live here now, not in the sidebar. This is the
+              only blurred chrome in the main column, which is why the
+              popovers they open are opaque (rule 2). It also absorbs the old
+              mobile-only header, so there is one bar at every width. */}
+          <ShellTopBar />
 
           {children}
         </main>

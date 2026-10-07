@@ -1,6 +1,6 @@
 import { createClientFromRequest, createServiceClient } from '@/lib/supabase/api';
 import { can, toDbRole, type Capability, type DbRole } from '@/lib/roles';
-import { classifyRefreshFailure, markQbConnection } from '@/lib/qb-health';
+import { getQbAccessToken } from '@/lib/qb-token';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 /**
@@ -129,91 +129,14 @@ export async function audit(
 }
 
 export async function getValidToken(tenantId: string, realmId: string): Promise<string> {
-  const serviceClient = createServiceClient();
-
-  const { data: conn, error } = await serviceClient
-    .from('qb_connections')
-    .select('*')
-    .eq('tenant_id', tenantId)
-    .eq('realm_id', realmId)
-    .single();
-
-  if (error || !conn) throw new Error('QB connection not found');
-
-  const expiresAt = new Date(conn.token_expires_at);
-  const fiveMinutesFromNow = new Date(Date.now() + 5 * 60 * 1000);
-
-  // Token still valid
-  if (expiresAt > fiveMinutesFromNow) {
-    return conn.access_token;
-  }
-
-  // Need to refresh — get credentials from integrations table
-  const { data: integration } = await serviceClient
-    .from('integrations')
-    .select('qb_client_id, qb_client_secret')
-    .eq('tenant_id', tenantId)
-    .eq('provider', 'quickbooks')
-    .single();
-
-  const clientId = integration?.qb_client_id || process.env.QUICKBOOKS_CLIENT_ID;
-  const clientSecret = integration?.qb_client_secret || process.env.QUICKBOOKS_CLIENT_SECRET;
-
-  if (!clientId || !clientSecret || !conn.refresh_token) {
-    // Refresh path 1 of 2. Nothing used to be persisted here, so a dead
-    // connection stayed invisible until a user clicked something.
-    await markQbConnection({
-      tenantId,
-      realmId,
-      // 'unknown', not 'needs_reconnect': absent credentials are OUR
-      // misconfiguration, and a firm must not be emailed "reconnect
-      // QuickBooks" for something only we can fix.
-      status: 'unknown',
-      detail: 'Cannot refresh token — missing QuickBooks credentials',
-    });
-    throw new Error('Cannot refresh token — missing credentials');
-  }
-
-  const refreshResponse = await fetch('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
-    method: 'POST',
-    headers: {
-      'Accept': 'application/json',
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Authorization': `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`,
-    },
-    body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: conn.refresh_token,
-    }),
+  // One resolver (lib/qb-token.ts) for every QuickBooks token in the app.
+  // This site keeps its exception contract and its 5-minute window: the match
+  // engine makes many QBO calls per run off one token, so a token with four
+  // minutes left is not good enough here.
+  const { accessToken } = await getQbAccessToken(createServiceClient(), {
+    tenantId,
+    realmId,
+    skewMs: 5 * 60 * 1000,
   });
-
-  if (!refreshResponse.ok) {
-    const body = await refreshResponse.text().catch(() => '');
-    await markQbConnection({
-      tenantId,
-      realmId,
-      status: classifyRefreshFailure(refreshResponse.status, body),
-      detail: `Token refresh failed (${refreshResponse.status})`,
-    });
-    throw new Error('Token refresh failed');
-  }
-
-  const newToken = await refreshResponse.json();
-
-  // Save refreshed token
-  await serviceClient
-    .from('qb_connections')
-    .update({
-      access_token: newToken.access_token,
-      refresh_token: newToken.refresh_token,
-      token_expires_at: new Date(Date.now() + newToken.expires_in * 1000).toISOString(),
-    })
-    .eq('tenant_id', tenantId)
-    .eq('realm_id', realmId);
-
-  // A recovered connection must clear its own status, or one transient Intuit
-  // 500 leaves a healthy firm flagged forever and emails them about it.
-  await markQbConnection({ tenantId, realmId, status: 'connected', detail: null });
-
-  return newToken.access_token;
+  return accessToken;
 }

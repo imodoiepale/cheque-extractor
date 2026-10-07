@@ -67,6 +67,7 @@ const TEMPLATES_FILE = 'lib/email/templates.ts';
 const QB_HEALTH = 'lib/qb-health.ts';
 const MATCH_HELPERS = 'lib/match-helpers.ts';
 const PULL_CHECKS = 'pages/api/qbo/pull-checks.ts';
+const QB_TOKEN = 'lib/qb-token.ts';
 const INVITE = 'pages/api/team/invite.ts';
 const MEMBER = 'pages/api/team/members/[id].ts';
 const ACCEPT = 'pages/api/team/invitations/[token]/accept.ts';
@@ -423,10 +424,12 @@ const UNCONFIGURED = emailConfig({});
 }
 
 {
-  // BOTH wired refresh paths must call the single helper. These are the two
-  // that read qb_connections; the other nine copies of the exchange are a
-  // separate parcel and are listed in lib/qb-health.ts.
-  for (const file of [MATCH_HELPERS, PULL_CHECKS]) {
+  // There is now exactly ONE refresh path: lib/qb-token.ts. The eleven copies
+  // of the Intuit exchange were consolidated onto it, so the health assertions
+  // that used to be made against the two wired paths are made against the one
+  // resolver — and scripts/check-qb-switchers.ts fails if any file grows its
+  // own `grant_type: 'refresh_token'` again.
+  for (const file of [QB_TOKEN]) {
     const src = code(file);
     assert.match(
       src,
@@ -455,13 +458,13 @@ const UNCONFIGURED = emailConfig({});
   }
   // Exactly one writer.
   assert.match(code(QB_HEALTH), /from\('qb_connections'\)\s*\.update\(/, 'qb-health owns the status write');
-  for (const file of [MATCH_HELPERS, PULL_CHECKS, HEALTH_CHECK]) {
+  for (const file of [QB_TOKEN, MATCH_HELPERS, PULL_CHECKS, HEALTH_CHECK]) {
     assert.ok(
       !/from\('qb_connections'\)[\s\S]{0,120}\.update\(\{[\s\S]{0,200}status:/.test(code(file)),
       `${file} must write status through markQbConnection, not with its own update`
     );
   }
-  ok('both wired refresh paths record health through the one helper, and nothing else writes status');
+  ok('the one refresh path records health through the one helper, and nothing else writes status');
 }
 
 {

@@ -28,7 +28,7 @@ const OWNED = [
   'app/(admin)/layout.tsx',
   'app/(auth)/layout.tsx',
   'components/CompanySwitcher.tsx',
-  'components/SidebarCompanySwitcher.tsx',
+  'components/ShellTopBar.tsx',
   'components/AccountSwitcher.tsx',
   'components/UserProfile.tsx',
   'components/SuperAdminLink.tsx',

@@ -66,7 +66,6 @@ const OWNED = [
   'components/QBCompanySelector.tsx',
   'components/common/AIKeyWarning.tsx',
   'components/QBProviderWrapper.tsx',
-  'components/SidebarCompanySwitcher.tsx',
 ];
 
 /* --- 1. Colour belongs to the token file -------------------------------- */
