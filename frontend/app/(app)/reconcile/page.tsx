@@ -21,6 +21,7 @@ import {
 import { useQBConnections } from '@/hooks/useQBConnections';
 import { cn } from '@/lib/utils';
 import ReviewStep from '@/components/review/ReviewStep';
+import StartBatchCard from '@/components/reconcile/StartBatchCard';
 import {
   EMPTY_COUNTS,
   deriveBatchSteps,
@@ -75,7 +76,8 @@ export default function ReconcilePage() {
 function Reconcile() {
   const searchParams = useSearchParams();
   const requestedBatch = searchParams?.get('batch') || null;
-  const { hasConnections, isLoading: qbLoading } = useQBConnections();
+  const { hasConnections, isLoading: qbLoading, refresh: refreshConnections } =
+    useQBConnections();
 
   const [resume, setResume] = useState<ResumeState | null>(null);
   const [batch, setBatch] = useState<BatchPayload | null>(null);
@@ -134,6 +136,30 @@ function Reconcile() {
     [batch]
   );
 
+  /**
+   * Adopt a batch that StartBatchCard just opened.
+   *
+   * The step comes from `next.state.current_step` — the server's derived value —
+   * not from 1. A re-opened existing run (the endpoint is idempotent, so a
+   * double submit returns the run that was already open) can legitimately be
+   * mid-flow, and sending the user back to Upload would be wrong.
+   */
+  const adoptBatch = useCallback((next: BatchPayload) => {
+    setBatch(next);
+    setActiveStep(next.state.current_step);
+    setLocked(null);
+  }, []);
+
+  /**
+   * 409 no_active_company. The Connect card is already driven by
+   * `hasConnections`, so rather than force it visible we re-ask — the usual
+   * cause is a company connected in another tab, and a stale `false` here would
+   * tell the user to connect something they already have.
+   */
+  const revealConnectCard = useCallback(() => {
+    void refreshConnections();
+  }, [refreshConnections]);
+
   const onAdvanced = useCallback((next: BatchPayload) => {
     setBatch(next);
     setActiveStep(3);
@@ -173,20 +199,26 @@ function Reconcile() {
       {batch ? (
         <ContinueCard batch={batch} activeStep={activeStep} />
       ) : (
-        <GlassPanel radius="card" className="flex flex-col gap-3 sm:flex-row sm:items-center">
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-ink-strong">
-              Start your first reconciliation
-            </p>
-            <p className="mt-0.5 text-sm text-ink-body">
-              Nothing is in progress. Upload this period&apos;s cheques below and Kyriq takes you
-              through the same four steps every time.
-            </p>
-          </div>
-          <Badge tone="neutral" className="shrink-0">
-            Step 1 of 4
-          </Badge>
-        </GlassPanel>
+        <div className="space-y-3">
+          <GlassPanel radius="card" className="flex flex-col gap-3 sm:flex-row sm:items-center">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold text-ink-strong">
+                Start your first reconciliation
+              </p>
+              <p className="mt-0.5 text-sm text-ink-body">
+                Nothing is in progress. Open a run for the period you are reconciling and Kyriq
+                takes you through the same four steps every time.
+              </p>
+            </div>
+            <Badge tone="neutral" className="shrink-0">
+              Step 1 of 4
+            </Badge>
+          </GlassPanel>
+          {/* Without this the flow could be rendered but never begun: /resume
+              returns batch: null for a new firm, and upload only attaches to a
+              batch that already exists. */}
+          <StartBatchCard onStarted={adoptBatch} onNeedsConnection={revealConnectCard} />
+        </div>
       )}
 
       <Stepper

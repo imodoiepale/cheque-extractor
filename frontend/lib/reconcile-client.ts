@@ -168,3 +168,93 @@ export async function startQuickBooksConnect(): Promise<string | null> {
   if (status !== 200 || !body?.authUrl) return null;
   return String(body.authUrl);
 }
+
+export type CreateBatchResult =
+  | { kind: 'ok'; created: boolean; batch: BatchPayload }
+  /** No QuickBooks company is connected yet — step 1 shows the Connect card. */
+  | { kind: 'no_active_company'; message: string }
+  | { kind: 'invalid_period'; message: string }
+  | ReconcileFailure;
+
+/**
+ * Open a reconciliation run for a company, account and period.
+ *
+ * This exists because without it the flow could never begin: /resume answers
+ * `batch: null` for a new firm, and upload only *attaches* to a batch that
+ * already resolves — nothing created one. So the stepper rendered a first-run
+ * panel that had no way forward.
+ *
+ * The endpoint is idempotent by a partial unique index on
+ * (tenant, realm, account, period) WHERE status='open', so a double submit
+ * returns the existing run with `created: false` rather than opening a second
+ * one. That is a database constraint, not a check here, which is why a race
+ * between two tabs cannot produce two runs.
+ *
+ * `realm_id` is left out deliberately: the endpoint defaults it to the active
+ * company from qb_connections.is_active, server-side. Sending one from the
+ * browser would let the UI and the backend disagree about which company is
+ * being reconciled.
+ */
+export async function createBatch(input: {
+  period_start: string;
+  period_end: string;
+  period_label?: string;
+  account_id?: string;
+  account_name?: string;
+}): Promise<CreateBatchResult> {
+  try {
+    const res = await fetch('/api/batches', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(await authHeaders()) },
+      body: JSON.stringify(input),
+    });
+    const body = await res.json().catch(() => ({}));
+
+    if (res.status === 409 && body?.error === 'no_active_company') {
+      return {
+        kind: 'no_active_company',
+        message: String(body.message || 'Connect a QuickBooks company first.'),
+      };
+    }
+    if (res.status === 400 && body?.error === 'invalid_period') {
+      return {
+        kind: 'invalid_period',
+        message: String(body.message || 'That period is not valid.'),
+      };
+    }
+    if (!res.ok || !body?.batch) return toFailure(res.status, body);
+
+    return { kind: 'ok', created: body.created === true, batch: body.batch as BatchPayload };
+  } catch (err: any) {
+    return { kind: 'error', message: err?.message || 'Could not reach Kyriq.' };
+  }
+}
+
+/**
+ * The calendar month a firm is most likely reconciling: the one that just
+ * closed, not the one in progress. Returned as the endpoint's required
+ * period_start / period_end plus a label matching Michael's mock ("August 2026").
+ */
+export function lastClosedMonth(now: Date = new Date()): {
+  period_start: string;
+  period_end: string;
+  period_label: string;
+} {
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth(); // 0-based; the month in progress
+  // Day 0 of the current month is the last day of the previous month, and
+  // building both ends from UTC avoids a local-timezone shift moving the period
+  // into the wrong month for anyone east or west of the server.
+  const start = new Date(Date.UTC(y, m - 1, 1));
+  const end = new Date(Date.UTC(y, m, 0));
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  return {
+    period_start: iso(start),
+    period_end: iso(end),
+    period_label: start.toLocaleDateString('en-US', {
+      month: 'long',
+      year: 'numeric',
+      timeZone: 'UTC',
+    }),
+  };
+}

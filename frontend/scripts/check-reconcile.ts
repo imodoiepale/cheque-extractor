@@ -55,7 +55,12 @@ const OWNED = [PAGE, STEPPER, MATCH, CONNECT, CLIENT, SHELL, NAV];
 const pageCode = code(PAGE);
 const stepWrites = [...pageCode.matchAll(/setActiveStep\(([^)]*)\)/g)].map((m) => m[1].trim());
 assert.ok(stepWrites.length > 0, `${PAGE} no longer sets the active step at all`);
-const ALLOWED_STEP_SOURCES = /^(result\.entered_step|state\.batch\.state\.current_step|3)$/;
+// Any `<x>.state.current_step` is a BatchPayload's server-derived step, so the
+// pattern allows the identifier to vary — `state.batch` from /resume and `next`
+// from a freshly opened batch are the same kind of value. It deliberately does
+// NOT allow a bare identifier: `setActiveStep(step)` is the regression.
+const ALLOWED_STEP_SOURCES =
+  /^(result\.entered_step|[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.state\.current_step|3)$/;
 for (const arg of stepWrites) {
   assert.match(
     arg,
