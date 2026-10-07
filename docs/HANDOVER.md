@@ -36,11 +36,21 @@ email and QuickBooks health, history and retention, and the QuickBooks accounts 
 Until they are applied, the reconciliation stepper, billing, email, history, trials and the company
 switchers are all written against tables that do not exist. Nothing can be tested before this.
 
-They are written to be idempotent. Apply in numeric order. After applying, confirm with an anon-key
-request against each new table and assert it returns zero rows.
+**You do not need the Supabase CLI or any local credentials.** Two machines have now stalled on
+exactly that, so the migrations are bundled ready to paste:
 
-The previous machine had no Supabase CLI and no credentials in any local env file, which is why this
-was left undone.
+> Open the Supabase dashboard, go to the SQL editor, paste the whole of
+> `supabase/APPLY_026_TO_036.sql`, and run it once.
+
+That file contains all eleven migrations in order inside a single transaction. If any statement
+fails, nothing is applied and you get the error, so a partial state is not possible. Every migration
+is idempotent, so running it twice is harmless. It is generated from `supabase/migrations/`, which
+remains the source of truth; do not hand-edit the bundle.
+
+If you do have the CLI and credentials, applying them individually in numeric order is equally fine.
+
+After applying, confirm with an anon-key request against each new table and assert it returns zero
+rows. That is both the smoke test and the security check.
 
 ---
 
