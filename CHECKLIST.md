@@ -367,7 +367,7 @@ Found during the inventory. Each is cheap now and expensive later.
 
 Structure from the v17 prototype, surface from section 2.
 
-- [ ] **Shell and navigation** per v17: Reconcile, History, Reports, Companies, Connections, Users,
+- [x] **Shell and navigation** per v17: Reconcile, History, Reports, Companies, Connections, Users,
       Settings, Billing, and the admin section.
 - [x] **One `/reconcile` route** with a batch-driven stepper: Upload → Match → Review → Approve. Step
       state comes from the batch record, not from which page is open. Forward steps stay locked until
@@ -380,7 +380,7 @@ Structure from the v17 prototype, surface from section 2.
       create in QB, undo), keep the up-to-200-record view, and lose the spreadsheet look.
       *From: "I would like to get rid of the Excel look."*
 - [x] **Side-by-side review modal** with the check image next to the QuickBooks record.
-- [ ] **Approve and Clear** page: batch summary, pre-flight checks, server-side validation before any
+- [x] **Approve and Clear** page: batch summary, pre-flight checks, server-side validation before any
       write, bulk clear, audit entries.
 - [x] **Continue Reconciliation card.** If someone closes Kyriq mid-flow, they resume exactly where
       they stopped with no re-upload and no re-approval. Shows company, account, period, step N of 4,
@@ -412,16 +412,16 @@ Structure from the v17 prototype, surface from section 2.
 Build the design from `Kyriq_Switcher_Mockup.html` on the existing data layer, not on the client's
 hook.
 
-- [ ] Move both switchers from the sidebar to the **top bar**.
+- [x] Move both switchers from the sidebar to the **top bar**.
 - [x] **Company switcher:** avatar with initials, search, per-row connected or needs-reconnect
       status with account count, a checkmark on the active company, per-row disconnect behind a
       proper modal rather than `confirm()`, and "Add New Client" in the footer.
-- [ ] **Account switcher:** grouped into Bank Accounts and Credit Cards, each row showing name, last
+- [x] **Account switcher:** grouped into Bank Accounts and Credit Cards, each row showing name, last
       four, sub-type and balance, with a refresh action.
 - [x] **Accounts need a real source.** Today `AccountSwitcher` builds strings from `qb_entries.account`
       with no type, balance or last four. Either add a `qb_accounts` table with `tenant_id` and RLS,
       or extend `pages/api/qbo/accounts.ts`, which is currently single-company and Bank-only.
-- [ ] Keep the active company **server-side** in `qb_connections.is_active`. The matching routes and
+- [x] Keep the active company **server-side** in `qb_connections.is_active`. The matching routes and
       the extension all read it; a localStorage-only switch would show company B while matching
       company A.
 - [x] Show the pending-match count that already exists in `/api/qb/connections`.
@@ -579,7 +579,7 @@ with its count.
       holding a confident cheque region get a vote. A ruled transaction table reads as a line-grid, so
       on a 40-page statement with 6 cheques a plain majority would have been decided by the 34 pages
       with no cheques on them. Returning None is a safe answer; the caller auto-detects per page.
-- [ ] **Per-page checkboxes** instead of the contiguous range, defaulted to pages where checks were
+- [x] **Per-page checkboxes** instead of the contiguous range, defaulted to pages where checks were
       found.
 - [ ] Decide whether a downloadable checks-only PDF is wanted. Nothing in the stack can write a PDF
       today, so that needs a new library. Skipping the external tool may be the whole requirement.
@@ -636,7 +636,7 @@ Implement the approved redesign copy verbatim from
 
 - [x] **Batches table.** History needs a real batch record; the app only has jobs today. The stepper
       and the Continue Reconciliation card also depend on it.
-- [ ] **History page:** past batches with approver, status and export.
+- [x] **History page:** past batches with approver, status and export.
 - [ ] **Reports page** with date, company and account filters.
 - [ ] **Firm Admin** absorbing the Analytics content.
 - [x] **Upload retention.** Delete uploaded files 14 days after a reconciliation completes, keeping
