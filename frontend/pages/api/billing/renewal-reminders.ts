@@ -35,7 +35,9 @@ const EMAIL_KIND = 'annual_renewal_30d_email';
 const WINDOW_DAYS = 30;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  if (req.method !== 'POST') {
+  // GET is allowed because Vercel Cron invokes a route with GET; POST stays for
+  // a manual or external trigger. Either way cronAuthorised() is the gate.
+  if (req.method !== 'POST' && req.method !== 'GET') {
     res.setHeader('Allow', 'POST');
     return res.status(405).json({ error: 'method_not_allowed' });
   }

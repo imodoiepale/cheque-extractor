@@ -50,7 +50,13 @@ export function isMissingSchema(error: any): boolean {
  * never mean "open to everyone".
  */
 export function cronAuthorised(req: NextApiRequest): boolean {
-  const expected = (process.env.BILLING_CRON_SECRET || '').trim();
+  // BILLING_CRON_SECRET is ours; CRON_SECRET is the name Vercel Cron sends as
+  // `Authorization: Bearer <CRON_SECRET>`. Accepting either means one secret
+  // works for both a hand-rolled scheduler and Vercel's, rather than someone
+  // having to keep two in sync — and an unset secret still denies everyone.
+  const expected = (
+    process.env.BILLING_CRON_SECRET || process.env.CRON_SECRET || ''
+  ).trim();
   if (!expected) return false;
   const header = req.headers.authorization || '';
   const given = (
