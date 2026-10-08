@@ -1,100 +1,99 @@
 # Kyriq v2 — progress update
 
-**8 October 2026**
+**8 October 2026** · 112 of 145 build items complete
 
-## Where it stands
+---
 
-v2 is built and merged. 112 of the 145 items on our build checklist are done, and what's
-left is almost entirely accounts, DNS and sign-off rather than code.
+## ✅ Done and merged
 
-Built and merged:
+**The reconcile flow**
+- [x] Single Upload → Match → Review → Approve path, with the 1-2-3-4 stepper you asked to keep
+- [x] Steps are clickable, but a forward step stays locked until the previous one is genuinely finished — and it says why
+- [x] Step 2 (Match) runs and moves on by itself, so you only ever touch Upload, Review and Approve
+- [x] **Continue Reconciliation** — "ABC Construction LLC · Operating Checking / August 2026 · Step 3 of 4 — 24 checks need attention". No re-upload, no re-approval
+- [x] Connect QuickBooks card sits inline on step 1, so a new user never leaves the flow
+- [x] Approve & Clear step with batch summary and server-side validation
 
-- **The four-step reconcile flow** you asked to keep — Upload → Match → Review → Approve, as a
-  single page with the 1-2-3-4 stepper. Step 2 moves on by itself, so you only ever touch
-  Upload, Review and Approve.
-- **Continue Reconciliation.** Close Kyriq mid-flow and come back to "ABC Construction LLC ·
-  Operating Checking / August 2026 · Step 3 of 4 — 24 checks need attention". No re-uploading,
-  no re-approving.
-- **Review merged** QB Match and QB Comparisons into one surface with three tabs — Needs
-  Attention, 100% Matches, All Checks. Every action from the old pages survived; we checked
-  them off one by one. The spreadsheet look is gone, the row density isn't.
-- **A premium redesign of the whole app**, matching the look we discussed.
-- **Companies, Connections and Users**, with Administrator and User roles enforced on the
-  server rather than by hiding menu items, and **MFA** required for Administrators.
-- **Free accounts for your pilot firms** — a Super Admin control with an expiry and a reason,
-  which overrides the trial so nobody gets cut off mid-test.
-- **The trial**: 14 days or 250 processed checks, whichever comes first. Processing stops;
-  history stays readable.
-- **Stripe billing** — Essential, Professional and Scale, monthly and annual, metered overage,
-  and the eight webhooks. Annual is deliberately switched off until we can test it against a
-  real Stripe account; see below.
-- **Email on Resend** — 19 emails with unsubscribe handling.
-- **History and Reports**, and upload retention: source PDFs delete 14 days after a
-  reconciliation completes, counted from completion so a paused month keeps its files.
-- **Bank statement upload**, the one you called a big deal. Kyriq now filters out the backs of
-  cheques and rejects statement pages that only look like cheques.
-- **The Chrome extension** restyled to match the app, with the same tabs, and it opens
-  QuickBooks to the company you're working on.
+**Review**
+- [x] QB Match and QB Comparisons merged into one surface: **Needs Attention · 100% Matches · All Checks**
+- [x] Every action from the old pages kept — approve, approve anyway, remap, resolve discrepancy, create in QB, edit QB in place, undo, flag, notes, confidence breakdown
+- [x] Side-by-side view: cheque image next to the QuickBooks record
+- [x] The spreadsheet look is gone; the row density is not
+- [x] Up-to-200-record view kept — it was actually missing, the options jumped 100 to 500
+- [x] Old QB Match page retired
 
-## Two things are blocking you from seeing any of it
+**Accounts, companies and people**
+- [x] Company and account switchers moved to the top bar, with search, status and account counts
+- [x] Accounts grouped Bank / Credit Card with last four, sub-type and balance — credit cards were previously invisible
+- [x] Administrator and User roles, enforced on the server rather than by hiding menus
+- [x] MFA required for Administrators
+- [x] Team invitations working — the invite button previously failed silently
+- [x] Matching preferences removed from Settings, as you asked; the one control that matters now sits beside Approve All
 
-**1. kyriq.com is pointing at the wrong Vercel project.** The new build deployed successfully,
-but to `cheque-extractor-frontend`, while the domain is still attached to the older
-`check-extractor-frontend` project. So kyriq.com is serving the previous version — the one with
-"Watch demo" and "Trusted by 500+ firms" still on it. Repointing the domain is a two-minute
-change in the Vercel dashboard and nothing needs rebuilding.
+**Trial and billing**
+- [x] 14 days or 250 processed checks, whichever comes first. Processing stops, history stays readable
+- [x] **Free accounts for pilot firms** — a Super Admin grant with an expiry and a reason, which overrides the trial so nobody is cut off mid-test
+- [x] One trial per QuickBooks company, so a firm cannot restart with a new email
+- [x] Usage ledger — counts only after a check processes successfully, retries never double-count, repeat uploads warn you first
+- [x] Stripe: Essential / Professional / Scale, monthly, metered overage, eight webhooks
+- [x] Billing page showing real figures. It previously invented payment history
 
-**2. The database migrations haven't been run.** There are twelve of them, bundled into one file
-so they can be pasted into the Supabase SQL editor in a single go. Until they run, the trial,
-billing, email, the stepper, History and the switchers have nothing to read from — they report
-honestly that they're unavailable rather than showing wrong numbers, but they can't work.
+**Everything else**
+- [x] Premium redesign across the whole app
+- [x] 19 emails on Resend, with unsubscribe handling
+- [x] History and Reports
+- [x] Upload retention — source PDFs delete 14 days after a reconciliation completes
+- [x] Bank statement upload — filters out cheque backs, rejects statement pages that only look like cheques
+- [x] Chrome extension restyled to match the app, same tabs, and it opens QuickBooks to the company you are working on
+- [x] Website — bank statement hero, real pricing, invented social proof removed
 
-Those two together are the whole gap between "built" and "you can use it". Neither is
-development work.
+---
 
-## One security item to action with the migrations
+## 🔴 Blocking you right now — neither is development work
 
-We found a table in the database that was readable by anyone with the app's public key, and it
-holds columns for provider keys and QuickBooks tokens. They were empty, so nothing leaked — but
-the Settings page writes a key into that exact row, so the first key saved would have become
-public. The fix is in the migration bundle and should be applied before anyone saves credentials.
+- [ ] **Repoint kyriq.com to the current Vercel project.** The new build deployed fine, but to `cheque-extractor-frontend`, while the domain is still attached to the older `check-extractor-frontend`. **This is why kyriq.com still looks unchanged.** Two minutes in the dashboard, nothing to rebuild
+- [ ] **Run the database migrations.** Twelve of them, bundled into one file to paste into the Supabase SQL editor in one go. Until they run, the trial, billing, email, stepper, History and switchers have nothing to read from
 
-## What we need from you
+---
 
-| | |
-|---|---|
-| Repoint kyriq.com to the current Vercel project | 2 minutes, dashboard |
-| Run the migration bundle in Supabase | one paste, one click |
-| Resend DNS — SPF, DKIM, DMARC on `updates.kyriq.com` | no email can send before this |
-| Stripe products and prices, Test **and** Live | annual stays off until these exist and we can test it |
-| The logo pack | versions 1 and 7 never reached us; the brand colours are already in |
-| `kyriq.com` verified in Google Search Console | needed for the Chrome Web Store listing |
-| A test login, or run the migrations so we can make a comp account | see below |
+## 🟠 Needed from you
 
-## Two things we want to be straight about
+- [ ] **Resend DNS** — SPF, DKIM and DMARC on `updates.kyriq.com`. No email can send before this
+- [ ] **Stripe products and prices**, Test **and** Live. Annual stays off until these exist and we can test it
+- [ ] **The logo pack** — versions 1 and 7 never reached us. The brand colours are already in
+- [ ] **kyriq.com verified in Google Search Console** — needed for the Chrome Web Store listing
+- [ ] **REQUIRE_AUTH=true** on the Railway backend
+- [ ] **Confirm the Intuit app** is on your account with production keys
 
-**Nobody has used this signed in yet.** Every screen has been checked against the real
-stylesheet and measured at desktop and phone widths, and the whole thing builds and passes its
-own checks — but we have deliberately not created an account on your production database. Once
-the migrations are in we'll make a comp account and go through all of it properly before a firm
-does. We'd rather find the rough edges than have your pilot firms find them.
+---
 
-**The annual plan is not finished, and we're not calling it finished.** Annual base plus monthly
-overage is an unusual Stripe shape, and we couldn't confirm Stripe accepts it without a real
-account. The code is written and switched off; monthly works. We'll turn it on once we can test
-it rather than discover the problem on a customer.
+## 🟡 Your decisions
 
-## One wording decision for you
+- [ ] **"uploads" → "processed" in the email copy.** Your locked copy says "check uploads"; the billing rules and the website say "processed checks", and that is what the system actually counts. We wrote every email with "processed" so an email cannot contradict an invoice — but it changes your copy, so it needs your say-so
+- [ ] **Delete the stray `cheque-extractor-backend` Vercel project.** It has no configuration in the repo and fails on every commit. The Python backend runs on Railway. Dashboard-only, so we cannot do it from here
 
-The email copy you sent says "check **uploads**". The billing rules and the website both say
-"**processed** checks", and that's what the system actually counts — only after a check processes
-successfully. We've written every email with "processed", because otherwise an email would
-contradict the invoice. That changes your locked copy, so it needs your say-so.
+---
+
+## ⚪ Deliberately unfinished, and we are not pretending otherwise
+
+- [ ] **Annual billing is written but switched off.** Annual base plus monthly overage is an unusual Stripe shape, and we could not confirm Stripe accepts it without a real account. Monthly works. We will turn annual on once we can test it, rather than discover the problem on a customer
+- [ ] **Nobody has used this signed in.** Every screen has been checked against the real stylesheet and measured at desktop and phone widths, and the whole thing builds and passes its own checks — but we have deliberately not created an account on your production database. Once the migrations are in we will make a comp account and go through all of it properly before a firm does
+- [ ] **The 15-question FAQ** is wired and empty, waiting on your copy. We would rather leave the slot blank than invent answers about billing and data handling
+
+---
+
+## 🔒 One security item, to action with the migrations
+
+A table in the database was readable by anyone holding the app's public key, and it holds columns
+for provider keys and QuickBooks tokens. They were empty, so nothing leaked — but the Settings
+page writes a key into that exact row, so the first key saved would have become public. The fix is
+in the migration bundle and should go in before anyone saves credentials.
+
+---
 
 ## On the date
 
-Monday 5 October was the date we gave for trials, and that was based on getting the code done. The
-code is done. What isn't done is the deployment, and that's now a short, mostly dashboard-side
-list. Once the domain is repointed and the migrations run, we want a day to go through the app
-properly signed in before any firm touches it. We'll give you a firm date the moment those two
-things are cleared — and it's days away, not weeks.
+Monday 5 October was based on getting the code done. **The code is done.** What is left is the
+deployment, and that is now a short, mostly dashboard-side list. Once the domain is repointed and
+the migrations run, we want one day to go through the app properly signed in before any firm
+touches it. We will give you a firm date the moment those two are cleared — days, not weeks.
