@@ -6,7 +6,6 @@ import {
   Receipt,
   GitCompare,
   LayoutDashboard,
-  ArrowLeftRight,
   Scale,
   Users,
   Plug,
@@ -19,8 +18,12 @@ import {
  * History and Reports are now real routes (section 13). Companies is still
  * served by Settings → Integrations, which is literally the connected-company
  * list, so it carries the label "Connections" rather than linking to a 404.
- * /qb-match stays until it is retired in one piece — that change spans three
- * files plus two check scripts.
+ *
+ * /qb-match is gone. Review (step 3 of /reconcile) renders the same useMatches
+ * data through the same MatchRow, so the old page was a second door onto one
+ * room — which is exactly what the client asked us to close. Its one remaining
+ * caller, the stalled-match escape hatch in MatchProgress, now points at
+ * /qb-comparisons, the other surface that can still move a stuck batch.
  *
  * Reports is Administrator-only, enforced server-side by `reports.view` /
  * `reports.export`; this row being visible is a courtesy, not the gate.
@@ -47,7 +50,6 @@ export const NAV_GROUPS: { label: string | null; items: ShellNavItem[] }[] = [
   {
     label: 'Review',
     items: [
-      { href: '/qb-match', icon: ArrowLeftRight, label: 'QB Match' },
       { href: '/qb-comparisons', icon: GitCompare, label: 'QB Comparisons' },
       { href: '/export', icon: Download, label: 'Export' },
     ],

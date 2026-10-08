@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   RefreshCw, Search, Check, AlertTriangle, Flag, Clock, HelpCircle,
   CheckCircle2, Filter, ArrowUpDown, Building2, ListChecks, BadgeCheck,
@@ -119,6 +119,16 @@ const REVIEW_TABS = [
   },
 ] as const;
 
+/**
+ * The auto-approve confidence threshold — the one control that survived the
+ * removal of the Settings matching-preferences panel (CHECKLIST section 3).
+ * It lives here, beside the Approve All button that is the only thing that
+ * reads it. Per-user and per-browser, so no migration and no new API surface.
+ */
+const THRESHOLD_KEY = 'kyriq.autoApproveMinConfidence';
+const THRESHOLD_OPTIONS = [80, 85, 90, 95, 98, 100] as const;
+const THRESHOLD_DEFAULT = 95;
+
 const SORT_OPTIONS = [
   { key: 'confidence', label: 'Confidence (low first)' },
   { key: 'date',       label: 'Most Recent' },
@@ -159,6 +169,26 @@ export default function ReviewStep({ heading, className }: ReviewStepProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [searchModal, setSearchModal] = useState<{ check: any; matchId: string } | null>(null);
   const [sideBySide, setSideBySide] = useState<any | null>(null);
+  /** Starts at the default on BOTH server and first client render — the stored
+   *  value is adopted in an effect, so a persisted 90 can never cause a
+   *  hydration mismatch against a server-rendered 95. */
+  const [minConfidence, setMinConfidence] = useState<number>(THRESHOLD_DEFAULT);
+
+  useEffect(() => {
+    const stored = Number(window.localStorage.getItem(THRESHOLD_KEY));
+    if (THRESHOLD_OPTIONS.includes(stored as (typeof THRESHOLD_OPTIONS)[number])) {
+      setMinConfidence(stored);
+    }
+  }, []);
+
+  const changeMinConfidence = (n: number) => {
+    setMinConfidence(n);
+    try {
+      window.localStorage.setItem(THRESHOLD_KEY, String(n));
+    } catch {
+      /* Private mode / quota: the session still works, it just won't persist. */
+    }
+  };
 
   const activeTab = REVIEW_TABS.find((t) => t.value === tab) || REVIEW_TABS[0];
 
@@ -215,10 +245,10 @@ export default function ReviewStep({ heading, className }: ReviewStepProps) {
     else setSelected(new Set(matches.map((m: any) => m.id)));
   };
 
-  /** Two modes, unchanged: no selection auto-approves at >=95% confidence,
-   *  a selection approves exactly those ids. */
+  /** Two modes, unchanged: no selection auto-approves at the user's chosen
+   *  confidence threshold, a selection approves exactly those ids. */
   const handleBulkApprove = async () => {
-    if (selected.size === 0) await bulkApprove({ minConfidence: 95 });
+    if (selected.size === 0) await bulkApprove({ minConfidence });
     else await bulkApprove({ matchIds: Array.from(selected) });
     setSelected(new Set());
   };
@@ -265,13 +295,33 @@ export default function ReviewStep({ heading, className }: ReviewStepProps) {
           <Button size="sm" loading={isSyncing} icon={<RefreshCw className="h-4 w-4" />} onClick={syncQB}>
             {isSyncing ? 'Syncing…' : 'Sync QB & match'}
           </Button>
+          {/* The threshold and the action it feeds, as one unit. The Select is
+              hidden while rows are selected because the threshold does not
+              apply to an explicit selection — hiding it is what keeps the
+              label honest. No extra row: it sits in the existing flex. */}
+          {selected.size === 0 && (
+            <Select
+              inputSize="sm"
+              value={minConfidence}
+              onChange={(e) => changeMinConfidence(Number(e.target.value))}
+              aria-label="Minimum confidence used by Approve All"
+              title="Cheques at or above this match confidence are approved by Approve All"
+              className="w-[108px]"
+            >
+              {THRESHOLD_OPTIONS.map((n) => (
+                <option key={n} value={n}>{`≥ ${n}%`}</option>
+              ))}
+            </Select>
+          )}
           <Button
             size="sm"
             variant="secondary"
             icon={<Check className="h-4 w-4" />}
             onClick={handleBulkApprove}
           >
-            {selected.size > 0 ? `Approve ${selected.size} selected` : 'Auto-approve ≥95%'}
+            {selected.size > 0
+              ? `Approve ${selected.size} selected`
+              : `Approve All ≥${minConfidence}%`}
           </Button>
         </div>
       </div>

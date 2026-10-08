@@ -226,15 +226,15 @@ assert.equal(activeNavHref('/process/abc'), null);
 assert.equal(isActiveHref('/settings?tab=integrations', '/settings'), true);
 assert.equal(isActiveHref('/settings', '/settings-other'), false);
 
-// Section 3's nav is present, and /qb-match is NOT removed (its removal
-// belongs with the Review merge).
+// Section 3's nav is present, and /qb-match is gone now that Review renders the
+// same matches through the same MatchRow.
 const labels = NAV_GROUPS.flatMap((g) => g.items.map((i) => i.label));
 for (const label of ['Reconcile', 'History', 'Reports', 'Connections', 'Users', 'Settings', 'Billing']) {
   assert.ok(labels.includes(label), `shell nav lost "${label}" (CHECKLIST section 3)`);
 }
 assert.ok(
-  NAV_GROUPS.flatMap((g) => g.items).some((i) => i.href === '/qb-match'),
-  '/qb-match was removed from the nav — that belongs with the Review merge, not this parcel'
+  !NAV_GROUPS.flatMap((g) => g.items).some((i) => i.href === '/qb-match'),
+  '/qb-match is back in the nav — Review replaced it, so the second door should stay shut'
 );
 assert.equal(NAV_GROUPS[0].items[0].href, '/reconcile', 'Reconcile must be the first nav row');
 

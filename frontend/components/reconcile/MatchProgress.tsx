@@ -153,8 +153,15 @@ export default function MatchProgress({
             <Button size="sm" variant="secondary" onClick={() => setAttempt((n) => n + 1)}>
               Check again
             </Button>
-            {/* Button has no asChild, so the anchor takes the recipe itself. */}
-            <Link href="/qb-match" className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }))}>
+            {/* Button has no asChild, so the anchor takes the recipe itself.
+                Points at QB Comparisons, not the retired /qb-match: this is the
+                stalled case, so the user needs the surface that can still act on
+                a stuck batch, and Review is gated behind the step the batch has
+                not reached. */}
+            <Link
+              href="/qb-comparisons"
+              className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }))}
+            >
               Open matching
             </Link>
           </div>

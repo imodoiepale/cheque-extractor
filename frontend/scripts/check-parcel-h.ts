@@ -46,7 +46,6 @@ const code = (rel: string) =>
     .replace(/\{\s*\/\*[\s\S]*?\*\/\s*\}/g, '');
 
 const MATCH_ROW = 'components/MatchRow.tsx';
-const QB_MATCH = 'app/(app)/qb-match/page.tsx';
 const BILLING = 'app/(app)/billing/page.tsx';
 const EXPORT = 'app/(app)/export/page.tsx';
 const QB_PREVIEW = 'components/QBDataPreview.tsx';
@@ -55,7 +54,6 @@ const SEARCH_MODAL = 'components/SearchQBModal.tsx';
 
 /** Every file parcel H owns. */
 const OWNED = [
-  QB_MATCH,
   BILLING,
   EXPORT,
   MATCH_ROW,
@@ -193,7 +191,6 @@ function mapBody(src: string, marker: string): string[] {
 /** Keyed by the EXACT render loop, so a `.map()` that only builds an id array
  *  (select-all, totals) is not confused for the row renderer. */
 const ROW_LOOPS: Array<[string, string]> = [
-  [QB_MATCH, 'matches.map((match: any) => ('],
   [EXPORT, 'jobs.map(job => {'],
   [BILLING, 'months.map(m => ('],
   [SEARCH_MODAL, 'results.map((txn) => {'],
