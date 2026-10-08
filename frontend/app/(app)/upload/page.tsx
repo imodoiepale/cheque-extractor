@@ -1,8 +1,12 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState, useCallback } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import DropzoneUpload from './components/DropzoneUpload';
+import PageSelectGrid, {
+  defaultPageSelection,
+  selectedRange,
+} from './components/PageSelectGrid';
 import {
   Upload, FileText, Image as ImageIcon, Loader2, CheckCircle,
   ChevronRight, ChevronLeft, Eye, LayoutGrid, List, ZoomIn, ZoomOut,
@@ -171,8 +175,31 @@ function ViewerToolbar({
   );
 }
 
+/**
+ * useSearchParams opts the subtree out of prerendering, so it has to sit under
+ * a Suspense boundary or `next build` fails on this route. Same shape as
+ * /reconcile, which reads `?batch=` for the same reason.
+ */
 export default function UploadPage() {
+  return (
+    <Suspense fallback={null}>
+      <UploadPageInner />
+    </Suspense>
+  );
+}
+
+function UploadPageInner() {
   const router = useRouter();
+  /**
+   * Step 1 of /reconcile sends the user here as `/upload?batch=<id>`, and
+   * start-extraction attaches the job to that batch. Without this the job is
+   * created unattached, the batch's `jobs_complete` and `checks_total` stay at
+   * zero, step 1 never completes and the stepper cannot advance — which is
+   * exactly how it behaved before: the link and the API both carried the batch,
+   * and only this read was missing.
+   */
+  const searchParams = useSearchParams();
+  const batchId = searchParams?.get('batch') || null;
 
   // ── Step state ───────────────────────────────────────────
   const [step, setStep] = useState<Step>('upload');
@@ -198,8 +225,9 @@ export default function UploadPage() {
 
   // ── Extraction config ────────────────────────────────────
   const [rangeType, setRangeType] = useState<RangeType>('all');
-  const [pageFrom, setPageFrom] = useState(1);
-  const [pageTo, setPageTo] = useState(1);
+  // Explicit per-page selection. Defaults to the pages where detection found
+  // cheques; billing counts cheques, so this must never be guessed wider.
+  const [selectedPages, setSelectedPages] = useState<Set<number>>(new Set());
   const [chequeFrom, setChequeFrom] = useState(1);
   const [chequeTo, setChequeTo] = useState(1);
   const [forceExtract, setForceExtract] = useState(false);
@@ -575,7 +603,7 @@ export default function UploadPage() {
 
     if (firstSuccess) {
       setActiveJobId(firstSuccess.value.job_id);
-      setPageTo(firstSuccess.value.total_pages);
+      setSelectedPages(defaultPageSelection(firstSuccess.value.pages || []));
       setChequeTo(firstSuccess.value.total_checks || 1);
       setStep('preview');
 
@@ -600,9 +628,8 @@ export default function UploadPage() {
     setActiveJobId(jobId);
     const job = jobEntries.find((j) => j.id === jobId);
     if (job?.result) {
-      setPageTo(job.result.total_pages);
+      setSelectedPages(defaultPageSelection(job.result.pages || []));
       setChequeTo(job.result.total_checks || 1);
-      setPageFrom(1);
       setChequeFrom(1);
       setRangeType('all');
       setSelectedPage(null);
@@ -629,10 +656,24 @@ export default function UploadPage() {
         job_id: jobId,
         methods: methodsToRun,
         force: forceExtract,
+        // Only when we arrived from the reconcile stepper. A plain /upload
+        // visit sends nothing and the job stays unattached, which is correct.
+        ...(batchId ? { batch_id: batchId } : {}),
       };
-      if (rangeType === 'pages') {
-        body.page_range = { from: pageFrom, to: pageTo };
-      } else if (rangeType === 'cheques') {
+      // The per-page selection belongs to the job on screen. Other jobs in an
+      // "Extract All" run get everything, which is what their own default is.
+      if (rangeType === 'pages' && jobId === activeJobId) {
+        const sel = selectedPages;
+        if (sel.size === 0) throw new Error('Select at least one page to extract.');
+        // `pages` is the real instruction and the backend prefers it, so a
+        // statement whose cheque pages are not consecutive runs as selected.
+        // page_range still goes along as the contiguous envelope: it is what an
+        // older extractor would fall back to, and for a contiguous selection
+        // the two agree exactly. Usage is billed on cheques detected, so the
+        // list must never be widened silently.
+        body.pages = [...sel].sort((a, b) => a - b);
+        body.page_range = selectedRange(sel);
+      } else if (rangeType === 'cheques' && jobId === activeJobId) {
         body.cheque_range = { from: chequeFrom, to: chequeTo };
       } else {
         body.page_range = { from: 1, to: r.total_pages };
@@ -1341,8 +1382,12 @@ export default function UploadPage() {
             </div>
             <div role="radiogroup" aria-label="Extraction range" className="space-y-1.5">
               {([
-                { key: 'all', title: 'All', hint: `${totalPages} pages, ${totalChecks} cheques` },
-                { key: 'pages', title: 'Page Range', hint: 'Select specific pages' },
+                { key: 'all', title: 'All pages', hint: `${totalPages} pages, ${totalChecks} cheques` },
+                {
+                  key: 'pages',
+                  title: 'Choose pages',
+                  hint: 'Tick the pages to extract — cheque pages are pre-ticked',
+                },
                 ...(totalChecks > 0
                   ? [{ key: 'cheques', title: 'Cheque Range', hint: 'Select specific cheques' }]
                   : []),
@@ -1378,35 +1423,18 @@ export default function UploadPage() {
                   </button>
 
                   {opt.key === 'pages' && rangeType === 'pages' && (
-                    <div className="flex items-end gap-2 pl-3 pt-1.5">
-                      <label className="block">
-                        <span className="block text-[10px] text-ink-faint">From</span>
-                        <Input
-                          type="number"
-                          inputSize="sm"
-                          min={1}
-                          max={totalPages}
-                          value={pageFrom}
-                          onChange={(e) => setPageFrom(Math.max(1, Math.min(totalPages, parseInt(e.target.value) || 1)))}
-                          disabled={step === 'starting'}
-                          className="nums w-16"
-                        />
-                      </label>
-                      <span className="pb-2 text-xs text-ink-faint">to</span>
-                      <label className="block">
-                        <span className="block text-[10px] text-ink-faint">To</span>
-                        <Input
-                          type="number"
-                          inputSize="sm"
-                          min={pageFrom}
-                          max={totalPages}
-                          value={pageTo}
-                          onChange={(e) => setPageTo(Math.max(pageFrom, Math.min(totalPages, parseInt(e.target.value) || 1)))}
-                          disabled={step === 'starting'}
-                          className="nums w-16"
-                        />
-                      </label>
-                      <span className="nums pb-2 text-[10px] text-ink-faint">of {totalPages}</span>
+                    <div className="space-y-2 pl-3 pt-1.5">
+                      <PageSelectGrid
+                        pages={pages}
+                        selected={selectedPages}
+                        onChange={setSelectedPages}
+                        disabled={step === 'starting'}
+                      />
+                      {selectedPages.size === 0 && (
+                        <p className="text-[10px] text-warning-text">
+                          Select at least one page, or choose All pages.
+                        </p>
+                      )}
                     </div>
                   )}
 
@@ -1466,6 +1494,7 @@ export default function UploadPage() {
           <div className="flex justify-end">
             <Button
               onClick={() => handleStartExtraction()}
+              disabled={rangeType === 'pages' && selectedPages.size === 0}
               loading={step === 'starting'}
               icon={<Play size={14} />}
             >

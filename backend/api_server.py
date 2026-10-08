@@ -1479,6 +1479,12 @@ class StartExtractionRequest(BaseModel):
     methods: list[str] = ["gemini"]
     page_range: Optional[dict] = None
     cheque_range: Optional[dict] = None
+    # An explicit page list, so a bank statement whose cheque pages are not
+    # consecutive can be run without widening to a range. Usage is billed on
+    # cheques detected, so widening would bill pages the user deselected.
+    # Takes precedence over page_range, which the client still sends as a
+    # fallback for older servers.
+    pages: Optional[list[int]] = None
     force: bool = False  # Force re-extraction even if results exist
     # The user opting in after being warned this file was uploaded before.
     confirm_reupload: bool = False
@@ -1655,6 +1661,15 @@ def start_extraction(req: StartExtractionRequest, request: Request, _auth=Depend
                 c_to = min(len(manifest), req.cheque_range.get("to", len(manifest)))
                 filtered_manifest = filtered_manifest[c_from - 1 : c_to]
                 print(f"  Cheque range filter: #{c_from}-#{c_to} → {len(filtered_manifest)} checks")
+            elif req.pages:
+                # Explicit list wins over page_range: the client sends both, the
+                # range only so an older server still does something sensible.
+                wanted = {int(p) for p in req.pages}
+                filtered_manifest = [
+                    (cid, ip, pn) for cid, ip, pn in filtered_manifest
+                    if pn in wanted
+                ]
+                print(f"  Page list filter: {len(wanted)} pages → {len(filtered_manifest)} checks")
             elif req.page_range:
                 p_from = req.page_range.get("from", 1)
                 p_to = req.page_range.get("to", job.get("total_pages", 9999))

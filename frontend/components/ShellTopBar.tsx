@@ -22,6 +22,13 @@ import { Upload } from 'lucide-react';
  */
 const CompanySwitcher = dynamic(() => import('@/components/CompanySwitcher'), { ssr: false });
 const AccountSwitcher = dynamic(() => import('@/components/AccountSwitcher'), { ssr: false });
+/**
+ * The trial meter (CHECKLIST section 6) lives here for the same reason the
+ * switchers do: it is scope, not navigation, and it must cost no rows on
+ * screen. Client-only and self-hiding — it renders nothing for a paying or
+ * comped tenant.
+ */
+const TrialMeter = dynamic(() => import('@/components/TrialMeter'), { ssr: false });
 
 export default function ShellTopBar() {
   return (
@@ -46,6 +53,7 @@ export default function ShellTopBar() {
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
           <CompanySwitcher />
           <AccountSwitcher />
+          <TrialMeter />
         </div>
 
         <Link

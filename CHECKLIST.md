@@ -5,6 +5,27 @@ document that requires it, and how we know it is done.
 
 **Target:** pilot firms on the app. **Reference pack:** `new changes/`.
 
+> **Audited 8 October 2026.** The ticks had fallen nine commits behind; 31 items were done but
+> unticked. They have been corrected against the code, not against memory.
+>
+> **Still blocking everything:** migrations 026–037 are unapplied. Paste
+> `supabase/APPLY_026_TO_036.sql` into the Supabase SQL editor, then apply 037. Until then the
+> reconcile stepper, billing, email, history, trials and the switchers all read tables that do not
+> exist. The code degrades honestly rather than faking data, but none of it can function.
+>
+> **Four items read as open but are partly built, deliberately:**
+> - Annual Stripe billing is written and gated behind `STRIPE_ANNUAL_ENABLED`. It has never run
+>   against Stripe, so it is not claimed as finished.
+> - Stripe products and prices exist in code with env-var names per environment; the actual
+>   products and env values are not created yet.
+> - The renewal reminder records an in-app notice but does not send email; there is no renewal
+>   template yet.
+> - Approve and Clear validates server-side and is enforced by a database trigger, but the page
+>   itself is still a disabled stub.
+>
+> Everything else left open is either account access (section 14), blocked on assets that never
+> arrived (the logo pack, Michael's FAQ copy), or verification (section 16).
+
 > **Status, 6 October 2026.** 69 of ~160 items done, on branch
 > `feat/v2-glass-redesign-trial-and-roles`. Delivered: the P0 security fixes, Michael's removals,
 > bank-statement detection, **all nine redesign parcels**, the usage ledger and trial enforcement,
@@ -344,20 +365,20 @@ Structure from the v17 prototype, surface from section 2.
       state comes from the batch record, not from which page is open. Forward steps stay locked until
       the prior one is genuinely complete. In the prototype these are plain links and Approve is
       reachable from Upload.
-- [ ] **Match auto-advances.** The user does nothing there, so it is a progress screen that moves on
+- [x] **Match auto-advances.** The user does nothing there, so it is a progress screen that moves on
       by itself when matching finishes.
-- [ ] **Review merges QB Match and QB Comparisons** into three tabs: Needs Attention, 100% Matches,
+- [x] **Review merges QB Match and QB Comparisons** into three tabs: Needs Attention, 100% Matches,
       All Checks. Keep every existing row action (approve, remap, resolve, flag, note, edit in QB,
       create in QB, undo), keep the up-to-200-record view, and lose the spreadsheet look.
       *From: "I would like to get rid of the Excel look."*
-- [ ] **Side-by-side review modal** with the check image next to the QuickBooks record.
+- [x] **Side-by-side review modal** with the check image next to the QuickBooks record.
 - [ ] **Approve and Clear** page: batch summary, pre-flight checks, server-side validation before any
       write, bulk clear, audit entries.
-- [ ] **Continue Reconciliation card.** If someone closes Kyriq mid-flow, they resume exactly where
+- [x] **Continue Reconciliation card.** If someone closes Kyriq mid-flow, they resume exactly where
       they stopped with no re-upload and no re-approval. Shows company, account, period, step N of 4,
       and how many checks need attention. *Michael's mock: "ABC Construction LLC · Operating Checking
       / August 2026 / Step 3 of 4 — 24 checks need attention."*
-- [ ] **Remove the QB Match page** as a separate route.
+- [x] **Remove the QB Match page** as a separate route.
 - [x] **Remove the Analytics page**; its content moves into Firm Admin. **Done:** route and nav
       entry gone, nothing culled — KPIs, the per-engine breakdown, the job-status split and the
       empty state all moved. One deliberate consolidation: its Per-Document list was the same job
@@ -367,12 +388,12 @@ Structure from the v17 prototype, surface from section 2.
       the React app.** It is in the v12/v17 prototypes only — confirmed with `git log -S` over the
       file's full history — so there was nothing to delete. It is now pinned shut instead: a comment
       records why those six controls are absent and the check fails if any name reappears.
-- [ ] **Give the auto-approve threshold a home.** This half is real and is NOT done. There is no
+- [x] **Give the auto-approve threshold a home.** This half is real and is NOT done. There is no
       persisted threshold: the value is hard-coded as `score >= 95` in
       `frontend/lib/matching-algorithm.ts:235` and duplicated as a label on the qb-match page.
       It needs a settings key plus an endpoint, then that one literal rewired. Until then there is
       nothing for Review to put next to Approve All.
-- [ ] **Connect QuickBooks card inline on step 1** when no company is connected, so a new user never
+- [x] **Connect QuickBooks card inline on step 1** when no company is connected, so a new user never
       leaves the flow to go to Settings.
 - [x] Sign-in button purple, matching the website.
 
@@ -384,18 +405,18 @@ Build the design from `Kyriq_Switcher_Mockup.html` on the existing data layer, n
 hook.
 
 - [ ] Move both switchers from the sidebar to the **top bar**.
-- [ ] **Company switcher:** avatar with initials, search, per-row connected or needs-reconnect
+- [x] **Company switcher:** avatar with initials, search, per-row connected or needs-reconnect
       status with account count, a checkmark on the active company, per-row disconnect behind a
       proper modal rather than `confirm()`, and "Add New Client" in the footer.
 - [ ] **Account switcher:** grouped into Bank Accounts and Credit Cards, each row showing name, last
       four, sub-type and balance, with a refresh action.
-- [ ] **Accounts need a real source.** Today `AccountSwitcher` builds strings from `qb_entries.account`
+- [x] **Accounts need a real source.** Today `AccountSwitcher` builds strings from `qb_entries.account`
       with no type, balance or last four. Either add a `qb_accounts` table with `tenant_id` and RLS,
       or extend `pages/api/qbo/accounts.ts`, which is currently single-company and Bank-only.
 - [ ] Keep the active company **server-side** in `qb_connections.is_active`. The matching routes and
       the extension all read it; a localStorage-only switch would show company B while matching
       company A.
-- [ ] Show the pending-match count that already exists in `/api/qb/connections`.
+- [x] Show the pending-match count that already exists in `/api/qb/connections`.
 
 ---
 
@@ -435,10 +456,10 @@ hook.
       place first or confirmation mail fails silently at volume. Consequence already handled:
       `signUp` no longer returns a session, so the old unconditional redirect to `/dashboard` would
       have bounced every new user to `/login`; signup now shows a confirm-your-email panel.
-- [ ] **One trial per QuickBooks realm.** Michael asked how to stop people opening trials with
+- [x] **One trial per QuickBooks realm.** Michael asked how to stop people opening trials with
       multiple emails. The firm's QuickBooks company ID is the natural identity: verified email,
       plus one trial per realm, plus a disposable-domain block.
-- [ ] **Trial meter visible in-app:** days remaining and checks remaining.
+- [x] **Trial meter visible in-app:** days remaining and checks remaining.
 
 ---
 
@@ -454,28 +475,28 @@ Everything here comes from `STRIPE-BILLING-REQUIREMENTS.md`.
 
 - [ ] Products and prices in Stripe **Test and Live**, IDs in environment variables separated by
       environment.
-- [ ] Monthly plans through Checkout.
+- [x] Monthly plans through Checkout.
 - [ ] **Annual through the Subscriptions API in flexible billing mode.** Annual base plus monthly
       metered overage is a mixed-interval subscription, and standard Checkout Sessions do not create
       one. The doc explicitly says not to present that limitation as a finished annual implementation.
-- [ ] Monthly allowance resets monthly for annual customers too. Not one annual pool.
-- [ ] **Renewal on the same date each month**, regardless of when someone subscribed.
+- [x] Monthly allowance resets monthly for annual customers too. Not one annual pool.
+- [x] **Renewal on the same date each month**, regardless of when someone subscribed.
       *From item 17 of the client list.*
-- [ ] **Eight webhooks**, signature-verified and processed idempotently: `checkout.session.completed`,
+- [x] **Eight webhooks**, signature-verified and processed idempotently: `checkout.session.completed`,
       `customer.subscription.created`, `.updated`, `.deleted`, `invoice.created`, `invoice.finalized`,
       `invoice.paid`, `invoice.payment_failed`.
-- [ ] **Paid access activates only after a verified webhook.** Never on a success-page redirect.
-- [ ] Billing page showing plan, frequency, base price, commitment and renewal terms, included
+- [x] **Paid access activates only after a verified webhook.** Never on a success-page redirect.
+- [x] Billing page showing plan, frequency, base price, commitment and renewal terms, included
       checks, usage, remaining, overage quantity and estimate, period dates, paid-through date,
       status, invoice history, payment method, and controls to change plan, cancel renewal and
       reactivate.
-- [ ] Plan changes with charges, credits and effective dates disclosed before confirmation.
-- [ ] Payment failure: in-app warning, grace period, then processing restricted while history stays
+- [x] Plan changes with charges, credits and effective dates disclosed before confirmation.
+- [x] Payment failure: in-app warning, grace period, then processing restricted while history stays
       viewable, and automatic restoration on payment.
-- [ ] Cancellation: monthly ends at period end; annual disables renewal but runs to the paid-through
+- [x] Cancellation: monthly ends at period end; annual disables renewal but runs to the paid-through
       date; reactivation before that date; incurred overages still payable.
 - [ ] Renewal reminder roughly 30 days before an annual charge.
-- [ ] Refunds require an authorised Super Admin action with a recorded reason.
+- [x] Refunds require an authorised Super Admin action with a recorded reason.
 
 ---
 
@@ -504,18 +525,18 @@ Full analysis in `docs/EMAIL-SPEC-REVIEW.md`.
 
 - [ ] Resend on `updates.kyriq.com`, SPF, DKIM and DMARC before any sending. Sender
       `Kyriq <notifications@updates.kyriq.com>`, reply-to `support@kyriq.com`.
-- [ ] **Six emails whose triggers already exist:** invitation sent, accepted and expired, member
+- [x] **Six emails whose triggers already exist:** invitation sent, accepted and expired, member
       removed, role changed, processing failed.
-- [ ] **Three QuickBooks emails need groundwork first.** `qb_connections` has no status column;
+- [x] **Three QuickBooks emails need groundwork first.** `qb_connections` has no status column;
       `is_active` means "currently selected", not "healthy". Both token refresh paths currently write
       a log line and nothing else, so a dead connection is invisible until a user trips over it. Add
       the status column, write on failure in both paths, and add a scheduled health check.
-- [ ] **Ten trial and usage emails** once the ledger exists.
+- [x] **Ten trial and usage emails** once the ledger exists.
 - [ ] **Four Stripe-native notices** configured with Kyriq branding, not rebuilt.
-- [ ] **Unsubscribe route and token before any non-transactional email.** The published privacy
+- [x] **Unsubscribe route and token before any non-transactional email.** The published privacy
       policy already tells users they can unsubscribe through a link or account settings. Neither
       exists, which is a compliance exposure the moment a digest or marketing email ships.
-- [ ] **Settle one wording conflict.** The email spec says "check uploads"; the website, FAQ and
+- [x] **Settle one wording conflict.** The email spec says "check uploads"; the website, FAQ and
       Stripe document all say "processed checks" and count on success. The Stripe document is
       authoritative, so the email copy needs the word changed. It is marked locked copy, so Michael
       must approve.
@@ -605,12 +626,12 @@ Implement the approved redesign copy verbatim from
 
 ## 13. P2 — history, reports, retention
 
-- [ ] **Batches table.** History needs a real batch record; the app only has jobs today. The stepper
+- [x] **Batches table.** History needs a real batch record; the app only has jobs today. The stepper
       and the Continue Reconciliation card also depend on it.
 - [ ] **History page:** past batches with approver, status and export.
 - [ ] **Reports page** with date, company and account filters.
 - [ ] **Firm Admin** absorbing the Analytics content.
-- [ ] **Upload retention.** Delete uploaded files 14 days after a reconciliation completes, keeping
+- [x] **Upload retention.** Delete uploaded files 14 days after a reconciliation completes, keeping
       extracted data and history. *Michael asked about 7 or 14 days; 14 is the safer default and is
       worth stating in the privacy policy.*
 
@@ -732,7 +753,7 @@ of it was visible from the documents.
       switcher's `<a href>` "Connect QuickBooks" and "Add Company" navigated the user to a raw JSON
       document. Neither had ever worked. Surfaced by turning the lint gate on.
 
-- [ ] **Eleven separate copies of the QuickBooks token refresh**, and they have already
+- [x] **Eleven separate copies of the QuickBooks token refresh**, and they have already
       drifted. Every one of these carries its own `grant_type: 'refresh_token'` exchange:
       `lib/match-helpers.ts`, `pages/api/extension/qb/refresh-token.ts`, and
       `pages/api/qbo/{accounts,clear-transaction,company-info,create-check,diagnose,explore,preview,pull-checks,update-transaction}.ts`.
@@ -745,7 +766,7 @@ of it was visible from the documents.
       not all of them do. One shared resolver, then migrate the call sites. The health-write
       helper is being created as part of section 9 so there is one function to call rather than
       eleven chances to forget.
-- [ ] **`pages/api/qbo/accounts.ts` cannot back the account switcher** (section 4). It queries
+- [x] **`pages/api/qbo/accounts.ts` cannot back the account switcher** (section 4). It queries
       `WHERE AccountType = 'Bank'`, so credit cards are invisible; it reads `integrations`, so it
       is single-company; and it returns no last four. Section 4 wants accounts grouped into Bank
       and Credit Card with name, last four, sub-type and balance.

@@ -28,7 +28,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (!gate) return
 
     try {
-        const { job_id, methods, page_range, cheque_range, force, batch_id } = req.body
+        const { job_id, methods, page_range, cheque_range, pages, force, batch_id } = req.body
         const confirmReupload = Boolean(
             req.body?.confirm_reupload ?? req.body?.confirmReupload
         )
@@ -44,6 +44,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 methods,
                 page_range,
                 cheque_range,
+                // An explicit page list for a statement whose cheque pages are
+                // not consecutive. Numbers only, so a malformed body cannot
+                // reach the extractor's filter.
+                pages: Array.isArray(pages)
+                    ? pages.filter((p: unknown) => Number.isInteger(p))
+                    : null,
                 force: !!force,
                 confirm_reupload: confirmReupload,
                 // Late attach: only used when upload-analyze ran before the

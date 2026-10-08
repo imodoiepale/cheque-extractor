@@ -272,6 +272,42 @@ export default async function handler(
       console.warn('⚠️ qb_connections upsert failed (non-critical):', connErr.message);
     }
 
+    // ── One trial per QuickBooks company (migration 037) ──
+    // The realm id is the firm's stable identity; a new email address is not.
+    // The first tenant to connect a company claims its one trial. A second
+    // tenant connecting the same books is still CONNECTED (they may be paying,
+    // or the same firm moving accounts) but gets no trial.
+    //
+    // claim_realm_trial is idempotent: re-authorising the same company returns
+    // claimed=true for the owner, so this runs on every callback safely.
+    let trialAlreadyUsed = false;
+    try {
+      const { data: claim, error: claimError } = await serviceClient.rpc('claim_realm_trial', {
+        p_tenant_id: tenantId,
+        p_realm_id: String(realmId),
+        p_company_name: companyName,
+      });
+
+      // A 200 from the RPC is not proof: assert on the parsed shape. An
+      // unreadable claim must not silently hand out a second free trial.
+      if (claimError || !claim || typeof claim !== 'object' || typeof (claim as any).claimed !== 'boolean') {
+        console.error('🚨 claim_realm_trial did not return a usable claim', {
+          realmId,
+          tenantId,
+          error: claimError?.message,
+        });
+      } else {
+        trialAlreadyUsed = (claim as any).trial_blocked === true;
+        console.log(
+          trialAlreadyUsed
+            ? '⛔ Trial already used for this QuickBooks company'
+            : `✅ Trial claim for realm ${realmId}: claimed=${(claim as any).claimed}`
+        );
+      }
+    } catch (claimErr: any) {
+      console.error('🚨 claim_realm_trial threw', claimErr?.message);
+    }
+
     // Email 11: QuickBooks Online is connected. Transactional — the direct
     // result of an action the administrator just completed. Send-once keyed on
     // (tenant, realm, day), so re-authorising the same company tomorrow is a
@@ -307,8 +343,13 @@ export default async function handler(
       return res.redirect(`/qb-oauth-complete?company=${encodeURIComponent(companyName || '')}`);
     }
 
-    // Redirect to settings with success (web app flow)
-    return res.redirect('/settings?tab=integrations&success=quickbooks_connected');
+    // Redirect to settings with success (web app flow). The notice is additive:
+    // the connection succeeded, the free trial is what did not apply.
+    return res.redirect(
+      `/settings?tab=integrations&success=quickbooks_connected${
+        trialAlreadyUsed ? '&notice=trial_already_used' : ''
+      }`
+    );
   } catch (error: any) {
     console.error('QuickBooks callback error:', error);
     const isExt = typeof req.query.state === 'string' && (() => {
