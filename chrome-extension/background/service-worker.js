@@ -76,6 +76,44 @@ const BOOTSTRAP_CONFIG = {
   frontendUrl: 'https://kyriq.com',
 };
 
+/**
+ * Optional local-development override, read once from chrome.storage.local.
+ *
+ * BOOTSTRAP_CONFIG points at production. Testing the panel against a local
+ * frontend used to mean editing the constant above and remembering to put it
+ * back — which is how a localhost URL ends up committed. Set it from the
+ * service-worker console instead:
+ *
+ *   chrome.storage.local.set({ kyriqDevConfig: { frontendUrl: 'http://localhost:3080' } })
+ *
+ * and clear it with:
+ *
+ *   chrome.storage.local.remove('kyriqDevConfig')
+ *
+ * Only the three URLs may be overridden — never the Supabase anon key, so a
+ * stray override cannot silently point the panel at someone else's project.
+ * localhost:3080 is already in host_permissions.
+ */
+const DEV_OVERRIDABLE = ['frontendUrl', 'backendUrl', 'supabaseUrl'];
+
+async function applyDevConfigOverride() {
+  try {
+    const { kyriqDevConfig } = await chrome.storage.local.get('kyriqDevConfig');
+    if (!kyriqDevConfig || typeof kyriqDevConfig !== 'object') return;
+    const applied = {};
+    for (const key of DEV_OVERRIDABLE) {
+      const value = kyriqDevConfig[key];
+      if (typeof value === 'string' && value.trim()) {
+        BOOTSTRAP_CONFIG[key] = value.trim().replace(/\/$/, '');
+        applied[key] = BOOTSTRAP_CONFIG[key];
+      }
+    }
+    if (Object.keys(applied).length) log('DEV CONFIG OVERRIDE ACTIVE', applied);
+  } catch (e) {
+    logErr('dev config override failed, using production config', e);
+  }
+}
+
 function getBootstrapConfig() {
   log('getBootstrapConfig', { url: BOOTSTRAP_CONFIG.supabaseUrl, hasKey: !!BOOTSTRAP_CONFIG.supabaseAnonKey, hasBackend: !!BOOTSTRAP_CONFIG.backendUrl, hasFrontend: !!BOOTSTRAP_CONFIG.frontendUrl });
   return BOOTSTRAP_CONFIG;
@@ -85,6 +123,7 @@ function getBootstrapConfig() {
 // Contains: geminiApiKey, qbClientId (and mirrors supabase creds)
 // NOTE: /api/extension/* routes live in Next.js (frontendUrl), NOT in the Python backend.
 async function getConfig() {
+  await applyDevConfigOverride();
   const bootstrap = getBootstrapConfig();
 
   const { configCache } = await chrome.storage.local.get('configCache');
