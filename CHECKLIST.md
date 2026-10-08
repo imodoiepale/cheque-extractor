@@ -9,9 +9,17 @@ document that requires it, and how we know it is done.
 > unticked. They have been corrected against the code, not against memory.
 >
 > **Still blocking everything:** migrations 026–037 are unapplied. Paste
-> `supabase/APPLY_026_TO_036.sql` into the Supabase SQL editor, then apply 037. Until then the
+> `supabase/APPLY_PENDING_MIGRATIONS.sql` into the Supabase SQL editor and run it once. Until then the
 > reconcile stepper, billing, email, history, trials and the switchers all read tables that do not
 > exist. The code degrades honestly rather than faking data, but none of it can function.
+>
+> **One thing the Approve step does NOT do.** Finalising a batch marks it complete in Kyriq, writes
+> the approver and an audit row, and is enforced by a database trigger. It does **not** write to
+> QuickBooks. The old stub copy claimed it did, which was false, and the panel now says so plainly.
+> Clearing happens per match from the Review screens or from the Chrome extension, which is the flow
+> Michael described wanting to watch. A batch-level bulk clear is the one piece of scope deliberately
+> left unbuilt: it writes to a customer's live accounting system in bulk and cannot be tested here
+> without the migrations and a QuickBooks sandbox, so shipping it untested would be reckless.
 >
 > **Four items read as open but are partly built, deliberately:**
 > - Annual Stripe billing is written and gated behind `STRIPE_ANNUAL_ENABLED`. It has never run
@@ -361,7 +369,7 @@ Structure from the v17 prototype, surface from section 2.
 
 - [ ] **Shell and navigation** per v17: Reconcile, History, Reports, Companies, Connections, Users,
       Settings, Billing, and the admin section.
-- [ ] **One `/reconcile` route** with a batch-driven stepper: Upload → Match → Review → Approve. Step
+- [x] **One `/reconcile` route** with a batch-driven stepper: Upload → Match → Review → Approve. Step
       state comes from the batch record, not from which page is open. Forward steps stay locked until
       the prior one is genuinely complete. In the prototype these are plain links and Approve is
       reachable from Upload.
@@ -495,7 +503,7 @@ Everything here comes from `STRIPE-BILLING-REQUIREMENTS.md`.
       viewable, and automatic restoration on payment.
 - [x] Cancellation: monthly ends at period end; annual disables renewal but runs to the paid-through
       date; reactivation before that date; incurred overages still payable.
-- [ ] Renewal reminder roughly 30 days before an annual charge.
+- [x] Renewal reminder roughly 30 days before an annual charge.
 - [x] Refunds require an authorised Super Admin action with a recorded reason.
 
 ---
@@ -582,14 +590,14 @@ with its count.
 
 The client requires the extension to match the app in look and options.
 
-- [ ] **Restyle to the new brand and the glass system.** `sidepanel.css` is 1068 lines of plain CSS
+- [x] **Restyle to the new brand and the glass system.** `sidepanel.css` is 1068 lines of plain CSS
       using QuickBooks green `#2CA01C` while the app uses navy. Port the tokens by hand here, plus
       `popup.css` and `qbo-overlay.css`.
-- [ ] **Match the approved `/extension` design:** header with company and account selectors, sync
+- [x] **Match the approved `/extension` design:** header with company and account selectors, sync
       action, connection status, usage meter; tabs for Upload, Match, Review, Approve and History;
       Needs Attention chips for lower confidence, duplicates, discrepancies and no match;
       colour-coded cards.
-- [ ] **Open QuickBooks to the company the user is working on**, so they watch Kyriq clear each
+- [x] **Open QuickBooks to the company the user is working on**, so they watch Kyriq clear each
       approved item. *From item 7 of the client list.*
 - [ ] New logo in all icon sizes.
 - [ ] Chrome Web Store listing: publisher **Kyriq**, contact `support@kyriq.com`, official URL

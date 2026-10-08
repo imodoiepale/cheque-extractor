@@ -40,9 +40,9 @@ switchers are all written against tables that do not exist. Nothing can be teste
 exactly that, so the migrations are bundled ready to paste:
 
 > Open the Supabase dashboard, go to the SQL editor, paste the whole of
-> `supabase/APPLY_026_TO_036.sql`, and run it once.
+> `supabase/APPLY_PENDING_MIGRATIONS.sql`, and run it once.
 
-That file contains all eleven migrations in order inside a single transaction. If any statement
+That file contains all twelve migrations (026 to 037) in order inside a single transaction. If any statement
 fails, nothing is applied and you get the error, so a partial state is not possible. Every migration
 is idempotent, so running it twice is harmless. It is generated from `supabase/migrations/`, which
 remains the source of truth; do not hand-edit the bundle.
