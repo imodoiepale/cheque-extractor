@@ -1,22 +1,27 @@
 import { formatConfidence } from '@/lib/utils/formatting';
+import { Badge } from '@/components/ui';
 
 interface Props {
   confidence: number;
   source: 'ocr' | 'ai' | 'hybrid' | 'manual';
 }
 
-export default function ConfidenceBadge({ confidence, source }: Props) {
-  const getColor = () => {
-    if (source === 'manual') return 'bg-purple-100 text-purple-800';
-    if (confidence >= 0.9) return 'bg-green-100 text-green-800';
-    if (confidence >= 0.7) return 'bg-yellow-100 text-yellow-800';
-    return 'bg-red-100 text-red-800';
-  };
+/**
+ * Confidence as a Badge tone. A manual edit is not a confidence score, so it
+ * reads `brand` (an action), never green/amber/red (a measurement).
+ */
+function tone(confidence: number, source: Props['source']) {
+  if (source === 'manual') return 'brand' as const;
+  if (confidence >= 0.9) return 'success' as const;
+  if (confidence >= 0.7) return 'warning' as const;
+  return 'error' as const;
+}
 
+export default function ConfidenceBadge({ confidence, source }: Props) {
   return (
-    <div className={`inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium ${getColor()}`}>
-      <span>{formatConfidence(confidence)}</span>
-      <span className="uppercase text-[10px]">{source}</span>
-    </div>
+    <Badge tone={tone(confidence, source)} size="md">
+      <span className="nums">{formatConfidence(confidence)}</span>
+      <span className="text-[10px] uppercase tracking-eyebrow">{source}</span>
+    </Badge>
   );
 }

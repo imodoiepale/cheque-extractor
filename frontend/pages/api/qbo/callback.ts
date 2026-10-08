@@ -1,5 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { adminRecipients, sendOnce } from '@/lib/email/send';
 import { createClientFromCookies, createServiceClient } from '@/lib/supabase/api';
+import { peekState, verifyState } from '@/lib/qbo-state';
 
 /**
  * QuickBooks OAuth Callback Endpoint
@@ -17,9 +19,8 @@ export default async function handler(
     const { code, state, realmId } = req.query;
 
     // Detect extension source early (before state decode) so error redirects go to the public page
-    const isExtension = typeof state === 'string' && (() => {
-      try { return JSON.parse(Buffer.from(state, 'base64').toString())?.source === 'extension'; } catch { return false; }
-    })();
+    // Unverified peek, used only to decide which page an error redirect lands on.
+    const isExtension = peekState(state)?.source === 'extension';
     const errRedirect = (code: string, detail = '') =>
       isExtension
         ? `/qb-oauth-complete?error=${code}${detail ? '&detail=' + encodeURIComponent(detail) : ''}`
@@ -29,24 +30,24 @@ export default async function handler(
       return res.redirect(errRedirect('missing_params'));
     }
 
-    // Decode tenant_id from state parameter
-    let tenantId: string | null = null;
-    let stateData: any = null;
-    try {
-      stateData = JSON.parse(Buffer.from(state as string, 'base64').toString());
-      tenantId = stateData.tenant_id;
-      console.log('✅ Decoded state:', { tenant_id: tenantId, timestamp: stateData.timestamp });
-    } catch (decodeErr) {
-      console.error('❌ Failed to decode state parameter:', decodeErr);
-      return res.redirect(errRedirect('invalid_state', 'state_decode_failed'));
+    // The state carries the tenant_id this connection is written against, so a
+    // forged state would attach a QuickBooks company to another firm. Verify the
+    // HMAC and reject on any mismatch — this is not advisory.
+    const verified = verifyState(state);
+    if (!verified.ok) {
+      console.error('🚨 Rejected QuickBooks OAuth state', {
+        reason: verified.reason,
+        realmId,
+        ip: req.headers['x-forwarded-for'] || req.socket.remoteAddress,
+      });
+      return res.redirect(errRedirect('invalid_state', verified.reason));
     }
 
-    if (!tenantId) {
-      console.error('❌ No tenant_id in state parameter');
-      return res.redirect(errRedirect('no_tenant', 'missing_tenant_in_state'));
-    }
+    const stateData = verified.payload;
+    const tenantId: string = stateData.tenant_id;
 
-    // Verify state (CSRF protection) - optional
+    // Cookie check is defence in depth; a mismatch means the flow was not started
+    // in this browser, so it is also rejected rather than warned about.
     const cookies = req.headers.cookie?.split(';').reduce((acc, cookie) => {
       const [key, value] = cookie.trim().split('=');
       acc[key] = value;
@@ -54,8 +55,8 @@ export default async function handler(
     }, {} as Record<string, string>);
 
     if (cookies?.qbo_state && cookies.qbo_state !== state) {
-      console.warn('⚠️ State mismatch - possible CSRF attack');
-      // Don't fail - just warn, since state contains tenant_id anyway
+      console.error('🚨 QuickBooks OAuth state cookie mismatch', { realmId });
+      return res.redirect(errRedirect('invalid_state', 'cookie_mismatch'));
     }
     
     // Log for debugging
@@ -252,6 +253,12 @@ export default async function handler(
           token_expires_at: new Date(Date.now() + tokens.expires_in * 1000).toISOString(),
           is_active: true,
           connected_at: new Date().toISOString(),
+          // Migration 034: health, as distinct from "currently selected".
+          // A fresh OAuth grant is the one moment we know it works.
+          status: 'connected',
+          status_detail: null,
+          status_checked_at: new Date().toISOString(),
+          status_changed_at: new Date().toISOString(),
         }, {
           onConflict: 'tenant_id,realm_id',
         });
@@ -265,6 +272,67 @@ export default async function handler(
       console.warn('⚠️ qb_connections upsert failed (non-critical):', connErr.message);
     }
 
+    // ── One trial per QuickBooks company (migration 037) ──
+    // The realm id is the firm's stable identity; a new email address is not.
+    // The first tenant to connect a company claims its one trial. A second
+    // tenant connecting the same books is still CONNECTED (they may be paying,
+    // or the same firm moving accounts) but gets no trial.
+    //
+    // claim_realm_trial is idempotent: re-authorising the same company returns
+    // claimed=true for the owner, so this runs on every callback safely.
+    let trialAlreadyUsed = false;
+    try {
+      const { data: claim, error: claimError } = await serviceClient.rpc('claim_realm_trial', {
+        p_tenant_id: tenantId,
+        p_realm_id: String(realmId),
+        p_company_name: companyName,
+      });
+
+      // A 200 from the RPC is not proof: assert on the parsed shape. An
+      // unreadable claim must not silently hand out a second free trial.
+      if (claimError || !claim || typeof claim !== 'object' || typeof (claim as any).claimed !== 'boolean') {
+        console.error('🚨 claim_realm_trial did not return a usable claim', {
+          realmId,
+          tenantId,
+          error: claimError?.message,
+        });
+      } else {
+        trialAlreadyUsed = (claim as any).trial_blocked === true;
+        console.log(
+          trialAlreadyUsed
+            ? '⛔ Trial already used for this QuickBooks company'
+            : `✅ Trial claim for realm ${realmId}: claimed=${(claim as any).claimed}`
+        );
+      }
+    } catch (claimErr: any) {
+      console.error('🚨 claim_realm_trial threw', claimErr?.message);
+    }
+
+    // Email 11: QuickBooks Online is connected. Transactional — the direct
+    // result of an action the administrator just completed. Send-once keyed on
+    // (tenant, realm, day), so re-authorising the same company tomorrow is a
+    // genuine new notice while a double callback today is not.
+    //
+    // NOTE (docs/EMAIL-SPEC-REVIEW.md 4.4): in the app as it stands a company
+    // IS a QuickBooks connection, so email 17 "company added" would fire for
+    // this same event. Email 17 is deliberately not built.
+    try {
+      const adminEmails = await adminRecipients(tenantId);
+      for (const to of adminEmails) {
+        await sendOnce({
+          tenantId,
+          kind: 'qb_connected',
+          periodKey: `${realmId}:${new Date().toISOString().slice(0, 10)}:${to}`,
+          to,
+          template: 'qb_connected',
+          vars: { companyName, firmName: null },
+          metadata: { realm_id: realmId },
+        });
+      }
+    } catch (mailErr: any) {
+      console.warn('[qbo/callback] connection email not sent:', mailErr?.message);
+    }
+
     // Clear state cookie
     res.setHeader('Set-Cookie', 'qbo_state=; Path=/; HttpOnly; Max-Age=0');
 
@@ -275,8 +343,13 @@ export default async function handler(
       return res.redirect(`/qb-oauth-complete?company=${encodeURIComponent(companyName || '')}`);
     }
 
-    // Redirect to settings with success (web app flow)
-    return res.redirect('/settings?tab=integrations&success=quickbooks_connected');
+    // Redirect to settings with success (web app flow). The notice is additive:
+    // the connection succeeded, the free trial is what did not apply.
+    return res.redirect(
+      `/settings?tab=integrations&success=quickbooks_connected${
+        trialAlreadyUsed ? '&notice=trial_already_used' : ''
+      }`
+    );
   } catch (error: any) {
     console.error('QuickBooks callback error:', error);
     const isExt = typeof req.query.state === 'string' && (() => {

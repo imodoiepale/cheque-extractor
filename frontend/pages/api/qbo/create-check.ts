@@ -1,69 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createAuthenticatedClient } from '@/lib/supabase/api';
+import { getQbToken } from '@/lib/qb-token';
 
 const QBO_BASE = 'https://quickbooks.api.intuit.com';
 const QBO_SANDBOX = 'https://sandbox-quickbooks.api.intuit.com';
-
-async function getTokens(supabase: any) {
-  try {
-    const { data: activeConn } = await supabase
-      .from('qb_connections')
-      .select('access_token, refresh_token, realm_id, token_expires_at')
-      .eq('is_active', true)
-      .order('connected_at', { ascending: false })
-      .limit(1)
-      .single();
-
-    if (activeConn?.access_token && activeConn?.realm_id) {
-      const { data: creds } = await supabase
-        .from('integrations')
-        .select('qb_client_id, qb_client_secret')
-        .eq('provider', 'quickbooks')
-        .maybeSingle();
-      return {
-        access_token: activeConn.access_token,
-        refresh_token: activeConn.refresh_token,
-        realm_id: activeConn.realm_id,
-        expires_at: activeConn.token_expires_at,
-        qb_client_id: creds?.qb_client_id,
-        qb_client_secret: creds?.qb_client_secret,
-      };
-    }
-  } catch (_) {}
-
-  const { data } = await supabase
-    .from('integrations')
-    .select('access_token, refresh_token, realm_id, expires_at, qb_client_id, qb_client_secret')
-    .eq('provider', 'quickbooks')
-    .single();
-  if (!data?.access_token || !data?.realm_id) return null;
-  return data;
-}
-
-async function refreshToken(supabase: any, tokens: any): Promise<string | null> {
-  const clientId = tokens.qb_client_id || process.env.QUICKBOOKS_CLIENT_ID;
-  const clientSecret = tokens.qb_client_secret || process.env.QUICKBOOKS_CLIENT_SECRET;
-  if (!clientId || !clientSecret || !tokens.refresh_token) return null;
-  try {
-    const res = await fetch('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
-      method: 'POST',
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Authorization: `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`,
-      },
-      body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token }),
-    });
-    if (!res.ok) return null;
-    const t = await res.json();
-    const newExpires = new Date(Date.now() + t.expires_in * 1000).toISOString();
-    await supabase.from('qb_connections').update({ access_token: t.access_token, refresh_token: t.refresh_token, token_expires_at: newExpires }).eq('realm_id', tokens.realm_id);
-    await supabase.from('integrations').update({ access_token: t.access_token, refresh_token: t.refresh_token, expires_at: newExpires }).eq('provider', 'quickbooks');
-    return t.access_token;
-  } catch {
-    return null;
-  }
-}
 
 /**
  * POST /api/qbo/create-check
@@ -74,15 +14,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const supabase = createAuthenticatedClient(req);
-  const tokens = await getTokens(supabase);
-  if (!tokens) return res.status(400).json({ error: 'QuickBooks not connected' });
-
-  let accessToken = tokens.access_token;
-  const isExpired = tokens.expires_at && new Date(tokens.expires_at) <= new Date(Date.now() + 60_000);
-  if (isExpired) {
-    const refreshed = await refreshToken(supabase, tokens);
-    if (refreshed) accessToken = refreshed;
+  // One resolver (lib/qb-token.ts). Deliberate difference kept: a failed
+  // refresh still attempts the write with the stored token rather than
+  // refusing to create the cheque.
+  const token = await getQbToken(supabase);
+  if (!token.ok && token.reason === 'not_connected') {
+    return res.status(400).json({ error: 'QuickBooks not connected' });
   }
+  const conn = token.ok ? token.connection : token.connection!;
+  const accessToken = token.ok ? token.accessToken : conn.accessToken;
 
   const { txnType, checkNumber, amount, date, payee, memo } = req.body;
   if (!txnType || !amount || !date) {
@@ -91,7 +31,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const useSandbox = process.env.QB_SANDBOX === 'true';
   const base = useSandbox ? QBO_SANDBOX : QBO_BASE;
-  const realmId = tokens.realm_id;
+  const realmId = conn.realmId;
   const totalAmt = parseFloat(String(amount).replace(/[^0-9.]/g, '')) || 0;
 
   let payload: any;

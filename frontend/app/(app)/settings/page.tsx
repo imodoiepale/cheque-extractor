@@ -2,13 +2,87 @@
 
 import { useState, useEffect, useRef, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
-import { Save, AlertCircle, Key, ExternalLink, CheckCircle, XCircle, Users, Settings as SettingsIcon, Plug, Upload, FileText, Loader2 } from 'lucide-react'
+import { Save, AlertCircle, Key, ExternalLink, CheckCircle, XCircle, Users, Settings as SettingsIcon, Plug, Upload, FileText, Loader2, ShieldCheck } from 'lucide-react'
+import Link from 'next/link'
 import QuickBooksFilters, { FilterParams } from '@/components/QuickBooksFilters'
 import { createClient } from '@/lib/supabase/client'
 import toast from 'react-hot-toast'
 import dynamic from 'next/dynamic'
+import {
+    Button,
+    Dialog,
+    Field,
+    GlassCard,
+    GlassCardTitle,
+    GlassPanel,
+    Input,
+    Select,
+    Skeleton,
+    TabPanel,
+    Tabs,
+    type TabItem,
+} from '@/components/ui'
 
 const QBDataPreview = dynamic(() => import('@/components/QBDataPreview'), { ssr: false })
+
+const TABS: TabItem[] = [
+    { value: 'general', label: 'General', icon: <SettingsIcon size={15} aria-hidden /> },
+    { value: 'integrations', label: 'Integrations', icon: <Plug size={15} aria-hidden /> },
+    { value: 'team', label: 'Team', icon: <Users size={15} aria-hidden /> },
+    { value: 'security', label: 'Security', icon: <ShieldCheck size={15} aria-hidden /> },
+]
+
+/**
+ * Every state colour is verified against its OWN `-bg`, never against white,
+ * so the pairing lives in one map instead of being re-typed per callout. This
+ * page had eleven ad-hoc `bg-*-50 / border-*-200 / text-*-800` triples.
+ */
+const NOTICE_TONES = {
+    success: 'border-success-border bg-success-bg text-success-text',
+    warning: 'border-warning-border bg-warning-bg text-warning-text',
+    error: 'border-error-border bg-error-bg text-error-text',
+    info: 'border-info-border bg-info-bg text-info-text',
+} as const
+
+function Notice({
+    tone,
+    icon,
+    children,
+    className = '',
+}: {
+    tone: keyof typeof NOTICE_TONES
+    icon?: React.ReactNode
+    children: React.ReactNode
+    className?: string
+}) {
+    return (
+        <div className={`rounded-tile border px-3.5 py-3 text-sm ${NOTICE_TONES[tone]} ${className}`}>
+            <div className="flex items-start gap-2.5">
+                {icon ? <span className="mt-0.5 shrink-0">{icon}</span> : null}
+                <div className="min-w-0 flex-1">{children}</div>
+            </div>
+        </div>
+    )
+}
+
+/** One diagnostics row. `neutral` means "absent is not a failure". */
+function DiagnosticRow({ ok, label, neutral }: { ok: boolean; label: string; neutral?: boolean }) {
+    return (
+        <p className={`flex items-center gap-2 ${ok ? 'text-success-text' : neutral ? 'text-ink-faint' : 'text-error-text'}`}>
+            {ok ? <CheckCircle size={14} aria-hidden /> : <XCircle size={14} aria-hidden />}
+            <span>{label}</span>
+        </p>
+    )
+}
+
+/** Raw QB payloads. Sunken track, mono, its own scrollbar — never the page's. */
+function CodeBlock({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+    return (
+        <pre className={`scroll-region mt-1 rounded-input bg-surface-sunken p-1.5 font-mono text-[10px] text-ink-body ${className}`}>
+            {children}
+        </pre>
+    )
+}
 
 function SettingsPageContent() {
     const [activeTab, setActiveTab] = useState('general')
@@ -53,6 +127,7 @@ function SettingsPageContent() {
         const success = searchParams.get('success')
         const detail = searchParams.get('detail')
         const tab = searchParams.get('tab')
+        const notice = searchParams.get('notice')
         
         if (tab === 'integrations') {
             setActiveTab('integrations')
@@ -86,6 +161,18 @@ function SettingsPageContent() {
             toast.success('Successfully connected to QuickBooks!', { duration: 5000, icon: '\u2705' })
             router.replace('/settings?tab=integrations', { scroll: false })
             fetchIntegrationStatus()
+        }
+
+        // Additive to the success toast above: the connection worked, the free
+        // trial is what did not apply. Read in the same pass, because the
+        // router.replace() in either branch drops the param before a re-run.
+        if (notice === 'trial_already_used') {
+            handledOAuthRef.current = true
+            toast(
+                'This QuickBooks company has already had a Kyriq trial, so a new one was not started. The connection is active — choose a plan on the Billing page to keep processing.',
+                { duration: 12000, icon: 'ℹ️' }
+            )
+            router.replace('/settings?tab=integrations', { scroll: false })
         }
     }, [mounted, searchParams])
 
@@ -520,716 +607,674 @@ function SettingsPageContent() {
         }
     }
 
-    const tabs = [
-        { id: 'general', label: 'General', icon: SettingsIcon },
-        { id: 'integrations', label: 'Integrations', icon: Plug },
-        { id: 'team', label: 'Team', icon: Users },
-    ]
-
     return (
-        <div className="p-8 max-w-6xl mx-auto">
-                <h1 className="text-3xl font-bold text-gray-900 mb-2">Settings</h1>
-                <p className="text-gray-600 mb-8">Manage your application settings and integrations</p>
-
-            {/* Tabs Navigation */}
-            <div className="border-b border-gray-200 mb-8">
-                <nav className="flex gap-8">
-                    {tabs.map((tab) => (
-                        <button
-                            key={tab.id}
-                            onClick={() => setActiveTab(tab.id)}
-                            className={`flex items-center gap-2 pb-4 px-1 border-b-2 font-medium text-sm transition-colors ${
-                                activeTab === tab.id
-                                    ? 'border-blue-600 text-blue-600'
-                                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-                            }`}
-                        >
-                            <tab.icon size={18} />
-                            {tab.label}
-                        </button>
-                    ))}
-                </nav>
+        <div className="mx-auto max-w-6xl space-y-5 p-5" data-tone="brand">
+            <div>
+                <h1 className="font-heading text-2xl font-semibold text-ink-strong">Settings</h1>
+                <p className="mt-0.5 text-sm text-ink-faint">Manage your application settings and integrations</p>
             </div>
 
-            {/* General Settings Tab */}
-            {activeTab === 'general' && (
-                <div className="space-y-6">
-                    {/* Export Preferences */}
-                    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-                        <h2 className="text-lg font-semibold text-gray-900 mb-4">Export Preferences</h2>
+            {/* Tabs. One recessed track with a transform-driven thumb — not four
+                underlined buttons, which was the fifth header recipe in the app. */}
+            <Tabs
+                items={TABS}
+                value={activeTab}
+                onValueChange={setActiveTab}
+                aria-label="Settings sections"
+                className="max-w-xl"
+            />
 
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-1">
-                                    Default Export Status
-                                </label>
-                                <select className="w-full border rounded-lg px-3 py-2 text-sm">
-                                    <option>Draft</option>
-                                    <option>Ready to Post</option>
-                                </select>
-                            </div>
+            {/* ── General ─────────────────────────────── */}
+            <TabPanel value="general" active={activeTab} className="space-y-5">
+                <GlassCard padding="lg" className="space-y-4">
+                    <GlassCardTitle>Export Preferences</GlassCardTitle>
 
-                            <div className="flex items-center gap-2">
-                                <input type="checkbox" id="auto-export" className="rounded text-blue-600" />
-                                <label htmlFor="auto-export" className="text-sm text-gray-700">Auto-export approved checks (when confidence &gt; 95%)</label>
-                            </div>
-                        </div>
+                    <Field label="Default export status" htmlFor="export-status">
+                        <Select id="export-status" className="sm:max-w-xs">
+                            <option>Draft</option>
+                            <option>Ready to Post</option>
+                        </Select>
+                    </Field>
 
-                        <div className="mt-6 flex justify-end">
-                            <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm">
-                                <Save className="w-4 h-4" />
-                                Save Changes
-                            </button>
-                        </div>
+                    <label htmlFor="auto-export" className="flex cursor-pointer items-start gap-2.5 text-sm text-ink-body">
+                        <input
+                            type="checkbox"
+                            id="auto-export"
+                            className="mt-0.5 h-4 w-4 shrink-0 rounded-[5px] border border-glass-hairline bg-white/70 accent-primary"
+                        />
+                        <span>Auto-export approved cheques (when confidence &gt; 95%)</span>
+                    </label>
+
+                    <div className="flex justify-end">
+                        <Button size="sm" icon={<Save className="h-4 w-4" />}>Save Changes</Button>
                     </div>
-                </div>
-            )}
+                </GlassCard>
 
-            {/* Integrations Tab */}
-            {activeTab === 'integrations' && (
-                <div className="space-y-6">
-                    {/* QuickBooks Online Integration */}
-                    <div className="bg-white rounded-lg shadow p-6">
-                        <div className="flex items-start justify-between mb-6">
-                            <div>
-                                <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
-                                    QuickBooks Online
-                                    {qboConnected && <CheckCircle className="text-green-600" size={20} />}
-                                </h2>
-                                <p className="text-gray-600 text-sm mt-1">
-                                    Connect to QuickBooks Online for data import and export
-                                </p>
-                            </div>
-                        </div>
+                {/*
+                  The matching-preferences panel from the v12/v17 prototype
+                  (auto-match threshold, possible-match threshold, amount and
+                  date tolerance, payee normalisation) is deliberately NOT here.
+                  Michael: "I'm not sure why it put the matching preference
+                  under settings? Don't think that has any value." CHECKLIST 3
+                  moves the one control worth keeping — the auto-approve
+                  threshold — next to Approve All on the Review step, where it
+                  is used. check-parcel-d.ts fails if this panel reappears.
+                */}
+            </TabPanel>
 
-                        <div className="bg-gray-50 rounded-lg p-4 mb-4">
-                            <div className="flex items-center justify-between">
-                                <div className="flex-1">
-                                    <p className="font-medium text-gray-900">Connection Status</p>
-                                    <div className="mt-2 space-y-1">
-                                        {qbConfigured ? (
-                                            <div className="flex items-center gap-2 text-blue-600 text-sm">
-                                                <Key size={14} />
-                                                <span>Credentials configured (from .env.local)</span>
-                                            </div>
-                                        ) : (
-                                            <div className="flex items-center gap-2 text-amber-600 text-sm">
-                                                <AlertCircle size={14} />
-                                                <span>Credentials not configured</span>
-                                            </div>
-                                        )}
-                                        {qboConnected ? (
-                                            <div className="space-y-1">
-                                                <div className="flex items-center gap-2 text-green-600 text-sm">
-                                                    <CheckCircle size={14} />
-                                                    <span>Connected to QuickBooks</span>
-                                                </div>
-                                                {companyName && (
-                                                    <div className="text-sm font-semibold text-gray-900 ml-5">
-                                                        Company: {companyName}
-                                                    </div>
-                                                )}
-                                                {companyId && (
-                                                    <div className="text-xs text-gray-500 ml-5">
-                                                        Realm ID: {companyId}
-                                                    </div>
-                                                )}
-                                                <div className="mt-2 ml-5 p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-800">
-                                                    <p className="font-medium mb-1">💡 Multiple Companies?</p>
-                                                    <p>To switch to a different QuickBooks company, click "Disconnect" then "Connect to QuickBooks" again and select the company you want to use.</p>
-                                                </div>
-                                            </div>
-                                        ) : (
-                                            <div className="flex items-center gap-2 text-gray-500 text-sm">
-                                                <XCircle size={14} />
-                                                <span>Not connected - OAuth required</span>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                                <div className="flex gap-2">
-                                    {qbConfigured && !qboConnected && (
-                                        <button
-                                            onClick={handleTestConnection}
-                                            disabled={testingConnection}
-                                            className="px-4 py-2 border border-blue-300 text-blue-700 rounded-lg hover:bg-blue-50 flex items-center gap-2 disabled:opacity-50"
-                                        >
-                                            {testingConnection ? <Loader2 size={16} className="animate-spin" /> : <Plug size={16} />}
-                                            Test Connection
-                                        </button>
+            {/* ── Integrations ────────────────────────── */}
+            <TabPanel value="integrations" active={activeTab} className="space-y-5">
+                {/* QuickBooks Online */}
+                <GlassCard padding="lg" className="space-y-4">
+                    <div>
+                        <GlassCardTitle className="flex items-center gap-2">
+                            QuickBooks Online
+                            {qboConnected && <CheckCircle className="text-success" size={18} aria-label="Connected" />}
+                        </GlassCardTitle>
+                        <p className="mt-1 text-sm text-ink-body">
+                            Connect to QuickBooks Online for data import and export
+                        </p>
+                    </div>
+
+                    <GlassPanel tone="sunken" radius="tile" padding="md">
+                        <div className="flex flex-wrap items-start justify-between gap-4">
+                            <div className="min-w-0 flex-1">
+                                <p className="text-sm font-semibold text-ink-strong">Connection Status</p>
+                                <div className="mt-2 space-y-1.5">
+                                    {qbConfigured ? (
+                                        <p className="flex items-center gap-2 text-sm text-info-text">
+                                            <Key size={14} aria-hidden />
+                                            <span>Credentials configured</span>
+                                        </p>
+                                    ) : (
+                                        <p className="flex items-center gap-2 text-sm text-warning-text">
+                                            <AlertCircle size={14} aria-hidden />
+                                            <span>Credentials not configured</span>
+                                        </p>
                                     )}
                                     {qboConnected ? (
-                                        <button
-                                            onClick={handleQBODisconnect}
-                                            className="px-4 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50"
-                                        >
-                                            Disconnect
-                                        </button>
-                                    ) : (
-                                        <div className="flex gap-2">
-                                            <button
-                                                onClick={() => setShowQBCredentialsDialog(true)}
-                                                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex items-center gap-2"
-                                        >
-                                            <Key size={16} />
-                                            Configure Credentials
-                                        </button>
-                                        <button
-                                            onClick={handleQBOConnect}
-                                            className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 flex items-center gap-2"
-                                        >
-                                            <ExternalLink size={16} />
-                                            Connect to QuickBooks
-                                        </button>
+                                        <div className="space-y-1.5">
+                                            <p className="flex items-center gap-2 text-sm text-success-text">
+                                                <CheckCircle size={14} aria-hidden />
+                                                <span>Connected to QuickBooks</span>
+                                            </p>
+                                            {companyName && (
+                                                <p className="ml-5 text-sm font-semibold text-ink-strong">
+                                                    Company: {companyName}
+                                                </p>
+                                            )}
+                                            {companyId && (
+                                                <p className="nums ml-5 text-xs text-ink-faint">
+                                                    Realm ID: {companyId}
+                                                </p>
+                                            )}
+                                            <Notice tone="info" className="ml-5 mt-2 text-xs">
+                                                <p className="mb-1 font-semibold">Multiple companies?</p>
+                                                <p>To switch to a different QuickBooks company, click Disconnect, then Connect to QuickBooks again and select the company you want to use.</p>
+                                            </Notice>
                                         </div>
+                                    ) : (
+                                        <p className="flex items-center gap-2 text-sm text-ink-faint">
+                                            <XCircle size={14} aria-hidden />
+                                            <span>Not connected &mdash; OAuth required</span>
+                                        </p>
                                     )}
                                 </div>
                             </div>
-                        </div>
-
-                        {/* Connection Diagnostics */}
-                        {qbConfigured && (
-                            <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-4">
-                                <p className="font-medium text-gray-900 text-sm mb-3">Connection Diagnostics</p>
-                                <div className="grid grid-cols-2 gap-3 text-xs">
-                                    <div className="flex items-center gap-2">
-                                        {credentialsExist ? <CheckCircle size={14} className="text-green-600" /> : <XCircle size={14} className="text-red-500" />}
-                                        <span className={credentialsExist ? 'text-green-800' : 'text-red-700'}>
-                                            {credentialsExist ? 'Credentials saved in DB' : 'No credentials in DB (using env vars)'}
-                                        </span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        {qboConnected ? <CheckCircle size={14} className="text-green-600" /> : <XCircle size={14} className="text-red-500" />}
-                                        <span className={qboConnected ? 'text-green-800' : 'text-red-700'}>
-                                            {qboConnected ? 'OAuth tokens present' : 'No OAuth tokens'}
-                                        </span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        {companyId ? <CheckCircle size={14} className="text-green-600" /> : <XCircle size={14} className="text-gray-400" />}
-                                        <span className={companyId ? 'text-green-800' : 'text-gray-500'}>
-                                            {companyId ? `Realm ID: ${companyId}` : 'No company selected'}
-                                        </span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                        {companyName ? <CheckCircle size={14} className="text-green-600" /> : <XCircle size={14} className="text-gray-400" />}
-                                        <span className={companyName ? 'text-green-800' : 'text-gray-500'}>
-                                            {companyName ? `Company: ${companyName}` : 'Company name not fetched'}
-                                        </span>
-                                    </div>
-                                </div>
-                                {qboConnected && (
-                                    <button
+                            <div className="flex flex-wrap gap-2">
+                                {qbConfigured && !qboConnected && (
+                                    <Button
+                                        variant="secondary"
+                                        size="sm"
                                         onClick={handleTestConnection}
-                                        disabled={testingConnection}
-                                        className="mt-3 px-3 py-1.5 text-xs bg-white border border-gray-300 rounded hover:bg-gray-50 flex items-center gap-1.5 disabled:opacity-50"
+                                        loading={testingConnection}
+                                        icon={<Plug size={16} />}
                                     >
-                                        {testingConnection ? <Loader2 size={12} className="animate-spin" /> : <Plug size={12} />}
-                                        Diagnose Connection
-                                    </button>
+                                        Test Connection
+                                    </Button>
+                                )}
+                                {qboConnected ? (
+                                    <Button variant="destructive" size="sm" onClick={handleQBODisconnect}>
+                                        Disconnect
+                                    </Button>
+                                ) : (
+                                    <>
+                                        <Button
+                                            variant="secondary"
+                                            size="sm"
+                                            onClick={() => setShowQBCredentialsDialog(true)}
+                                            icon={<Key size={16} />}
+                                        >
+                                            Configure Credentials
+                                        </Button>
+                                        <Button size="sm" onClick={handleQBOConnect} icon={<ExternalLink size={16} />}>
+                                            Connect to QuickBooks
+                                        </Button>
+                                    </>
                                 )}
                             </div>
-                        )}
-
-                        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
-                            <AlertCircle className="text-blue-600 flex-shrink-0 mt-0.5" size={20} />
-                            <div className="text-sm text-blue-900">
-                                <p className="font-medium mb-1">What you can do:</p>
-                                <ul className="list-disc list-inside space-y-1 text-blue-800">
-                                    <li>Import QuickBooks data for comparison</li>
-                                    <li>Export checks as Expenses or Check transactions</li>
-                                    <li>Automatic duplicate detection</li>
-                                    <li>Map payees to QuickBooks vendors</li>
-                                </ul>
-                            </div>
                         </div>
+                    </GlassPanel>
 
-                        {/* Pull Data Section with Filters */}
-                        {qboConnected && (
-                            <div className="mt-6 space-y-4">
-                                <div className="border-t border-gray-200 pt-6">
-                                    <h3 className="text-lg font-semibold text-gray-900 mb-4">Fetch QuickBooks Data</h3>
-                                    <p className="text-sm text-gray-600 mb-4">
-                                        Pull cheque data from QuickBooks with optional filters to control what data is imported.
-                                    </p>
-                                    
-                                    <QuickBooksFilters 
-                                        onApplyFilters={handlePullData}
-                                        isLoading={pullingData}
-                                        qbConnected={qboConnected}
-                                    />
+                    {/* Connection Diagnostics */}
+                    {qbConfigured && (
+                        <GlassPanel tone="sunken" radius="tile" padding="md">
+                            <p className="mb-3 text-sm font-semibold text-ink-strong">Connection Diagnostics</p>
+                            <div className="grid grid-cols-1 gap-2 text-xs sm:grid-cols-2">
+                                <DiagnosticRow
+                                    ok={credentialsExist}
+                                    label={credentialsExist ? 'Credentials saved in DB' : 'No credentials in DB (using env vars)'}
+                                />
+                                <DiagnosticRow
+                                    ok={qboConnected}
+                                    label={qboConnected ? 'OAuth tokens present' : 'No OAuth tokens'}
+                                />
+                                <DiagnosticRow
+                                    ok={Boolean(companyId)}
+                                    neutral
+                                    label={companyId ? `Realm ID: ${companyId}` : 'No company selected'}
+                                />
+                                <DiagnosticRow
+                                    ok={Boolean(companyName)}
+                                    neutral
+                                    label={companyName ? `Company: ${companyName}` : 'Company name not fetched'}
+                                />
+                            </div>
+                            {qboConnected && (
+                                <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="mt-3"
+                                    onClick={handleTestConnection}
+                                    loading={testingConnection}
+                                    icon={<Plug size={14} />}
+                                >
+                                    Diagnose Connection
+                                </Button>
+                            )}
+                        </GlassPanel>
+                    )}
 
-                                    {pullResult && (
-                                        <div className={`mt-4 rounded-lg p-4 flex items-start gap-3 ${
-                                            pullResult.success
-                                                ? 'bg-emerald-50 border border-emerald-200'
-                                                : 'bg-red-50 border border-red-200'
-                                        }`}>
-                                            {pullResult.success
-                                                ? <CheckCircle className="text-emerald-600 flex-shrink-0 mt-0.5" size={18} />
-                                                : <AlertCircle className="text-red-600 flex-shrink-0 mt-0.5" size={18} />
-                                            }
-                                            <div className="flex-1">
-                                                <p className={`text-sm font-medium ${
-                                                    pullResult.success ? 'text-emerald-800' : 'text-red-800'
-                                                }`}>
-                                                    {pullResult.message}
-                                                </p>
-                                                {pullResult.success && pullResult.data && (
-                                                    <div className="mt-2 text-xs text-emerald-700">
-                                                        <p className="font-medium mb-1">Breakdown:</p>
-                                                        <ul className="space-y-0.5">
-                                                            <li>• Cheques Written: {pullResult.data.breakdown?.cheques_written || 0}</li>
-                                                            <li>• Bills Paid by Cheque: {pullResult.data.breakdown?.bills_paid_by_cheque || 0}</li>
-                                                            <li>• Cheques Received: {pullResult.data.breakdown?.cheques_received || 0}</li>
+                    <Notice tone="info" icon={<AlertCircle size={18} aria-hidden />}>
+                        <p className="font-semibold">What you can do:</p>
+                        <ul className="mt-1 list-inside list-disc space-y-0.5">
+                            <li>Import QuickBooks data for comparison</li>
+                            <li>Export cheques as Expenses or Check transactions</li>
+                            <li>Automatic duplicate detection</li>
+                            <li>Map payees to QuickBooks vendors</li>
+                        </ul>
+                    </Notice>
+
+                    {/* Pull Data Section with Filters */}
+                    {qboConnected && (
+                        <div className="space-y-4 border-t border-glass-hairline pt-5">
+                            <div>
+                                <GlassCardTitle className="text-base">Fetch QuickBooks Data</GlassCardTitle>
+                                <p className="mt-1 text-sm text-ink-body">
+                                    Pull cheque data from QuickBooks with optional filters to control what data is imported.
+                                </p>
+                            </div>
+
+                            <QuickBooksFilters
+                                onApplyFilters={handlePullData}
+                                isLoading={pullingData}
+                                qbConnected={qboConnected}
+                            />
+
+                            {pullResult && (
+                                <Notice
+                                    tone={pullResult.success ? 'success' : 'error'}
+                                    icon={pullResult.success
+                                        ? <CheckCircle size={18} aria-hidden />
+                                        : <AlertCircle size={18} aria-hidden />}
+                                >
+                                    <p className="whitespace-pre-line text-sm font-medium">{pullResult.message}</p>
+                                    {pullResult.success && pullResult.data && (
+                                        <div className="mt-2 text-xs">
+                                            <p className="mb-1 font-semibold">Breakdown:</p>
+                                            <ul className="nums space-y-0.5">
+                                                <li>Cheques written: {pullResult.data.breakdown?.cheques_written || 0}</li>
+                                                <li>Bills paid by cheque: {pullResult.data.breakdown?.bills_paid_by_cheque || 0}</li>
+                                                <li>Cheques received: {pullResult.data.breakdown?.cheques_received || 0}</li>
+                                            </ul>
+                                            {pullResult.data.count === 0 && (
+                                                <div className="mt-3 border-t border-success-border pt-3">
+                                                    <p className="mb-2 font-semibold text-warning-text">
+                                                        No results found with the current filters
+                                                    </p>
+                                                    <Button size="sm" onClick={() => handlePullData({})}>
+                                                        Try All Time (No Filters)
+                                                    </Button>
+                                                    <p className="mt-1.5 text-ink-faint">
+                                                        Fetches every cheque transaction, to verify data exists in QuickBooks
+                                                    </p>
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </Notice>
+                            )}
+
+                            {/* Diagnose Connection */}
+                            <div className="border-t border-glass-hairline pt-4">
+                                <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    onClick={handleDiagnose}
+                                    loading={diagnosing}
+                                    icon={<AlertCircle size={14} />}
+                                >
+                                    {diagnosing ? 'Running diagnostics…' : 'Diagnose Connection (0 results?)'}
+                                </Button>
+                                <p className="mt-1.5 text-xs text-ink-faint">
+                                    Runs wide-open QB queries with no filters to verify your token, company, and whether data exists.
+                                </p>
+
+                                {diagnosisResult && (
+                                    <Notice tone="warning" className="mt-3">
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="min-w-0 flex-1">
+                                                <p className="mb-2 text-sm font-semibold">{diagnosisResult.conclusion}</p>
+                                                {diagnosisResult.recommendation && (
+                                                    <p className="rounded-input border border-warning-border bg-warning-bg/60 p-2 text-xs">
+                                                        <strong>Next steps:</strong> {diagnosisResult.recommendation}
+                                                    </p>
+                                                )}
+                                                {diagnosisResult.summary && (
+                                                    <div className="nums mt-2 flex flex-wrap gap-3 text-xs">
+                                                        <span>{diagnosisResult.summary.successfulSteps} passed</span>
+                                                        <span>{diagnosisResult.summary.failedSteps} failed</span>
+                                                        <span>{diagnosisResult.summary.totalSteps} total checks</span>
+                                                    </div>
+                                                )}
+                                                {diagnosisResult.entitiesWithData && diagnosisResult.entitiesWithData.length > 0 && (
+                                                    <div className="mt-3 rounded-input border border-success-border bg-success-bg p-2 text-xs text-success-text">
+                                                        <p className="mb-1 font-semibold">Data found in QuickBooks:</p>
+                                                        <ul className="nums space-y-0.5">
+                                                            {diagnosisResult.entitiesWithData.map((item: any, i: number) => (
+                                                                <li key={i}>
+                                                                    <strong>{item.type}</strong>: {item.count.toLocaleString()} records &mdash; {item.description}
+                                                                </li>
+                                                            ))}
                                                         </ul>
-                                                        {pullResult.data.count === 0 && (
-                                                            <div className="mt-3 pt-3 border-t border-emerald-200">
-                                                                <p className="font-medium text-amber-700 mb-2">⚠️ 0 results found with current filters</p>
-                                                                <button
-                                                                    onClick={() => handlePullData({})}
-                                                                    className="px-3 py-1.5 text-xs font-medium text-white bg-blue-600 rounded hover:bg-blue-700 transition"
-                                                                >
-                                                                    Try All Time (No Filters)
-                                                                </button>
-                                                                <p className="text-[10px] text-gray-600 mt-1">
-                                                                    This will fetch ALL check transactions to verify data exists in QuickBooks
-                                                                </p>
-                                                            </div>
+                                                    </div>
+                                                )}
+                                                {diagnosisResult.entitiesWithData && diagnosisResult.entitiesWithData.length === 0 && (
+                                                    <p className="mt-3 rounded-input border border-error-border bg-error-bg p-2 text-xs font-medium text-error-text">
+                                                        No data found in ANY QuickBooks entity type. This company appears to be empty, or you are connected to the wrong company.
+                                                    </p>
+                                                )}
+                                            </div>
+                                            <Button
+                                                variant="secondary"
+                                                size="sm"
+                                                className="shrink-0"
+                                                onClick={() => {
+                                                    navigator.clipboard.writeText(JSON.stringify(diagnosisResult, null, 2));
+                                                    toast.success('Diagnostic report copied to clipboard', { duration: 2000 });
+                                                }}
+                                            >
+                                                Copy Report
+                                            </Button>
+                                        </div>
+                                        <div className="scroll-region mt-3 max-h-96 space-y-2">
+                                            {diagnosisResult.steps?.map((step: any, i: number) => (
+                                                <div
+                                                    key={i}
+                                                    className={`rounded-input border p-2 text-xs ${step.success
+                                                        ? 'border-success-border bg-success-bg text-success-text'
+                                                        : 'border-error-border bg-error-bg text-error-text'}`}
+                                                >
+                                                    <div className="flex items-center gap-2 font-medium">
+                                                        {step.success
+                                                            ? <CheckCircle size={12} aria-hidden />
+                                                            : <XCircle size={12} aria-hidden />}
+                                                        <span>{step.step}</span>
+                                                        {step.count !== undefined && (
+                                                            <span className="nums ml-auto rounded-full bg-white/70 px-2 py-0.5 text-ink-body">
+                                                                {step.count} results {step.totalCount ? `(${step.totalCount} total)` : ''}
+                                                            </span>
                                                         )}
+                                                    </div>
+                                                    {step.query && <CodeBlock>{step.query}</CodeBlock>}
+                                                    {step.error && <p className="mt-1 text-error-text">{step.error}</p>}
+                                                    {step.data && <CodeBlock>{JSON.stringify(step.data, null, 2)}</CodeBlock>}
+                                                    {step.sample && step.sample.length > 0 && (
+                                                        <details className="mt-1">
+                                                            <summary className="cursor-pointer text-ink-faint hover:text-ink-body">
+                                                                View sample data ({step.sample.length} records)
+                                                            </summary>
+                                                            <CodeBlock className="max-h-40">{JSON.stringify(step.sample, null, 2)}</CodeBlock>
+                                                        </details>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </Notice>
+                                )}
+                            </div>
+
+                            {/* Explore All QB Data */}
+                            <div className="border-t border-glass-hairline pt-4">
+                                <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    onClick={handleExplore}
+                                    loading={exploring}
+                                    icon={<ExternalLink size={14} />}
+                                >
+                                    {exploring ? 'Exploring all data…' : 'Explore All QB Data (14 Entity Types)'}
+                                </Button>
+                                <p className="mt-1.5 text-xs text-ink-faint">
+                                    See what data actually exists in this QuickBooks company: Bills, Invoices, Purchases, Payments, etc.
+                                </p>
+
+                                {exploreResult && (
+                                    <Notice tone="info" className="mt-3">
+                                        <div className="flex items-start justify-between gap-3">
+                                            <div className="min-w-0 flex-1">
+                                                <p className="mb-2 text-sm font-semibold">
+                                                    Company: {exploreResult.company?.name || 'Unknown'}
+                                                </p>
+                                                {exploreResult.summary && (
+                                                    <div className="nums mb-2 flex flex-wrap gap-3 text-xs">
+                                                        <span>{exploreResult.summary.entitiesWithData} have data</span>
+                                                        <span>{exploreResult.summary.entitiesWithoutData} empty</span>
+                                                        <span>{exploreResult.summary.totalEntitiesChecked} total</span>
+                                                    </div>
+                                                )}
+                                                {exploreResult.hasData && exploreResult.hasData.length > 0 && (
+                                                    <div className="rounded-input border border-info-border bg-info-bg/60 p-2 text-xs">
+                                                        <p className="mb-1 font-semibold">Data found in:</p>
+                                                        <ul className="nums space-y-0.5">
+                                                            {exploreResult.hasData.map((item: any, i: number) => (
+                                                                <li key={i}>
+                                                                    <strong>{item.type}</strong>: {item.count.toLocaleString()} records &mdash; {item.description}
+                                                                </li>
+                                                            ))}
+                                                        </ul>
                                                     </div>
                                                 )}
                                             </div>
+                                            <Button
+                                                variant="secondary"
+                                                size="sm"
+                                                className="shrink-0"
+                                                onClick={() => {
+                                                    navigator.clipboard.writeText(JSON.stringify(exploreResult, null, 2));
+                                                    toast.success('Exploration report copied', { duration: 2000 });
+                                                }}
+                                            >
+                                                Copy Report
+                                            </Button>
                                         </div>
-                                    )}
-
-                                    {/* Diagnose Connection */}
-                                    <div className="mt-4 pt-4 border-t border-gray-200">
-                                        <button
-                                            onClick={handleDiagnose}
-                                            disabled={diagnosing}
-                                            className="px-4 py-2 text-sm font-medium text-amber-700 bg-amber-50 border border-amber-200 rounded-lg hover:bg-amber-100 disabled:opacity-50 transition flex items-center gap-2"
-                                        >
-                                            {diagnosing ? (
-                                                <><Loader2 size={14} className="animate-spin" /> Running Diagnostics...</>
-                                            ) : (
-                                                <><AlertCircle size={14} /> Diagnose Connection (0 results?)</>
-                                            )}
-                                        </button>
-                                        <p className="text-xs text-gray-500 mt-1">
-                                            Runs wide-open QB queries with no filters to verify your token, company, and whether data exists.
-                                        </p>
-
-                                        {diagnosisResult && (
-                                            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm">
-                                                <div className="flex items-start justify-between mb-3">
-                                                    <div className="flex-1">
-                                                        <p className="font-bold text-amber-900 mb-2">
-                                                            🔍 {diagnosisResult.conclusion}
-                                                        </p>
-                                                        {diagnosisResult.recommendation && (
-                                                            <p className="text-xs text-amber-800 bg-amber-100 p-2 rounded border border-amber-300">
-                                                                💡 <strong>Next Steps:</strong> {diagnosisResult.recommendation}
-                                                            </p>
-                                                        )}
-                                                        {diagnosisResult.summary && (
-                                                            <div className="mt-2 text-xs text-amber-700 flex gap-4">
-                                                                <span>✅ {diagnosisResult.summary.successfulSteps} passed</span>
-                                                                <span>❌ {diagnosisResult.summary.failedSteps} failed</span>
-                                                                <span>📊 {diagnosisResult.summary.totalSteps} total checks</span>
-                                                            </div>
-                                                        )}
-                                                        {diagnosisResult.entitiesWithData && diagnosisResult.entitiesWithData.length > 0 && (
-                                                            <div className="mt-3 text-xs bg-emerald-100 p-2 rounded border border-emerald-300">
-                                                                <p className="font-medium text-emerald-900 mb-1">📊 Data Found In QuickBooks:</p>
-                                                                <ul className="space-y-0.5 text-emerald-800">
-                                                                    {diagnosisResult.entitiesWithData.map((item: any, i: number) => (
-                                                                        <li key={i}>
-                                                                            <strong>{item.type}</strong>: {item.count.toLocaleString()} records — {item.description}
-                                                                        </li>
-                                                                    ))}
-                                                                </ul>
-                                                            </div>
-                                                        )}
-                                                        {diagnosisResult.entitiesWithData && diagnosisResult.entitiesWithData.length === 0 && (
-                                                            <div className="mt-3 text-xs bg-red-100 p-2 rounded border border-red-300">
-                                                                <p className="font-medium text-red-900">⚠️ No data found in ANY QuickBooks entity type. This company appears to be empty or you're connected to the wrong company.</p>
-                                                            </div>
+                                        <div className="scroll-region mt-3 max-h-96 space-y-2">
+                                            {exploreResult.entities?.map((entity: any, i: number) => (
+                                                <div
+                                                    key={i}
+                                                    className={`rounded-input border p-2 text-xs ${entity.totalCount > 0
+                                                        ? 'border-success-border bg-success-bg text-success-text'
+                                                        : 'border-glass-hairline bg-surface-sunken text-ink-body'}`}
+                                                >
+                                                    <div className="flex flex-wrap items-center gap-2 font-medium">
+                                                        <span className="font-semibold">{entity.entityType}</span>
+                                                        <span className="opacity-80">&mdash; {entity.description}</span>
+                                                        {entity.totalCount !== undefined && (
+                                                            <span className="nums ml-auto rounded-full bg-white/70 px-2 py-0.5 text-ink-body">
+                                                                {entity.totalCount.toLocaleString()} total
+                                                            </span>
                                                         )}
                                                     </div>
-                                                    <button
-                                                        onClick={() => {
-                                                            const text = JSON.stringify(diagnosisResult, null, 2);
-                                                            navigator.clipboard.writeText(text);
-                                                            toast.success('Diagnostic report copied to clipboard!', { duration: 2000 });
-                                                        }}
-                                                        className="ml-3 px-3 py-1 text-xs font-medium text-amber-700 bg-white border border-amber-300 rounded hover:bg-amber-50 transition flex items-center gap-1 flex-shrink-0"
-                                                    >
-                                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                                        </svg>
-                                                        Copy Report
-                                                    </button>
+                                                    {entity.error && <p className="mt-1 text-error-text">{entity.error}</p>}
+                                                    {entity.samples && entity.samples.length > 0 && (
+                                                        <details className="mt-1">
+                                                            <summary className="cursor-pointer text-ink-faint hover:text-ink-body">
+                                                                View sample data ({entity.samples.length} records)
+                                                            </summary>
+                                                            <CodeBlock className="max-h-40">{JSON.stringify(entity.samples, null, 2)}</CodeBlock>
+                                                        </details>
+                                                    )}
                                                 </div>
-                                                <div className="space-y-2 max-h-96 overflow-y-auto">
-                                                    {diagnosisResult.steps?.map((step: any, i: number) => (
-                                                        <div key={i} className={`p-2 rounded text-xs ${
-                                                            step.success ? 'bg-emerald-50 border border-emerald-200' : 'bg-red-50 border border-red-200'
-                                                        }`}>
-                                                            <div className="flex items-center gap-2 font-medium">
-                                                                <span>{step.success ? '✅' : '❌'}</span>
-                                                                <span>{step.step}</span>
-                                                                {step.count !== undefined && (
-                                                                    <span className="ml-auto bg-white px-2 py-0.5 rounded text-gray-700">
-                                                                        {step.count} results {step.totalCount ? `(${step.totalCount} total)` : ''}
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            {step.query && (
-                                                                <pre className="mt-1 text-[10px] text-gray-600 bg-white p-1 rounded overflow-x-auto">{step.query}</pre>
-                                                            )}
-                                                            {step.error && (
-                                                                <p className="mt-1 text-red-700">{step.error}</p>
-                                                            )}
-                                                            {step.data && (
-                                                                <pre className="mt-1 text-[10px] text-gray-600 bg-white p-1 rounded overflow-x-auto">
-                                                                    {JSON.stringify(step.data, null, 2)}
-                                                                </pre>
-                                                            )}
-                                                            {step.sample && step.sample.length > 0 && (
-                                                                <details className="mt-1">
-                                                                    <summary className="text-[10px] cursor-pointer text-gray-500 hover:text-gray-700">
-                                                                        View sample data ({step.sample.length} records)
-                                                                    </summary>
-                                                                    <pre className="mt-1 text-[10px] text-gray-600 bg-white p-1 rounded overflow-x-auto max-h-40">
-                                                                        {JSON.stringify(step.sample, null, 2)}
-                                                                    </pre>
-                                                                </details>
-                                                            )}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    {/* Explore All QB Data */}
-                                    <div className="mt-4 pt-4 border-t border-gray-200">
-                                        <button
-                                            onClick={handleExplore}
-                                            disabled={exploring}
-                                            className="px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 disabled:opacity-50 transition flex items-center gap-2"
-                                        >
-                                            {exploring ? (
-                                                <><Loader2 size={14} className="animate-spin" /> Exploring All Data...</>
-                                            ) : (
-                                                <><ExternalLink size={14} /> Explore All QB Data (14 Entity Types)</>
-                                            )}
-                                        </button>
-                                        <p className="text-xs text-gray-500 mt-1">
-                                            See what data actually exists in this QuickBooks company: Bills, Invoices, Purchases, Payments, etc.
-                                        </p>
-
-                                        {exploreResult && (
-                                            <div className="mt-3 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm">
-                                                <div className="flex items-start justify-between mb-3">
-                                                    <div className="flex-1">
-                                                        <p className="font-bold text-blue-900 mb-2">
-                                                            📊 Company: {exploreResult.company?.name || 'Unknown'}
-                                                        </p>
-                                                        {exploreResult.summary && (
-                                                            <div className="text-xs text-blue-700 flex gap-4 mb-2">
-                                                                <span>✅ {exploreResult.summary.entitiesWithData} have data</span>
-                                                                <span>⚪ {exploreResult.summary.entitiesWithoutData} empty</span>
-                                                                <span>📋 {exploreResult.summary.totalEntitiesChecked} total</span>
-                                                            </div>
-                                                        )}
-                                                        {exploreResult.hasData && exploreResult.hasData.length > 0 && (
-                                                            <div className="text-xs bg-blue-100 p-2 rounded border border-blue-300">
-                                                                <p className="font-medium text-blue-900 mb-1">💡 Data Found In:</p>
-                                                                <ul className="space-y-0.5">
-                                                                    {exploreResult.hasData.map((item: any, i: number) => (
-                                                                        <li key={i}>
-                                                                            <strong>{item.type}</strong>: {item.count.toLocaleString()} records — {item.description}
-                                                                        </li>
-                                                                    ))}
-                                                                </ul>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                    <button
-                                                        onClick={() => {
-                                                            const text = JSON.stringify(exploreResult, null, 2);
-                                                            navigator.clipboard.writeText(text);
-                                                            toast.success('Exploration report copied!', { duration: 2000 });
-                                                        }}
-                                                        className="ml-3 px-3 py-1 text-xs font-medium text-blue-700 bg-white border border-blue-300 rounded hover:bg-blue-50 transition flex items-center gap-1 flex-shrink-0"
-                                                    >
-                                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                                        </svg>
-                                                        Copy Report
-                                                    </button>
-                                                </div>
-                                                <div className="space-y-2 max-h-96 overflow-y-auto">
-                                                    {exploreResult.entities?.map((entity: any, i: number) => (
-                                                        <div key={i} className={`p-2 rounded text-xs ${
-                                                            entity.totalCount > 0 ? 'bg-emerald-50 border border-emerald-200' : 'bg-gray-50 border border-gray-200'
-                                                        }`}>
-                                                            <div className="flex items-center gap-2 font-medium">
-                                                                <span>{entity.totalCount > 0 ? '✅' : '⚪'}</span>
-                                                                <span className="font-bold">{entity.entityType}</span>
-                                                                <span className="text-gray-600">— {entity.description}</span>
-                                                                {entity.totalCount !== undefined && (
-                                                                    <span className="ml-auto bg-white px-2 py-0.5 rounded text-gray-700">
-                                                                        {entity.totalCount.toLocaleString()} total
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                            {entity.error && (
-                                                                <p className="mt-1 text-red-700 text-[10px]">{entity.error}</p>
-                                                            )}
-                                                            {entity.samples && entity.samples.length > 0 && (
-                                                                <details className="mt-1">
-                                                                    <summary className="text-[10px] cursor-pointer text-gray-500 hover:text-gray-700">
-                                                                        View sample data ({entity.samples.length} records)
-                                                                    </summary>
-                                                                    <pre className="mt-1 text-[10px] text-gray-600 bg-white p-1 rounded overflow-x-auto max-h-40">
-                                                                        {JSON.stringify(entity.samples, null, 2)}
-                                                                    </pre>
-                                                                </details>
-                                                            )}
-                                                        </div>
-                                                    ))}
-                                                </div>
-                                            </div>
-                                        )}
-                                    </div>
-
-                                    {/* QB Data Preview with Tabs */}
-                                    {exploreResult && exploreResult.entitiesWithData && exploreResult.entitiesWithData.length > 0 && (
-                                        <div className="mt-4 pt-4 border-t border-blue-200">
-                                            <h3 className="text-sm font-semibold text-blue-900 mb-3">📊 Preview Data in Tables</h3>
-                                            
-                                            {/* Entity Type Tabs */}
-                                            <div className="flex flex-wrap gap-2 mb-3">
-                                                {exploreResult.entitiesWithData.map((entity: any) => (
-                                                    <button
-                                                        key={entity.type}
-                                                        onClick={() => handlePreview(entity.type)}
-                                                        className={`px-3 py-1.5 text-xs font-medium rounded transition ${
-                                                            previewType === entity.type
-                                                                ? 'bg-blue-600 text-white'
-                                                                : 'bg-white text-blue-700 border border-blue-300 hover:bg-blue-50'
-                                                        }`}
-                                                    >
-                                                        {entity.type} ({entity.count.toLocaleString()})
-                                                    </button>
-                                                ))}
-                                            </div>
-
-                                            {/* Preview Table */}
-                                            {loadingPreview ? (
-                                                <div className="flex items-center justify-center py-8 text-sm text-gray-500">
-                                                    <Loader2 className="animate-spin mr-2" size={16} />
-                                                    Loading {previewType} data...
-                                                </div>
-                                            ) : previewData?.records ? (
-                                                <QBDataPreview
-                                                    entityType={previewType}
-                                                    data={previewData.records}
-                                                    totalCount={previewData.totalCount}
-                                                />
-                                            ) : previewData?.error ? (
-                                                <div className="text-center py-8 text-sm text-red-600">
-                                                    Error loading {previewType}: {previewData.error}
-                                                </div>
-                                            ) : (
-                                                <div className="text-center py-8 text-sm text-gray-500">
-                                                    Click an entity type above to preview its data
-                                                </div>
-                                            )}
+                                            ))}
                                         </div>
+                                    </Notice>
+                                )}
+                            </div>
+
+                            {/* QB Data Preview with Tabs */}
+                            {exploreResult && exploreResult.entitiesWithData && exploreResult.entitiesWithData.length > 0 && (
+                                <div className="border-t border-glass-hairline pt-4">
+                                    <GlassCardTitle className="mb-3 text-sm">Preview Data in Tables</GlassCardTitle>
+
+                                    <div className="mb-3 flex flex-wrap gap-2">
+                                        {exploreResult.entitiesWithData.map((entity: any) => (
+                                            <Button
+                                                key={entity.type}
+                                                size="sm"
+                                                variant={previewType === entity.type ? 'primary' : 'secondary'}
+                                                onClick={() => handlePreview(entity.type)}
+                                            >
+                                                <span className="nums">{entity.type} ({entity.count.toLocaleString()})</span>
+                                            </Button>
+                                        ))}
+                                    </div>
+
+                                    {loadingPreview ? (
+                                        <p className="flex items-center justify-center gap-2 py-8 text-sm text-ink-faint">
+                                            <Loader2 className="animate-spin" size={16} aria-hidden />
+                                            Loading {previewType} data…
+                                        </p>
+                                    ) : previewData?.records ? (
+                                        <QBDataPreview
+                                            entityType={previewType}
+                                            data={previewData.records}
+                                            totalCount={previewData.totalCount}
+                                        />
+                                    ) : previewData?.error ? (
+                                        <p className="py-8 text-center text-sm text-error-text">
+                                            Error loading {previewType}: {previewData.error}
+                                        </p>
+                                    ) : (
+                                        <p className="py-8 text-center text-sm text-ink-faint">
+                                            Click an entity type above to preview its data
+                                        </p>
                                     )}
                                 </div>
-                            </div>
-                        )}
+                            )}
+                        </div>
+                    )}
+                </GlassCard>
+
+                {/* Import from File */}
+                <GlassCard padding="lg" className="space-y-4">
+                    <div>
+                        <GlassCardTitle className="flex items-center gap-2">
+                            <FileText size={18} aria-hidden />
+                            Import from File
+                        </GlassCardTitle>
+                        <p className="mt-1 text-sm text-ink-body">
+                            Upload a .qbo, .ofx, or .qfx file exported from your bank &mdash; no QuickBooks account needed
+                        </p>
                     </div>
 
-                    {/* Import from File */}
-                    <div className="bg-white rounded-lg shadow p-6">
-                        <div className="flex items-start justify-between mb-4">
-                            <div>
-                                <h2 className="text-xl font-semibold text-gray-900 flex items-center gap-2">
-                                    <FileText size={20} />
-                                    Import from File
-                                </h2>
-                                <p className="text-gray-600 text-sm mt-1">
-                                    Upload a .qbo, .ofx, or .qfx file exported from your bank — no QuickBooks account needed
-                                </p>
-                            </div>
-                        </div>
+                    <div className="relative cursor-pointer rounded-tile border-2 border-dashed border-ink-strong/20 bg-surface-sunken p-8 text-center transition-[border-color,background-color] duration-quick ease-settle hover:border-brand hover:bg-brand-wash">
+                        <input
+                            type="file"
+                            accept=".qbo,.ofx,.qfx"
+                            onChange={handleQBOFileUpload}
+                            className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+                            disabled={uploadingQBO}
+                            aria-label="Upload a .qbo, .ofx or .qfx file"
+                        />
+                        {uploadingQBO ? (
+                            <Loader2 size={32} className="mx-auto mb-3 animate-spin text-brand" aria-hidden />
+                        ) : (
+                            <Upload size={32} className="mx-auto mb-3 text-ink-faint" aria-hidden />
+                        )}
+                        <p className="text-sm font-medium text-ink-strong">
+                            {uploadingQBO ? 'Parsing file…' : 'Drop a .qbo / .ofx / .qfx file here or click to browse'}
+                        </p>
+                        <p className="mt-1 text-xs text-ink-faint">
+                            Download these files from your bank&apos;s online banking portal
+                        </p>
+                    </div>
 
-                        <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-400 transition cursor-pointer relative">
-                            <input
-                                type="file"
-                                accept=".qbo,.ofx,.qfx"
-                                onChange={handleQBOFileUpload}
-                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                                disabled={uploadingQBO}
+                    {qboUploadResult && (
+                        <Notice
+                            tone={qboUploadResult.success ? 'success' : 'error'}
+                            icon={qboUploadResult.success
+                                ? <CheckCircle size={18} aria-hidden />
+                                : <AlertCircle size={18} aria-hidden />}
+                        >
+                            <p className="text-sm">{qboUploadResult.message}</p>
+                        </Notice>
+                    )}
+
+                    <Notice tone="warning" icon={<AlertCircle size={18} aria-hidden />}>
+                        <p className="font-semibold">Two ways to get cheque data:</p>
+                        <ul className="mt-1 list-inside list-disc space-y-0.5 text-xs">
+                            <li><strong>Path A (this section):</strong> upload a .qbo file from your bank &mdash; free, no accounts needed</li>
+                            <li><strong>Path B (above):</strong> connect to QuickBooks Online via API &mdash; requires a QBO subscription and an Intuit Developer account</li>
+                        </ul>
+                    </Notice>
+                </GlassCard>
+            </TabPanel>
+
+            {/* ── Team ────────────────────────────────── */}
+            <TabPanel value="team" active={activeTab}>
+                <GlassCard padding="lg" className="space-y-4">
+                    <GlassCardTitle>Team Management</GlassCardTitle>
+                    <p className="text-sm text-ink-body">
+                        Invite Administrators and Users, change roles, and remove access.
+                        Administrator only.
+                    </p>
+                    <Link href="/settings/team" className="inline-flex">
+                        <Button size="sm" icon={<Users size={16} />}>Open team management</Button>
+                    </Link>
+                </GlassCard>
+            </TabPanel>
+
+            {/* ── Security ────────────────────────────── */}
+            <TabPanel value="security" active={activeTab}>
+                <GlassCard padding="lg" className="space-y-4">
+                    <GlassCardTitle>Two-Factor Authentication</GlassCardTitle>
+                    <p className="text-sm text-ink-body">
+                        Kyriq uses an authenticator app (TOTP) for two-factor authentication.
+                        It is <strong className="text-ink-strong">required for Administrators</strong> &mdash; an
+                        Administrator signing in without it is sent to set it up before any
+                        page loads.
+                    </p>
+                    <Link href="/mfa" className="inline-flex">
+                        <Button size="sm" icon={<ShieldCheck size={16} />}>
+                            Manage two-factor authentication
+                        </Button>
+                    </Link>
+                    <p className="text-xs text-ink-faint">
+                        Lost your authenticator? Use a recovery code on that page. Each code
+                        works once and removes the old authenticator so you can set up a new one.
+                    </p>
+                </GlassCard>
+            </TabPanel>
+
+            {/* ── QuickBooks credentials dialog ───────── */}
+            <Dialog
+                open={showQBCredentialsDialog}
+                onClose={() => setShowQBCredentialsDialog(false)}
+                size="xl"
+                title="QuickBooks Credentials"
+                description="Configure your QuickBooks OAuth credentials"
+                footer={
+                    <>
+                        <Button variant="ghost" size="sm" onClick={() => setShowQBCredentialsDialog(false)}>
+                            Cancel
+                        </Button>
+                        <Button
+                            size="sm"
+                            onClick={handleSaveQBCredentials}
+                            loading={saving}
+                            disabled={!qbClientId || !qbClientSecret}
+                            icon={<Save size={16} />}
+                        >
+                            {saving ? 'Saving…' : 'Save Credentials'}
+                        </Button>
+                    </>
+                }
+            >
+                <div className="scroll-region max-h-[60vh] space-y-4 pr-1">
+                    {credentialsExist && (
+                        <Notice tone="success" icon={<CheckCircle size={18} aria-hidden />}>
+                            <p className="font-semibold">Credentials exist</p>
+                            <p className="mt-0.5 text-xs">
+                                QuickBooks credentials are already saved. You can update them below if needed.
+                            </p>
+                        </Notice>
+                    )}
+
+                    <Notice tone="info" icon={<AlertCircle size={18} aria-hidden />}>
+                        <p className="font-semibold">Get your credentials from:</p>
+                        <a
+                            href="https://developer.intuit.com"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-semibold underline underline-offset-2"
+                        >
+                            developer.intuit.com
+                        </a>
+                    </Notice>
+
+                    <Field label="Client ID" htmlFor="qb-client-id" required>
+                        <div className="relative">
+                            <Key className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-faint" size={16} aria-hidden />
+                            <Input
+                                id="qb-client-id"
+                                type="text"
+                                value={qbClientId}
+                                onChange={(e) => setQbClientId(e.target.value)}
+                                placeholder="Enter your QuickBooks Client ID"
+                                className="pl-9"
                             />
-                            {uploadingQBO ? (
-                                <Loader2 size={32} className="mx-auto mb-3 text-blue-500 animate-spin" />
-                            ) : (
-                                <Upload size={32} className="mx-auto mb-3 text-gray-400" />
-                            )}
-                            <p className="text-sm font-medium text-gray-700">
-                                {uploadingQBO ? 'Parsing file...' : 'Drop a .qbo / .ofx / .qfx file here or click to browse'}
-                            </p>
-                            <p className="text-xs text-gray-500 mt-1">
-                                Download these files from your bank&apos;s online banking portal
-                            </p>
                         </div>
+                    </Field>
 
-                        {qboUploadResult && (
-                            <div className={`mt-4 rounded-lg p-4 flex items-start gap-3 ${
-                                qboUploadResult.success
-                                    ? 'bg-emerald-50 border border-emerald-200'
-                                    : 'bg-red-50 border border-red-200'
-                            }`}>
-                                {qboUploadResult.success
-                                    ? <CheckCircle className="text-emerald-600 flex-shrink-0 mt-0.5" size={18} />
-                                    : <AlertCircle className="text-red-600 flex-shrink-0 mt-0.5" size={18} />
-                                }
-                                <p className={`text-sm ${qboUploadResult.success ? 'text-emerald-800' : 'text-red-800'}`}>
-                                    {qboUploadResult.message}
-                                </p>
-                            </div>
-                        )}
-
-                        <div className="mt-4 bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
-                            <AlertCircle className="text-amber-600 flex-shrink-0 mt-0.5" size={18} />
-                            <div className="text-sm text-amber-900">
-                                <p className="font-medium mb-1">Two ways to get cheque data:</p>
-                                <ul className="list-disc list-inside space-y-1 text-amber-800 text-xs">
-                                    <li><strong>Path A (this section):</strong> Upload .qbo file from your bank — free, no accounts needed</li>
-                                    <li><strong>Path B (above):</strong> Connect to QuickBooks Online via API — requires QBO subscription + Intuit Developer account</li>
-                                </ul>
-                            </div>
+                    <Field label="Client Secret" htmlFor="qb-client-secret" required>
+                        <div className="relative">
+                            <Key className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-faint" size={16} aria-hidden />
+                            <Input
+                                id="qb-client-secret"
+                                type="password"
+                                value={qbClientSecret}
+                                onChange={(e) => setQbClientSecret(e.target.value)}
+                                placeholder="Enter your QuickBooks Client Secret"
+                                className="pl-9"
+                            />
                         </div>
-                    </div>
+                    </Field>
 
+                    <Field
+                        label="Redirect URI"
+                        hint="Auto-configured — add this exact URL to your QuickBooks app's Redirect URIs"
+                    >
+                        <GlassPanel tone="sunken" radius="input" padding="none" className="px-3.5 py-2.5">
+                            <span className="select-all font-mono text-sm text-ink-body">{QB_REDIRECT_URI}</span>
+                        </GlassPanel>
+                    </Field>
                 </div>
-            )}
-
-            {/* Team Tab */}
-            {activeTab === 'team' && (
-                <div className="space-y-6">
-                    <div className="bg-white rounded-lg shadow p-6">
-                        <h2 className="text-xl font-semibold text-gray-900 mb-4">Team Management</h2>
-                        <p className="text-gray-600">Team management features coming soon...</p>
-                    </div>
-                </div>
-            )}
-
-            {/* QuickBooks Credentials Dialog */}
-            {showQBCredentialsDialog && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm" onMouseDown={(e) => { if (e.target === e.currentTarget) setShowQBCredentialsDialog(false) }}>
-                    <div className="bg-white rounded-xl shadow-2xl w-[600px] max-h-[90vh] overflow-auto">
-                        <div className="sticky top-0 bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-4 flex items-center justify-between rounded-t-xl">
-                            <div>
-                                <h3 className="text-lg font-bold">QuickBooks Credentials</h3>
-                                <p className="text-sm text-blue-100">Configure your QuickBooks OAuth credentials</p>
-                            </div>
-                            <button onClick={() => setShowQBCredentialsDialog(false)} className="p-2 hover:bg-white/20 rounded-lg transition">
-                                <XCircle size={20} />
-                            </button>
-                        </div>
-
-                        <div className="p-6 space-y-6">
-                            {credentialsExist && (
-                                <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
-                                    <CheckCircle className="text-green-600 flex-shrink-0 mt-0.5" size={20} />
-                                    <div className="text-sm text-green-900">
-                                        <p className="font-medium">Credentials exist</p>
-                                        <p className="text-green-700 mt-1">QuickBooks credentials are already saved. You can update them below if needed.</p>
-                                    </div>
-                                </div>
-                            )}
-                            
-                            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
-                                <AlertCircle className="text-blue-600 flex-shrink-0 mt-0.5" size={20} />
-                                <div className="text-sm text-blue-900">
-                                    <p className="font-medium mb-1">Get your credentials from:</p>
-                                    <a href="https://developer.intuit.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-semibold">
-                                        https://developer.intuit.com
-                                    </a>
-                                </div>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-2">Client ID</label>
-                                <div className="relative">
-                                    <Key className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                                    <input
-                                        type="text"
-                                        value={qbClientId}
-                                        onChange={(e) => setQbClientId(e.target.value)}
-                                        placeholder="Enter your QuickBooks Client ID"
-                                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                    />
-                                </div>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-2">Client Secret</label>
-                                <div className="relative">
-                                    <Key className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                                    <input
-                                        type="password"
-                                        value={qbClientSecret}
-                                        onChange={(e) => setQbClientSecret(e.target.value)}
-                                        placeholder="Enter your QuickBooks Client Secret"
-                                        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                                    />
-                                </div>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-2">Redirect URI</label>
-                                <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 border border-gray-200 rounded-lg">
-                                    <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd"/></svg>
-                                    <span className="text-sm text-gray-700 font-mono select-all">{QB_REDIRECT_URI}</span>
-                                </div>
-                                <p className="text-xs text-gray-500 mt-1">Auto-configured — add this exact URL to your QuickBooks app&apos;s Redirect URIs</p>
-                            </div>
-                        </div>
-
-                        <div className="sticky bottom-0 bg-gray-50 px-6 py-4 flex justify-end gap-3 border-t border-gray-200 rounded-b-xl">
-                            <button
-                                onClick={() => setShowQBCredentialsDialog(false)}
-                                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition"
-                            >
-                                Cancel
-                            </button>
-                            <button
-                                onClick={handleSaveQBCredentials}
-                                disabled={saving || !qbClientId || !qbClientSecret}
-                                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                            >
-                                <Save size={18} />
-                                {saving ? 'Saving...' : 'Save Credentials'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            </Dialog>
         </div>
     )
 }
 
 export default function SettingsPage() {
     return (
-        <Suspense fallback={<div className="p-8 text-center text-gray-500">Loading settings...</div>}>
+        <Suspense
+            fallback={
+                <div className="mx-auto max-w-6xl space-y-4 p-5">
+                    <Skeleton className="h-8 w-40" />
+                    <Skeleton className="h-11 w-full max-w-xl" />
+                    <Skeleton className="h-48 w-full" />
+                </div>
+            }
+        >
             <SettingsPageContent />
         </Suspense>
     )

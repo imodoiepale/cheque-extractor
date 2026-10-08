@@ -1,0 +1,372 @@
+/**
+ * Self-check for the premium-glass foundation (parcel A).
+ *
+ *   cd frontend && npx tsx scripts/check-primitives.ts
+ *
+ * No test framework on purpose. This is the smallest thing that fails if the
+ * cva variant maps collapse — the failure mode being guarded against is a
+ * variant silently resolving to the base class string, so every Button looks
+ * identical and nobody notices until review.
+ *
+ * It also guards the hard requirement that the Magic-UI keyframes and their
+ * CSS variables survive verbatim in tailwind.config.js. Four decorative
+ * components depend on them and they break silently, not loudly.
+ */
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { cn } from '../lib/utils';
+import { buttonVariants } from '../components/ui/button';
+import { glassCardVariants, glassPanelVariants } from '../components/ui/glass-card';
+import { badgeVariants } from '../components/ui/badge';
+import { tdVariants, thVariants } from '../components/ui/table';
+
+const require = createRequire(import.meta.url);
+
+/** Every variant must produce a non-empty string, and no two may collide. */
+function assertDistinct(label: string, outputs: Record<string, string>) {
+  const seen = new Map<string, string>();
+  for (const [key, cls] of Object.entries(outputs)) {
+    assert.ok(cls.trim().length > 0, `${label}.${key} produced an empty class string`);
+    const clash = seen.get(cls);
+    assert.ok(
+      clash === undefined,
+      `${label}.${key} is identical to ${label}.${clash} — the variant map is not being applied`
+    );
+    seen.set(cls, key);
+  }
+  assert.equal(
+    seen.size,
+    Object.keys(outputs).length,
+    `${label}: expected ${Object.keys(outputs).length} distinct outputs, got ${seen.size}`
+  );
+  console.log(`  ok  ${label}: ${seen.size} distinct variants`);
+}
+
+/* --- Button: every variant, and every size ------------------------------- */
+
+const BUTTON_VARIANTS = ['primary', 'secondary', 'ghost', 'destructive', 'link'] as const;
+const BUTTON_SIZES = ['sm', 'md', 'lg', 'icon', 'icon-sm'] as const;
+
+assertDistinct(
+  'buttonVariants.variant',
+  Object.fromEntries(BUTTON_VARIANTS.map((v) => [v, buttonVariants({ variant: v })]))
+);
+assertDistinct(
+  'buttonVariants.size',
+  Object.fromEntries(BUTTON_SIZES.map((s) => [s, buttonVariants({ size: s })]))
+);
+
+// Buttons are pills with a 3rem floor at the default size (DESIGN-SYSTEM 5.1).
+const defaultButton = buttonVariants({});
+assert.match(defaultButton, /\brounded-full\b/, 'Button lost its pill radius');
+assert.match(defaultButton, /\bmin-h-btn\b/, 'Button lost its 3rem min-height');
+assert.match(defaultButton, /\bgap-2\b/, 'Button lost its 0.5rem gap');
+assert.match(defaultButton, /\bduration-tap\b/, 'Button press is no longer on the 120ms tap token');
+assert.match(defaultButton, /\bdisabled:opacity-disabled\b/, 'Button lost the 0.45 disabled token');
+assert.match(
+  defaultButton,
+  /\benabled:active:scale-press\b/,
+  'Button lost the scale(0.96) press state'
+);
+// Never `transition-all`: it animates backdrop-filter and tanks frame rate.
+assert.doesNotMatch(defaultButton, /\btransition-all\b/, 'Button must enumerate transition-property');
+console.log('  ok  Button pill / motion / disabled tokens present');
+
+/* --- GlassCard: one blur tier per depth ---------------------------------- */
+
+const GLASS_TIERS = ['card', 'bright', 'modal', 'chrome', 'toast', 'shell', 'panel'] as const;
+
+assertDistinct(
+  'glassCardVariants.tier',
+  Object.fromEntries(GLASS_TIERS.map((t) => [t, glassCardVariants({ tier: t })]))
+);
+
+// The tier classes are what carry backdrop-filter plus the two fallbacks.
+for (const tier of GLASS_TIERS) {
+  const cls = glassCardVariants({ tier });
+  assert.match(
+    cls,
+    /glass-(card|modal|chrome|toast|shell|panel)/,
+    `GlassCard tier "${tier}" is not attached to a glass surface class`
+  );
+}
+// Selected must change background/shadow only — never the border WIDTH, or
+// selecting a row reflows the text inside it.
+const selected = glassCardVariants({ tier: 'card', selected: true });
+assert.match(selected, /\bglass-selected\b/, 'GlassCard lost its selected recipe');
+assert.doesNotMatch(selected, /\bborder-2\b/, 'Selected state must not change border width');
+console.log('  ok  GlassCard tiers attached to glass surfaces; selected keeps 1px border');
+
+assertDistinct(
+  'glassPanelVariants.tone',
+  Object.fromEntries(
+    (['neutral', 'sunken', 'plain'] as const).map((t) => [t, glassPanelVariants({ tone: t })])
+  )
+);
+
+/* --- State colours: each tone distinct, each pairing its own -text ------- */
+
+const BADGE_TONES = ['neutral', 'brand', 'success', 'warning', 'error', 'outline', 'solid'] as const;
+assertDistinct(
+  'badgeVariants.tone',
+  Object.fromEntries(BADGE_TONES.map((t) => [t, badgeVariants({ tone: t })]))
+);
+for (const tone of ['success', 'warning', 'error'] as const) {
+  const cls = badgeVariants({ tone });
+  assert.match(cls, new RegExp(`bg-${tone}-bg\\b`), `Badge "${tone}" lost its bg token`);
+  assert.match(cls, new RegExp(`text-${tone}-text\\b`), `Badge "${tone}" lost its 4.5:1 text token`);
+}
+console.log('  ok  state badges pair -bg with their contrast-verified -text');
+
+/* --- Table: density must not regress ------------------------------------- */
+
+assert.match(tdVariants({}), /\bpy-3\b/, 'Table row height changed — density must not regress');
+assert.match(tdVariants({ numeric: true }), /\bnums\b/, 'Numeric cells lost tabular-nums');
+assert.match(tdVariants({ numeric: true }), /\btext-right\b/, 'Numeric cells must be right-aligned');
+assert.match(thVariants({ numeric: true }), /\bnums\b/, 'Numeric headers lost tabular-nums');
+assertDistinct('thVariants.numeric', {
+  numeric: thVariants({ numeric: true }),
+  text: thVariants({ numeric: false }),
+});
+console.log('  ok  table row height, tabular-nums and alignment intact');
+
+/* --- Tailwind theme: preserved Magic-UI contract ------------------------- */
+
+type TailwindTheme = {
+  theme?: { extend?: { keyframes?: Record<string, unknown>; animation?: Record<string, string> } };
+};
+const config = require('../tailwind.config.js') as TailwindTheme;
+const keyframes = config.theme?.extend?.keyframes ?? {};
+const animation = config.theme?.extend?.animation ?? {};
+
+for (const name of ['marquee', 'marquee-vertical', 'border-beam', 'shimmer-slide', 'spin-around']) {
+  assert.ok(keyframes[name], `PRESERVED keyframe "${name}" is missing — breaks a Magic-UI component`);
+  assert.ok(animation[name], `PRESERVED animation "${name}" is missing`);
+}
+assert.match(animation['marquee'], /var\(--duration\)/, 'marquee lost --duration');
+assert.match(animation['border-beam'], /var\(--duration\)/, 'border-beam lost --duration');
+assert.match(animation['shimmer-slide'], /var\(--speed\)/, 'shimmer-slide lost --speed');
+assert.match(animation['spin-around'], /var\(--speed\)/, 'spin-around lost --speed');
+assert.match(
+  String((keyframes['marquee'] as Record<string, Record<string, string>>).to.transform),
+  /var\(--gap\)/,
+  'marquee keyframe lost --gap'
+);
+console.log('  ok  Magic-UI keyframes + --duration / --speed / --gap preserved');
+
+/* --- Every :root token has a Tailwind theme entry ------------------------ */
+// This is the bug that made the old @apply block inert: variables existed in
+// :root but were never mapped, so the utilities simply did not exist.
+
+const css = readFileSync(new URL('../app/globals.css', import.meta.url), 'utf8');
+for (const utility of [
+  'from-primary',
+  'to-primary-dark',
+  'bg-success-bg',
+  'text-success-text',
+  'bg-error-bg',
+  'text-error-text',
+  'bg-warning-bg',
+  'text-warning-text',
+  'bg-info-bg',
+  'text-info-text',
+  'border-success-border',
+  'border-warning-border',
+  'border-error-border',
+]) {
+  assert.ok(css.includes(utility), `globals.css no longer @applies ${utility}`);
+}
+for (const cssVar of [
+  '--glass-card-bg',
+  '--glass-fallback-bg',
+  '--glass-opaque-bg',
+  '--ease-settle',
+  '--dur-tap',
+  '--dur-quick',
+  '--dur-settle',
+  '--dur-reveal',
+  '--radius-input',
+  '--radius-btn',
+  '--radius-pill',
+  '--radius-card',
+]) {
+  assert.ok(css.includes(cssVar), `token ${cssVar} is missing from globals.css`);
+}
+// The three-tier degradation must survive: blur is never guaranteed.
+assert.ok(
+  css.includes('@supports not ((backdrop-filter: blur(1px))'),
+  'the @supports blur fallback was removed'
+);
+assert.ok(
+  css.includes('prefers-reduced-transparency'),
+  'the reduced-transparency fallback was removed'
+);
+assert.ok(css.includes('prefers-reduced-motion'), 'the reduced-motion block was removed');
+console.log('  ok  glass fallbacks, motion tokens and state utilities all present');
+
+// ── The prefixed form must come FIRST and the standard property LAST ──────
+// Turbopack's CSS minifier (lightningcss) collapses the pair down to whichever
+// it treats as canonical. Authored standard-first, it emitted ONLY
+// `-webkit-backdrop-filter`, which computes to `backdrop-filter: none` in
+// Chrome — verified in Chrome 152 — so every glass surface rendered as a flat
+// tint. The @supports fallback did not catch it either: the browser DOES
+// support the property, the declaration had simply been deleted, so the
+// surfaces never got the raised-opacity fallback. Tailwind's own backdrop-blur
+// utilities survive the same minifier, and they emit the prefix first.
+{
+  const pairs = [...css.matchAll(
+    /(-webkit-)?backdrop-filter:\s*([^;]+);\s*\n\s*(-webkit-)?backdrop-filter:\s*([^;]+);/g
+  )];
+  assert.ok(pairs.length > 0, 'no backdrop-filter pairs found in globals.css at all');
+  for (const m of pairs) {
+    assert.ok(
+      m[1] === '-webkit-' && m[3] === undefined,
+      'backdrop-filter must be authored prefixed-first, standard-last, or the ' +
+        `minifier drops the standard property: ${m[0].replace(/\s+/g, ' ')}`
+    );
+  }
+  for (const cls of ['.glass-card', '.glass-modal', '.glass-chrome', '.glass-toast', '.glass-shell']) {
+    assert.ok(css.includes(cls), `${cls} is missing from globals.css`);
+  }
+  console.log(`  ok  ${pairs.length} backdrop-filter pairs authored prefix-first`);
+}
+
+// ── No boxShadow key may also be a colour name ────────────────────────────
+// Tailwind generates a utility for both maps, so a name present in each emits
+// TWO rules for the same class: a shadow rule and a shadow-*colour* rule. The
+// colour rule wins by source order and the layered shadow silently never
+// renders. This hit `shadow-glass-panel`, `-modal`, `-toast` and `-selected`
+// at once, and it is invisible in source — the class looks right, the variable
+// exists, nothing errors.
+{
+  const theme = (config as any).theme?.extend ?? (config as any).theme ?? {};
+  const shadowKeys = Object.keys(theme.boxShadow ?? {});
+  const colourNames = new Set<string>();
+  const walk = (obj: any, path: string[]) => {
+    for (const [k, v] of Object.entries(obj ?? {})) {
+      const p = k === 'DEFAULT' ? path : [...path, k];
+      if (v && typeof v === 'object') walk(v, p);
+      else colourNames.add(p.join('-'));
+    }
+  };
+  walk(theme.colors ?? {}, []);
+  const clashes = shadowKeys.filter((k) => colourNames.has(k));
+  assert.deepStrictEqual(
+    clashes,
+    [],
+    'these names are BOTH a boxShadow key and a colour, so shadow-<name> is ' +
+      `ambiguous and the shadow will not render: ${clashes.join(', ')}`
+  );
+  console.log(`  ok  ${shadowKeys.length} shadow keys, none collide with a colour name`);
+}
+
+// ── Every custom theme key must be known to tailwind-merge ────────────────
+// An unrecognised class has no conflict group, so cn("min-h-btn", "min-h-0")
+// returns BOTH and the primitive's value wins by stylesheet order — the call
+// site's override silently does nothing. That cost a parcel 11.5px of row
+// height in a table and was only caught by measuring in a browser.
+// This asserts every custom key in the config is actually overridable.
+{
+  const theme = (config as any).theme?.extend ?? (config as any).theme ?? {};
+  const probes: [string, string][] = [
+    ...Object.keys(theme.minHeight ?? {}).map((k) => [`min-h-${k}`, 'min-h-0'] as [string, string]),
+    ...Object.keys(theme.transitionDuration ?? {}).map((k) => [`duration-${k}`, 'duration-100'] as [string, string]),
+    ...Object.keys(theme.transitionTimingFunction ?? {}).map((k) => [`ease-${k}`, 'ease-linear'] as [string, string]),
+    ...Object.keys(theme.scale ?? {}).map((k) => [`scale-${k}`, 'scale-100'] as [string, string]),
+    ...Object.keys(theme.opacity ?? {}).map((k) => [`opacity-${k}`, 'opacity-100'] as [string, string]),
+    ...Object.keys(theme.boxShadow ?? {}).map((k) => [`shadow-${k}`, 'shadow-none'] as [string, string]),
+    ...Object.keys(theme.borderRadius ?? {})
+      .filter((k) => !['lg', 'md', 'sm', 'full'].includes(k))
+      .map((k) => [`rounded-${k}`, 'rounded-none'] as [string, string]),
+  ];
+  const broken = probes.filter(([custom, stock]) => cn(custom, stock) !== stock);
+  assert.deepStrictEqual(
+    broken.map(([c]) => c),
+    [],
+    'these custom theme keys are not in the tailwind-merge config, so a ' +
+      'className override of them silently fails: ' +
+      broken.map(([c]) => c).join(', ')
+  );
+  console.log(`  ok  all ${probes.length} custom theme keys are overridable via cn()`);
+}
+
+// ── White text must never sit on a fill below 4.5:1 ───────────────────────
+// Found by measuring the Chrome extension's ported tokens, then confirmed here.
+// The primary button's gradient started at --brand (#6366f1), which is 4.47:1
+// with white — and its hover LIGHTENED to --brand-light (#818cf8) at 2.98:1, so
+// hovering a primary button made its own label harder to read. The destructive
+// variant started at --error (#ef4444) at 3.76:1. Both now start at their
+// family's dark step. --brand and --error are still correct for borders, tints,
+// accents and chart series; they are only unusable behind white text.
+// CHECKLIST 2.2 rule 9: "every state colour verified to 4.5:1".
+{
+  const hslTriple = (name: string): [number, number, number] => {
+    // Parsed rather than regexed: a template literal swallows \s and \d, which
+    // silently turned the first version of this into a literal match that found
+    // nothing and reported the token as missing.
+    const key = '--' + name + ':';
+    const at = css.indexOf(key);
+    assert.ok(at !== -1, 'token ' + key + ' not found in globals.css');
+    const raw = css.slice(at + key.length, css.indexOf(';', at)).trim();
+    const parts = raw.split(/\s+/);
+    assert.strictEqual(parts.length, 3, key + ' is not an hsl triple: ' + raw);
+    return [
+      Number(parts[0]),
+      Number(parts[1].replace('%', '')) / 100,
+      Number(parts[2].replace('%', '')) / 100,
+    ];
+  };
+  const toRgb = ([h, sat, l]: [number, number, number]): [number, number, number] => {
+    const c = (1 - Math.abs(2 * l - 1)) * sat;
+    const hp = h / 60;
+    const x = c * (1 - Math.abs((hp % 2) - 1));
+    const seg: [number, number, number][] = [
+      [c, x, 0], [x, c, 0], [0, c, x], [0, x, c], [x, 0, c], [c, 0, x],
+    ];
+    const [r, g, b] = seg[Math.floor(hp) % 6];
+    const m = l - c / 2;
+    return [r + m, g + m, b + m];
+  };
+  const relLum = (rgb: [number, number, number]) => {
+    const [r, g, b] = rgb.map((v) =>
+      v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)
+    );
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const vsWhite = (name: string) => {
+    const l = relLum(toRgb(hslTriple(name)));
+    return 1.05 / (l + 0.05);
+  };
+
+  // Every token the filled variants actually paint behind white text.
+  const whiteOnFill = ['brand-dark', 'brand-deep', 'error-dark', 'error-text'];
+  for (const tok of whiteOnFill) {
+    const r = vsWhite(tok);
+    assert.ok(
+      r >= 4.5,
+      `white text on --${tok} is ${r.toFixed(2)}:1, below AA 4.5:1 — a filled ` +
+        'button variant must start at its family\'s dark step'
+    );
+  }
+
+  // And the tokens that must NOT appear behind white text, so a later edit that
+  // "brightens" a button is caught rather than shipped.
+  for (const tok of ['brand', 'brand-light', 'error']) {
+    assert.ok(
+      vsWhite(tok) < 4.5,
+      `--${tok} now passes 4.5:1 with white; if the palette changed, move it ` +
+        'into whiteOnFill above rather than leaving this assertion stale'
+    );
+  }
+  const primary = buttonVariants({ variant: 'primary' });
+  for (const banned of ['from-brand ', 'from-brand-light', 'to-brand ']) {
+    assert.ok(
+      !primary.includes(banned),
+      `the primary button paints "${banned.trim()}" behind white text, which is below AA`
+    );
+  }
+  console.log(`  ok  white-on-fill contrast: ${whiteOnFill.length} fills at or above 4.5:1`);
+}
+
+console.log('\nall primitive checks passed');

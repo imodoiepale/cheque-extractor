@@ -1,106 +1,28 @@
-// 'use client'
-
-// import { useCallback, useState } from 'react'
-// import { useDropzone } from 'react-dropzone'
-// import { Upload, FileText, CheckCircle, AlertCircle, Loader2 } from 'lucide-react'
-// import { useRouter } from 'next/navigation'
-
-// export default function UploadDropzone() {
-//     const [uploading, setUploading] = useState(false)
-//     const [error, setError] = useState<string | null>(null)
-//     const router = useRouter()
-
-//     const onDrop = useCallback(async (acceptedFiles: File[]) => {
-//         if (acceptedFiles.length === 0) return
-
-//         setUploading(true)
-//         setError(null)
-//         const file = acceptedFiles[0]
-//         const formData = new FormData()
-//         formData.append('file', file)
-
-//         try {
-//             const res = await fetch('/api/upload', {
-//                 method: 'POST',
-//                 body: formData
-//             })
-
-//             if (!res.ok) {
-//                 throw new Error('Upload failed')
-//             }
-
-//             const data = await res.json()
-//             // Redirect to dashboard or review page
-//             router.push('/dashboard')
-//         } catch (err) {
-//             setError('Failed to upload file. Please try again.')
-//             console.error(err)
-//         } finally {
-//             setUploading(false)
-//         }
-//     }, [router])
-
-//     const { getRootProps, getInputProps, isDragActive } = useDropzone({
-//         onDrop,
-//         accept: {
-//             'image/jpeg': [],
-//             'image/png': [],
-//             'application/pdf': []
-//         },
-//         maxFiles: 1,
-//         multiple: false
-//     })
-
-//     return (
-//         <div className="w-full max-w-xl mx-auto">
-//             <div
-//                 {...getRootProps()}
-//                 className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-colors
-//           ${isDragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'}
-//           ${uploading ? 'opacity-50 pointer-events-none' : ''}
-//         `}
-//             >
-//                 <input {...getInputProps()} />
-
-//                 <div className="flex flex-col items-center gap-4">
-//                     <div className="p-4 bg-gray-100 rounded-full">
-//                         {uploading ? (
-//                             <Loader2 className="w-8 h-8 text-blue-600 animate-spin" />
-//                         ) : (
-//                             <Upload className="w-8 h-8 text-gray-600" />
-//                         )}
-//                     </div>
-
-//                     <div>
-//                         <p className="text-lg font-medium text-gray-900">
-//                             {uploading ? 'Uploading & Processing...' : 'Drop check here, or click to select'}
-//                         </p>
-//                         <p className="text-sm text-gray-500 mt-1">
-//                             Supports JPEG, PNG, PDF up to 10MB
-//                         </p>
-//                     </div>
-//                 </div>
-//             </div>
-
-//             {error && (
-//                 <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-lg flex items-center gap-2">
-//                     <AlertCircle className="w-5 h-5" />
-//                     {error}
-//                 </div>
-//             )}
-//         </div>
-//     )
-// }
 'use client';
 
 import { useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { Upload } from 'lucide-react';
+import { Upload, FileCheck2, FileX2 } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 interface Props {
   onFilesSelected: (files: File[]) => void;
 }
 
+/**
+ * The drop target.
+ *
+ * Three states, all driven by hook booleans rather than classNames, because
+ * glassifying only the resting state leaves accept and reject looking broken:
+ *
+ *   resting  — hairline dashed border over the mesh, neutral glass
+ *   accept   — brand ring + brand wash, the file is droppable
+ *   reject   — error ring + error wash, the file type is not accepted
+ *
+ * `isDragReject` is checked before `isDragAccept`: during a drag over a
+ * mixed selection react-dropzone reports both, and the refusal is the one
+ * the reader needs to see.
+ */
 export default function DropzoneUpload({ onFilesSelected }: Props) {
   const onDrop = useCallback(
     (acceptedFiles: File[]) => {
@@ -109,7 +31,7 @@ export default function DropzoneUpload({ onFilesSelected }: Props) {
     [onFilesSelected]
   );
 
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({
+  const { getRootProps, getInputProps, isDragActive, isDragAccept, isDragReject } = useDropzone({
     onDrop,
     accept: {
       'image/*': ['.png', '.jpg', '.jpeg'],
@@ -118,27 +40,45 @@ export default function DropzoneUpload({ onFilesSelected }: Props) {
     multiple: true,
   });
 
+  const state = isDragReject ? 'reject' : isDragAccept || isDragActive ? 'accept' : 'resting';
+
   return (
     <div
       {...getRootProps()}
-      className={`border-2 border-dashed rounded-lg p-12 text-center cursor-pointer transition ${
-        isDragActive
-          ? 'border-blue-500 bg-blue-50'
-          : 'border-gray-300 hover:border-gray-400'
-      }`}
+      data-drag-state={state}
+      aria-invalid={state === 'reject' || undefined}
+      className={cn(
+        'glass-card press cursor-pointer rounded-card border border-dashed p-12 text-center',
+        'transition-[border-color,background-color,box-shadow] duration-quick ease-settle',
+        state === 'resting' && 'border-ink-strong/20 hover:border-brand/50',
+        // NOT `shadow-glass-selected`: that name exists in tailwind.config.js
+        // both as a boxShadow and as the `glass.selected` colour, so it
+        // compiles to a shadow *colour* and the glow silently never renders.
+        state === 'accept' && 'border-brand bg-brand-wash/80 shadow-brand-glow',
+        state === 'reject' && 'border-error bg-error-bg/70 shadow-danger-glow'
+      )}
     >
       <input {...getInputProps()} />
-      <Upload className="mx-auto text-gray-400 mb-4" size={48} />
-      {isDragActive ? (
-        <p className="text-lg text-blue-600">Drop the files here...</p>
+
+      {state === 'reject' ? (
+        <>
+          <FileX2 className="mx-auto mb-4 text-error" size={48} aria-hidden />
+          <p className="text-lg font-medium text-error-text">That file type is not supported</p>
+          <p className="mt-1 text-sm text-ink-body">PNG, JPG or PDF only.</p>
+        </>
+      ) : state === 'accept' ? (
+        <>
+          <FileCheck2 className="mx-auto mb-4 text-brand" size={48} aria-hidden />
+          <p className="text-lg font-medium text-brand-deep">Drop the files here</p>
+          <p className="mt-1 text-sm text-ink-body">We&apos;ll detect pages and cheques next.</p>
+        </>
       ) : (
         <>
-          <p className="text-lg text-gray-700 mb-2">
-            Drag & drop check images here, or click to select
+          <Upload className="mx-auto mb-4 text-ink-faint" size={48} aria-hidden />
+          <p className="mb-2 text-lg text-ink-strong">
+            Drag &amp; drop cheque images here, or click to select
           </p>
-          <p className="text-sm text-gray-500">
-            Supports: PNG, JPG, PDF (Max 10MB per file)
-          </p>
+          <p className="text-sm text-ink-body">Supports PNG, JPG and PDF, up to 10MB per file.</p>
         </>
       )}
     </div>

@@ -11,6 +11,22 @@ export interface QBConnection {
   isActive: boolean;
   connectedAt: string;
   pendingCount: number;
+  /** qb_connections.status — connection HEALTH, not which company is selected. */
+  status: QbConnectionHealth;
+  /** Cached bank + credit-card accounts for this company (migration 036). */
+  accountCount: number;
+}
+
+export type QbConnectionHealth =
+  | 'connected'
+  | 'needs_reconnect'
+  | 'error'
+  | 'revoked'
+  | 'unknown';
+
+/** The two statuses that mean only the user can fix it. */
+export function needsReconnect(status: QbConnectionHealth | undefined): boolean {
+  return status === 'needs_reconnect' || status === 'revoked';
 }
 
 interface QBContextValue {
@@ -69,8 +85,14 @@ function useQBConnectionsInternal(): QBContextValue {
         throw new Error('Failed to fetch connections');
       }
       const data = await res.json();
-      setConnections(data.connections || []);
-      setActive(data.activeConnection || null);
+      const normalise = (c: any): QBConnection => ({
+        ...c,
+        status: (c?.status as QbConnectionHealth) || 'connected',
+        accountCount: c?.accountCount ?? 0,
+        pendingCount: c?.pendingCount ?? 0,
+      });
+      setConnections((data.connections || []).map(normalise));
+      setActive(data.activeConnection ? normalise(data.activeConnection) : null);
     } catch (err: any) {
       // Silently handle — user may not have qb_connections table yet
       console.warn('QB connections fetch:', err.message);
@@ -98,13 +120,22 @@ function useQBConnectionsInternal(): QBContextValue {
           body: JSON.stringify({ realmId }),
         });
         if (!res.ok) throw new Error('Failed to switch company');
-        const data = await res.json();
+        await res.json();
 
-        setActive(data.activeConnection);
+        // The active company lives in qb_connections.is_active, which the POST
+        // above just moved — never in localStorage. The matching routes and the
+        // extension read that column, so a client-side-only switch would show
+        // company B while the match engine still worked on company A.
+        //
+        // The row already in state carries the health status, account count and
+        // pending count; /api/qb/switch answers with an identity only, so
+        // adopting its payload here would blank all three.
+        const next = connections.find((c) => c.realmId === realmId) ?? null;
+        setActive(next ? { ...next, isActive: true } : null);
         setConnections((prev) =>
           prev.map((c) => ({ ...c, isActive: c.realmId === realmId }))
         );
-        return data.activeConnection;
+        return next ?? undefined;
       } catch (err: any) {
         setError(err.message);
         throw err;
@@ -112,7 +143,7 @@ function useQBConnectionsInternal(): QBContextValue {
         setIsSwitching(false);
       }
     },
-    [active]
+    [active, connections]
   );
 
   const disconnect = useCallback(

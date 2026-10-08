@@ -1,5 +1,19 @@
 import React, { useState } from 'react';
-import { X, Database, Upload, Settings, FileText, Loader2, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Database, Upload, Settings, FileText, CheckCircle, AlertTriangle } from 'lucide-react';
+import {
+  Button,
+  Dialog,
+  Field,
+  GlassPanel,
+  Input,
+  Table,
+  TableScroll,
+  TableShell,
+  Tbody,
+  Td,
+  Th,
+  Tr,
+} from '@/components/ui';
 
 interface QBConnectionModalProps {
   isOpen: boolean;
@@ -20,6 +34,12 @@ export interface QBConfig {
   apiEndpoint?: string;
   apiKey?: string;
 }
+
+const SOURCES = [
+  { value: 'file' as const, label: 'Upload File', icon: Upload },
+  { value: 'api' as const, label: 'API Connection', icon: Database },
+  { value: 'direct' as const, label: 'Direct QB', icon: Settings },
+];
 
 export const QBConnectionModal: React.FC<QBConnectionModalProps> = ({
   isOpen,
@@ -43,8 +63,6 @@ export const QBConnectionModal: React.FC<QBConnectionModalProps> = ({
   const [previewData, setPreviewData] = useState<any[]>([]);
   const [parsing, setParsing] = useState(false);
 
-  if (!isOpen) return null;
-
   const isQBOFile = (name: string) => {
     const ext = name.toLowerCase().split('.').pop();
     return ['qbo', 'ofx', 'qfx'].includes(ext || '');
@@ -54,19 +72,18 @@ export const QBConnectionModal: React.FC<QBConnectionModalProps> = ({
     setFile(selectedFile);
     setUploadResult(null);
     setPreviewData([]);
-    
+
     if (selectedFile && isQBOFile(selectedFile.name)) {
       setParsing(true);
       try {
-        const text = await selectedFile.text();
         const formData = new FormData();
         formData.append('file', selectedFile);
-        
+
         const response = await fetch('/api/qbo/upload-file?preview=true', {
           method: 'POST',
           body: formData,
         });
-        
+
         const data = await response.json();
         if (response.ok && data.preview) {
           setPreviewData(data.preview); // Show all entries
@@ -113,7 +130,7 @@ export const QBConnectionModal: React.FC<QBConnectionModalProps> = ({
           });
           // Trigger data refresh after successful import
           onConnect({ source, columnMapping });
-          
+
           // Close modal after 2 seconds to show success message
           setTimeout(() => {
             onClose();
@@ -134,241 +151,221 @@ export const QBConnectionModal: React.FC<QBConnectionModalProps> = ({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white rounded-xl shadow-2xl w-[600px] max-h-[90vh] overflow-auto"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="sticky top-0 bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-4 flex items-center justify-between rounded-t-xl">
-          <div className="flex items-center gap-3">
-            <Database size={24} />
-            <div>
-              <h3 className="text-lg font-bold">QuickBooks Connection</h3>
-              <p className="text-sm text-blue-100">Configure data source and column mapping</p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-white/20 rounded-lg transition"
+    <Dialog
+      open={isOpen}
+      onClose={onClose}
+      size="xl"
+      title="QuickBooks Connection"
+      description="Configure the data source and column mapping."
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            onClick={handleSubmit}
+            loading={uploading}
+            disabled={source === 'file' && !file}
           >
-            <X size={20} />
-          </button>
+            {uploading ? 'Importing…' : uploadResult?.success ? 'Done — Close' : 'Connect & Import'}
+          </Button>
+        </>
+      }
+    >
+      <div className="scroll-region max-h-[70vh] space-y-5 pr-1">
+        {/* Data source */}
+        <div>
+          <p className="mb-2 text-eyebrow text-ink-faint">Data Source</p>
+          <div className="grid grid-cols-3 gap-2">
+            {SOURCES.map((s) => {
+              const active = source === s.value;
+              return (
+                <button
+                  key={s.value}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => setSource(s.value)}
+                  className={`press rounded-input border p-3 text-center ${
+                    active
+                      ? 'border-brand bg-brand/[0.08] text-brand-deep'
+                      : 'border-glass-hairline bg-white/50 text-ink-body hover:bg-white/80'
+                  }`}
+                >
+                  <s.icon size={20} className="mx-auto mb-1.5" aria-hidden />
+                  <span className="text-xs font-semibold">{s.label}</span>
+                </button>
+              );
+            })}
+          </div>
         </div>
 
-        <div className="p-6 space-y-6">
-          {/* Data Source Selection */}
+        {/* File upload */}
+        {source === 'file' && (
           <div>
-            <label className="block text-sm font-semibold text-gray-700 mb-3">Data Source</label>
-            <div className="grid grid-cols-3 gap-3">
-              <button
-                onClick={() => setSource('file')}
-                className={`p-4 border-2 rounded-lg transition ${
-                  source === 'file'
-                    ? 'border-blue-600 bg-blue-50 text-blue-700'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <Upload size={20} className="mx-auto mb-2" />
-                <div className="text-xs font-medium">Upload File</div>
-              </button>
-              <button
-                onClick={() => setSource('api')}
-                className={`p-4 border-2 rounded-lg transition ${
-                  source === 'api'
-                    ? 'border-blue-600 bg-blue-50 text-blue-700'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <Database size={20} className="mx-auto mb-2" />
-                <div className="text-xs font-medium">API Connection</div>
-              </button>
-              <button
-                onClick={() => setSource('direct')}
-                className={`p-4 border-2 rounded-lg transition ${
-                  source === 'direct'
-                    ? 'border-blue-600 bg-blue-50 text-blue-700'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <Settings size={20} className="mx-auto mb-2" />
-                <div className="text-xs font-medium">Direct QB</div>
-              </button>
+            <p className="mb-2 text-eyebrow text-ink-faint">Upload QuickBooks File</p>
+            <div className="relative cursor-pointer rounded-card border-2 border-dashed border-glass-hairline bg-white/50 p-6 text-center transition-colors duration-quick ease-settle hover:border-brand hover:bg-brand/[0.04]">
+              <input
+                type="file"
+                accept=".qbo,.ofx,.qfx,.csv,.xlsx,.xls"
+                aria-label="QuickBooks file"
+                onChange={(e) => handleFileSelect(e.target.files?.[0] || null)}
+                className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+              />
+              <FileText size={32} className="mx-auto mb-2 text-ink-faint" aria-hidden />
+              <p className="text-sm font-medium text-ink-strong">
+                {file ? file.name : 'Drop a file here or click to browse'}
+              </p>
+              <p className="mt-1 text-xs text-ink-faint">
+                Supports <strong>.qbo</strong>, <strong>.ofx</strong>, <strong>.qfx</strong>, .csv, .xlsx
+              </p>
             </div>
-          </div>
 
-          {/* File Upload */}
-          {source === 'file' && (
-            <div>
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Upload QuickBooks File
-              </label>
-              <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-blue-400 transition cursor-pointer relative">
-                <input
-                  type="file"
-                  accept=".qbo,.ofx,.qfx,.csv,.xlsx,.xls"
-                  onChange={(e) => handleFileSelect(e.target.files?.[0] || null)}
-                  className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                />
-                <FileText size={32} className="mx-auto mb-2 text-gray-400" />
-                <p className="text-sm font-medium text-gray-700">
-                  {file ? file.name : 'Drop a file here or click to browse'}
-                </p>
-                <p className="text-xs text-gray-500 mt-1">
-                  Supports <strong>.qbo</strong>, <strong>.ofx</strong>, <strong>.qfx</strong>, .csv, .xlsx
-                </p>
+            {file && isQBOFile(file.name) && (
+              <GlassPanel tone="plain" radius="input" padding="sm" className="mt-3 text-xs text-ink-body">
+                <strong className="text-ink-strong">QBO/OFX file detected</strong> — it will be
+                parsed automatically for cheque transactions. No column mapping needed.
+              </GlassPanel>
+            )}
+
+            {parsing && (
+              <p className="mt-3 text-center text-xs text-ink-faint">Parsing file…</p>
+            )}
+
+            {previewData.length > 0 && (
+              <div className="mt-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-eyebrow text-ink-faint">
+                    Preview ({previewData.length} transactions)
+                  </p>
+                  <span className="text-xs text-ink-faint">Scroll to see more</span>
+                </div>
+                {/* `inset` tier: this table is already inside the blurred
+                    modal, so it must not blur again. */}
+                <TableShell tier="inset">
+                  <TableScroll className="max-h-64">
+                    <Table className="text-xs [&_td]:py-1.5">
+                      {/* Plain <thead>, not the `Thead` primitive: `Thead`
+                          carries .glass-chrome and this table is already
+                          inside the blurred modal (rule 2 — never nest two
+                          blurred surfaces). The <th> cells stay the one
+                          shared `Th` recipe. */}
+                      <thead className="sticky top-0 z-10 bg-surface/95">
+                        <tr>
+                          <Th>Check #</Th>
+                          <Th>Date</Th>
+                          <Th numeric>Amount</Th>
+                          <Th>Payee</Th>
+                          <Th>Memo</Th>
+                        </tr>
+                      </thead>
+                      <Tbody>
+                        {previewData.map((entry, idx) => (
+                          <Tr key={idx}>
+                            <Td className="nums font-medium">{entry.checkNumber || '—'}</Td>
+                            <Td muted className="nums">{entry.date || '—'}</Td>
+                            <Td className="nums-money font-semibold text-success-text">
+                              ${Math.abs(parseFloat(entry.amount) || 0).toFixed(2)}
+                            </Td>
+                            <Td>{entry.payee || '—'}</Td>
+                            <Td muted className="max-w-[150px] truncate">{entry.memo || '—'}</Td>
+                          </Tr>
+                        ))}
+                      </Tbody>
+                    </Table>
+                  </TableScroll>
+                </TableShell>
               </div>
-              {file && isQBOFile(file.name) && (
-                <div className="mt-3 bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800">
-                  <strong>QBO/OFX file detected</strong> — will be parsed automatically for cheque transactions. No column mapping needed.
-                </div>
-              )}
-              
-              {/* Preview Table */}
-              {parsing && (
-                <div className="mt-3 text-center py-4">
-                  <div className="inline-block animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
-                  <p className="text-xs text-gray-600 mt-2">Parsing file...</p>
-                </div>
-              )}
-              
-              {previewData.length > 0 && (
-                <div className="mt-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4 className="text-xs font-semibold text-gray-700">Preview ({previewData.length} transactions)</h4>
-                    <span className="text-xs text-gray-500">Scroll to see more</span>
-                  </div>
-                  <div className="border border-gray-200 rounded-lg overflow-hidden">
-                    <div className="max-h-64 overflow-y-auto">
-                      <table className="w-full text-xs">
-                        <thead className="bg-gray-50 sticky top-0">
-                          <tr>
-                            <th className="px-2 py-1 text-left font-medium text-gray-700 border-b">Check #</th>
-                            <th className="px-2 py-1 text-left font-medium text-gray-700 border-b">Date</th>
-                            <th className="px-2 py-1 text-right font-medium text-gray-700 border-b">Amount</th>
-                            <th className="px-2 py-1 text-left font-medium text-gray-700 border-b">Payee</th>
-                            <th className="px-2 py-1 text-left font-medium text-gray-700 border-b">Memo</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-200">
-                          {previewData.map((entry, idx) => (
-                            <tr key={idx} className="hover:bg-gray-50">
-                              <td className="px-2 py-1 font-medium text-gray-900">{entry.checkNumber || '—'}</td>
-                              <td className="px-2 py-1 text-gray-600">{entry.date || '—'}</td>
-                              <td className="px-2 py-1 text-right font-semibold text-emerald-700">
-                                ${Math.abs(parseFloat(entry.amount) || 0).toFixed(2)}
-                              </td>
-                              <td className="px-2 py-1 text-gray-900">{entry.payee || '—'}</td>
-                              <td className="px-2 py-1 text-gray-600 max-w-[150px] truncate">{entry.memo || '—'}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              )}
-              {uploadResult && (
-                <div className={`mt-3 rounded-lg p-3 text-xs flex items-center gap-2 ${
+            )}
+
+            {uploadResult && (
+              <div
+                className={`mt-3 flex items-center gap-2 rounded-input border px-3 py-2 text-xs ${
                   uploadResult.success
-                    ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
-                    : 'bg-red-50 border border-red-200 text-red-800'
-                }`}>
-                  {uploadResult.success ? <CheckCircle size={14} /> : <AlertTriangle size={14} />}
-                  {uploadResult.message}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* API Configuration */}
-          {source === 'api' && (
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  API Endpoint
-                </label>
-                <input
-                  type="text"
-                  value={apiEndpoint}
-                  onChange={(e) => setApiEndpoint(e.target.value)}
-                  placeholder="https://api.quickbooks.com/v3/..."
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                    ? 'border-success-border bg-success-bg text-success-text'
+                    : 'border-error-border bg-error-bg text-error-text'
+                }`}
+                role="status"
+              >
+                {uploadResult.success ? <CheckCircle size={14} /> : <AlertTriangle size={14} />}
+                {uploadResult.message}
               </div>
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">
-                  API Key
-                </label>
-                <input
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="Enter your QuickBooks API key"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            </div>
-          )}
+            )}
+          </div>
+        )}
 
-          {/* Column Mapping — only show for CSV/Excel files */}
-          {!(file && isQBOFile(file.name)) && <div className={source !== 'file' || !file ? '' : ''}>
-            <label className="block text-sm font-semibold text-gray-700 mb-3">
-              Column Mapping
-              <span className="ml-2 text-xs font-normal text-gray-500">
-                Map QuickBooks columns to expected fields
-              </span>
-            </label>
+        {/* API configuration */}
+        {source === 'api' && (
+          <div className="space-y-3">
+            <Field label="API Endpoint" htmlFor="qb-api-endpoint">
+              <Input
+                id="qb-api-endpoint"
+                value={apiEndpoint}
+                onChange={(e) => setApiEndpoint(e.target.value)}
+                placeholder="https://api.quickbooks.com/v3/…"
+              />
+            </Field>
+            <Field label="API Key" htmlFor="qb-api-key">
+              <Input
+                id="qb-api-key"
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="Enter your QuickBooks API key"
+              />
+            </Field>
+          </div>
+        )}
+
+        {/* Column mapping — only for CSV/Excel files */}
+        {!(file && isQBOFile(file.name)) && (
+          <div>
+            <p className="mb-1 text-eyebrow text-ink-faint">Column Mapping</p>
+            <p className="mb-2 text-xs text-ink-faint">
+              Map QuickBooks columns to the expected fields.
+            </p>
             <div className="grid grid-cols-2 gap-3">
               {Object.entries(columnMapping).map(([key, value]) => (
-                <div key={key}>
-                  <label className="block text-xs text-gray-600 mb-1 capitalize">
-                    {key.replace(/([A-Z])/g, ' $1').trim()}
-                  </label>
-                  <input
-                    type="text"
+                <Field
+                  key={key}
+                  htmlFor={`qb-col-${key}`}
+                  label={<span className="capitalize">{key.replace(/([A-Z])/g, ' $1').trim()}</span>}
+                >
+                  <Input
+                    id={`qb-col-${key}`}
+                    inputSize="sm"
                     value={value}
-                    onChange={(e) =>
-                      setColumnMapping({ ...columnMapping, [key]: e.target.value })
-                    }
-                    className="w-full px-3 py-1.5 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    onChange={(e) => setColumnMapping({ ...columnMapping, [key]: e.target.value })}
                   />
-                </div>
+                </Field>
               ))}
             </div>
-          </div>}
-
-          {/* Preview */}
-          <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-            <h4 className="text-xs font-semibold text-gray-700 mb-2">Configuration Preview</h4>
-            <div className="space-y-1 text-xs text-gray-600">
-              <div><span className="font-medium">Source:</span> {source}</div>
-              <div><span className="font-medium">Check Number Column:</span> {columnMapping.checkNumber}</div>
-              <div><span className="font-medium">Date Column:</span> {columnMapping.date}</div>
-              <div><span className="font-medium">Amount Column:</span> {columnMapping.amount}</div>
-            </div>
           </div>
-        </div>
+        )}
 
-        <div className="sticky bottom-0 bg-gray-50 px-6 py-4 flex justify-end gap-3 border-t border-gray-200 rounded-b-xl">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleSubmit}
-            disabled={(source === 'file' && !file) || uploading}
-            className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-          >
-            {uploading && <Loader2 size={14} className="animate-spin" />}
-            {uploading ? 'Importing...' : uploadResult?.success ? 'Done — Close' : 'Connect & Import'}
-          </button>
-        </div>
+        {/* Configuration preview */}
+        <GlassPanel radius="input" padding="sm">
+          <p className="mb-1.5 text-eyebrow text-ink-faint">Configuration Preview</p>
+          <dl className="space-y-1 text-xs text-ink-body">
+            <div>
+              <dt className="inline font-semibold text-ink-strong">Source: </dt>
+              <dd className="inline capitalize">{source}</dd>
+            </div>
+            <div>
+              <dt className="inline font-semibold text-ink-strong">Check Number Column: </dt>
+              <dd className="inline">{columnMapping.checkNumber}</dd>
+            </div>
+            <div>
+              <dt className="inline font-semibold text-ink-strong">Date Column: </dt>
+              <dd className="inline">{columnMapping.date}</dd>
+            </div>
+            <div>
+              <dt className="inline font-semibold text-ink-strong">Amount Column: </dt>
+              <dd className="inline">{columnMapping.amount}</dd>
+            </div>
+          </dl>
+        </GlassPanel>
       </div>
-    </div>
+    </Dialog>
   );
 };

@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createAuthenticatedClient } from '@/lib/supabase/api';
+import { getQbToken } from '@/lib/qb-token';
 
 const QBO_BASE = 'https://quickbooks.api.intuit.com';
 
@@ -25,60 +26,18 @@ export default async function handler(
     const limit = parseInt(req.query.limit as string) || 50;
     const startPosition = parseInt(req.query.start as string) || 1;
 
-    // Get integration
-    const { data: integration, error: dbError } = await supabase
-      .from('integrations')
-      .select('access_token, refresh_token, realm_id, expires_at, qb_client_id, qb_client_secret')
-      .eq('provider', 'quickbooks')
-      .single();
-
-    if (!integration?.access_token || !integration?.realm_id) {
-      return res.status(400).json({ error: 'QuickBooks not connected' });
+    // One resolver (lib/qb-token.ts). This route used to read ONLY the legacy
+    // integrations row, so on a firm with several connected companies it
+    // previewed the WRONG one. It now reads qb_connections first.
+    const token = await getQbToken(supabase);
+    if (!token.ok) {
+      return res
+        .status(token.reason === 'not_connected' ? 400 : 401)
+        .json({ error: token.detail });
     }
+    const accessToken = token.accessToken;
 
-    // Refresh token if expired
-    let accessToken = integration.access_token;
-    const tokenExpired = new Date(integration.expires_at) <= new Date();
-
-    if (tokenExpired) {
-      const clientId = integration.qb_client_id || process.env.QUICKBOOKS_CLIENT_ID;
-      const clientSecret = integration.qb_client_secret || process.env.QUICKBOOKS_CLIENT_SECRET;
-
-      if (!clientId || !clientSecret) {
-        return res.status(401).json({ error: 'Cannot refresh token' });
-      }
-
-      const tokenRes = await fetch('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
-        method: 'POST',
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'Authorization': `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`,
-        },
-        body: new URLSearchParams({
-          grant_type: 'refresh_token',
-          refresh_token: integration.refresh_token,
-        }),
-      });
-
-      if (!tokenRes.ok) {
-        return res.status(401).json({ error: 'Token refresh failed' });
-      }
-
-      const newTokens = await tokenRes.json();
-      accessToken = newTokens.access_token;
-
-      await supabase
-        .from('integrations')
-        .update({
-          access_token: newTokens.access_token,
-          refresh_token: newTokens.refresh_token,
-          expires_at: new Date(Date.now() + newTokens.expires_in * 1000).toISOString(),
-        })
-        .eq('provider', 'quickbooks');
-    }
-
-    const realmId = integration.realm_id;
+    const realmId = token.connection.realmId;
 
     // Build query based on entity type
     let query = '';

@@ -262,6 +262,17 @@ let _checksSearch = '';
 let _checksDateFrom = null;
 let _checksDateTo = null;
 // ── Matches filter state ──
+// Needs Attention chip currently selected: '' | 'lowconf' | 'duplicate'
+// | 'discrepancy' | 'unmatched'. Independent of currentFilter so a chip and a
+// status pill cannot silently contradict each other.
+let _attentionFilter = '';
+// The Approve tab is the Match view narrowed to rows that actually have an
+// Approve action. Not a separate data set, so not a separate view.
+let _approveMode = false;
+// Anything below this score is "lower confidence". Same threshold the bulk
+// approve button uses, so one number governs both.
+const CONFIDENCE_FLOOR = 95;
+
 let _matchSearch = '';
 let _matchDateFrom = null;
 let _matchDateTo = null;
@@ -299,6 +310,7 @@ function showQBEndpointMissingBanner(msg) {
 
 // ── QB reconnect banner ───────────────────────────────────────
 function showQBReconnectBanner(msg) {
+  setQbStatus('stale');
   const banner = $('#match-banner');
   if (!banner) return;
   banner.innerHTML = `
@@ -538,13 +550,17 @@ function showView(view) {
 function switchTab(tab) {
   currentTab = tab;
   $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  if (tab !== 'matches' && tab !== 'approve') _approveMode = false;
   ['#view-matches', '#view-upload', '#view-documents', '#view-cheques', '#view-qb', '#view-history'].forEach(v => {
     const el = $(v); if (el) el.style.display = 'none';
   });
 
-  if (tab === 'matches') {
+  if (tab === 'matches' || tab === 'approve') {
+    // Approve reuses the Match view: same rows, narrowed to the approvable ones.
+    _approveMode = (tab === 'approve');
     show('#view-matches');
     if (!extractedChecks.length) loadChecksIntoMatches();
+    else renderMatches();
   }
   else if (tab === 'upload')    { show('#view-upload'); }
   else if (tab === 'documents') { show('#view-documents'); loadDocuments(); }
@@ -593,6 +609,8 @@ async function postLoginFlow() {
       }
       renderCompanySelect();
       showView('main');
+      setQbStatus('connected');
+      refreshUsageMeter();
       // Pull QB transactions first so matching has data, then load checks
       showLoading('Syncing QuickBooks transactions...');
       try {
@@ -773,10 +791,74 @@ function getSelectedQbAccount() {
   };
 }
 
+/**
+ * Flags for the Needs Attention chips, derived from the loaded matches only --
+ * never from a guess. `duplicate` is set on EVERY member of a colliding group,
+ * because the user has to see both rows to decide which one is real.
+ *
+ * Returns a Map keyed by the match object, so a row's flags survive sorting.
+ */
+function attentionFlags(all) {
+  const flags = new Map();
+  const groups = new Map();
+  all.forEach(m => {
+    const c = m.check || {};
+    const key = `${String(c.check_number || '').trim().toLowerCase()}|${parseFloat(c.amount) || 0}`;
+    if (!c.check_number || !parseFloat(c.amount)) return; // too thin to call a duplicate
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(m);
+  });
+  const dupes = new Set();
+  groups.forEach(group => { if (group.length > 1) group.forEach(m => dupes.add(m)); });
+
+  all.forEach(m => {
+    flags.set(m, {
+      lowconf: !!m.qbTxn && m.status !== 'approved' && (m.score || 0) < CONFIDENCE_FLOOR,
+      duplicate: dupes.has(m),
+      discrepancy: m.status === 'discrepancy',
+      unmatched: m.status === 'unmatched',
+    });
+  });
+  return flags;
+}
+
+function renderAttentionBar(all, flags) {
+  const bar = $('#attention-bar');
+  if (!bar) return;
+  const totals = { lowconf: 0, duplicate: 0, discrepancy: 0, unmatched: 0 };
+  all.forEach(m => {
+    const f = flags.get(m) || {};
+    Object.keys(totals).forEach(k => { if (f[k]) totals[k]++; });
+  });
+  Object.keys(totals).forEach(k => {
+    const n = $(`#att-${k}`);
+    if (n) n.textContent = totals[k];
+    const chip = bar.querySelector(`[data-attention="${k}"]`);
+    if (chip) {
+      // A chip with nothing behind it is noise, so it hides rather than reading 0.
+      chip.classList.toggle('is-empty', totals[k] === 0);
+      chip.classList.toggle('is-active', _attentionFilter === k);
+    }
+  });
+  const any = Object.values(totals).some(n => n > 0);
+  bar.classList.toggle('is-shown', any);
+}
+
 function renderMatches() {
   const list = $('#match-list');
+  const flags = attentionFlags(matches);
+  renderAttentionBar(matches, flags);
+
   // Status filter
   let filtered = currentFilter === 'all' ? matches : matches.filter(m => m.status === currentFilter);
+  // Approve tab: only rows that carry an Approve action.
+  if (_approveMode) {
+    filtered = filtered.filter(m => ['matched', 'pending', 'discrepancy'].includes(m.status));
+  }
+  // Needs Attention chip
+  if (_attentionFilter) {
+    filtered = filtered.filter(m => (flags.get(m) || {})[_attentionFilter]);
+  }
   // Document filter
   if (_docFilter) {
     filtered = filtered.filter(m => (m.check || {}).job_id === _docFilter);
@@ -2125,6 +2207,8 @@ function bindEvents() {
     }
   });
   $('#btn-profile-logout')?.addEventListener('click', doLogout);
+  // The options page is otherwise only reachable via chrome://extensions.
+  $('#btn-ext-options')?.addEventListener('click', () => chrome.runtime.openOptionsPage());
 
   // ── Disconnect QB (profile panel) ──
   $('#btn-qb-disconnect')?.addEventListener('click', async () => {
@@ -2179,6 +2263,8 @@ function bindEvents() {
     if (connections.length > 0) {
       renderCompanySelect();
       showView('main');
+      setQbStatus('connected');
+      refreshUsageMeter();
       showLoading('Syncing QuickBooks transactions...');
       try { await sendMsg({ type: 'PULL_QB_TXNS' }); } catch (_) {}
       await loadChecksIntoMatches();
@@ -2219,6 +2305,42 @@ function bindEvents() {
 
   // ── Tabs ──
   $$('.tab').forEach(tab => tab.addEventListener('click', () => switchTab(tab.dataset.tab)));
+
+  // Needs Attention chips. Clicking the active one clears it, so the user is
+  // never stranded in a filter with no visible way out.
+  $$('.attention-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      const k = chip.dataset.attention;
+      _attentionFilter = (_attentionFilter === k) ? '' : k;
+      // A chip is a cross-cutting view, so the status pill goes back to All.
+      if (_attentionFilter) {
+        currentFilter = 'all';
+        $$('.pill').forEach(pl => pl.classList.toggle('active', pl.dataset.status === 'all'));
+      }
+      renderMatches();
+    });
+  });
+
+  // Open QuickBooks on the company the user is working on (client item 7).
+  // The realm is resolved in the service worker from qb_connections.is_active,
+  // not from anything held locally.
+  $('#btn-open-qb')?.addEventListener('click', async () => {
+    const btn = $('#btn-open-qb');
+    if (btn) btn.disabled = true;
+    try {
+      const acct = getSelectedQbAccount();
+      const r = await sendMsg({ type: 'OPEN_QB_COMPANY', accountId: acct?.id || null });
+      if (r?.success) dbg(`Opened QuickBooks on realm ${r.realmId}`, 'success');
+      else {
+        dbg(`OPEN_QB_COMPANY failed: ${r?.error || 'unknown'}`, 'warn');
+        showWarningBanner(r?.error || 'Could not open QuickBooks — check the connection.');
+      }
+    } catch (e) {
+      dbg(`OPEN_QB_COMPANY threw: ${e?.message || e}`, 'error');
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
 
   // ── Filter pills ──
   $$('.pill').forEach(pill => {
@@ -2753,4 +2875,73 @@ function bindEvents() {
       if (e.target.checked) saveOverlayModeSetting(e.target.value);
     });
   });
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Header: QuickBooks status + usage meter
+// Parity with the app's top bar (CHECKLIST 11). Both are read-only reporting;
+// neither gates anything here, because the gate lives server-side.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * @param {'connected'|'stale'|'off'} state
+ * @param {string} [label] overrides the default copy
+ */
+function setQbStatus(state, label) {
+  const el = $('#qb-status');
+  if (!el) return;
+  el.classList.toggle('is-stale', state === 'stale');
+  el.classList.toggle('is-off', state === 'off');
+  el.textContent = label || (
+    state === 'connected' ? 'QuickBooks connected' :
+    state === 'stale'     ? 'Reconnect QuickBooks' :
+                            'Not connected'
+  );
+  el.title = el.textContent;
+}
+
+/**
+ * Reads /api/usage/trial-status through the service worker -- the same endpoint
+ * the app's trial meter reads, so the panel and the processing gate cannot
+ * report different numbers. Stays hidden when the figure is unknown rather
+ * than showing a made-up allowance.
+ */
+async function refreshUsageMeter() {
+  const wrap = $('#usage-meter');
+  if (!wrap) return;
+  let usage = null;
+  try {
+    const res = await sendMsg({ type: 'GET_USAGE' });
+    usage = res?.usage || null;
+    if (res?.error) dbg(`Usage fetch: ${res.error}`, 'warn');
+  } catch (e) {
+    dbg(`Usage fetch threw: ${e?.message || e}`, 'warn');
+  }
+  if (!usage) { wrap.style.display = 'none'; return; }
+
+  const used = Number(usage.checksUsedThisPeriod ?? usage.trialChecksUsed ?? 0);
+  const limitRaw = usage.planCheckAllowance ?? usage.trialCheckLimit ?? null;
+  const limit = Number.isFinite(Number(limitRaw)) ? Number(limitRaw) : null;
+
+  const valEl = $('#usage-meter-val');
+  const fill  = $('#usage-meter-fill');
+  if (limit && limit > 0) {
+    const pct = Math.min(100, Math.round((used / limit) * 100));
+    if (valEl) valEl.textContent = `${used.toLocaleString()} / ${limit.toLocaleString()}`;
+    if (fill) fill.style.width = `${pct}%`;
+    wrap.classList.toggle('is-warn', pct >= 80 && pct < 100);
+    wrap.classList.toggle('is-over', pct >= 100);
+    const days = usage.daysRemaining;
+    wrap.title = Number.isFinite(Number(days))
+      ? `${used} of ${limit} checks this period · ${days} day(s) left`
+      : `${used} of ${limit} checks this period`;
+  } else {
+    // Unlimited plan: report the count, do not draw a meter against nothing.
+    if (valEl) valEl.textContent = `${used.toLocaleString()} used`;
+    if (fill) fill.style.width = '0%';
+    wrap.classList.remove('is-warn', 'is-over');
+    wrap.title = `${used} checks this period`;
+  }
+  wrap.style.display = '';
 }

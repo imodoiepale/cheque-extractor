@@ -1,14 +1,24 @@
 'use client';
 
 import { useState } from 'react';
-import Image from 'next/image';
 import { ZoomIn, ZoomOut, RotateCw } from 'lucide-react';
+import { GlassCard, GlassCardTitle, GlassPanel, IconButton } from '@/components/ui';
 
 interface Props {
   imageUrl: string;
+  /**
+   * Render the outer surface as a non-blurring panel.
+   *
+   * The viewer's default shell is a GlassCard, which is correct on the review
+   * page where it is the top surface. Inside the Review step's side-by-side
+   * modal it would be a `glass-card` nested in a `glass-modal` — two stacked
+   * backdrop-filters, which the design system forbids. One optional prop beats
+   * a second copy of the viewer.
+   */
+  inset?: boolean;
 }
 
-export default function CheckImageViewer({ imageUrl }: Props) {
+export default function CheckImageViewer({ imageUrl, inset }: Props) {
   const [zoom, setZoom] = useState(100);
   const [rotation, setRotation] = useState(0);
 
@@ -17,56 +27,44 @@ export default function CheckImageViewer({ imageUrl }: Props) {
   const handleRotate = () => setRotation(prev => (prev + 90) % 360);
 
   return (
-    <div className="bg-white rounded-lg shadow overflow-hidden">
+    <GlassCard tier={inset ? 'panel' : 'card'} padding="none" className="overflow-hidden">
       {/* Controls */}
-      <div className="px-4 py-3 border-b flex items-center justify-between bg-gray-50">
-        <h3 className="font-semibold">Check Image</h3>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleZoomOut}
-            className="p-2 hover:bg-gray-200 rounded"
-            title="Zoom Out"
-          >
+      <div className="flex items-center justify-between gap-3 border-b border-glass-hairline px-4 py-3">
+        <GlassCardTitle className="text-base">Check Image</GlassCardTitle>
+        <div className="flex items-center gap-1">
+          <IconButton aria-label="Zoom out" size="icon-sm" onClick={handleZoomOut} disabled={zoom <= 50} title="Zoom Out">
             <ZoomOut size={18} />
-          </button>
-          <span className="text-sm font-medium min-w-[60px] text-center">
+          </IconButton>
+          <span className="nums min-w-[3.5rem] text-center text-sm font-medium text-ink-body">
             {zoom}%
           </span>
-          <button
-            onClick={handleZoomIn}
-            className="p-2 hover:bg-gray-200 rounded"
-            title="Zoom In"
-          >
+          <IconButton aria-label="Zoom in" size="icon-sm" onClick={handleZoomIn} disabled={zoom >= 200} title="Zoom In">
             <ZoomIn size={18} />
-          </button>
-          <div className="w-px h-6 bg-gray-300 mx-2" />
-          <button
-            onClick={handleRotate}
-            className="p-2 hover:bg-gray-200 rounded"
-            title="Rotate"
-          >
+          </IconButton>
+          <span className="mx-2 h-6 w-px bg-glass-hairline" aria-hidden />
+          <IconButton aria-label="Rotate" size="icon-sm" onClick={handleRotate} title="Rotate">
             <RotateCw size={18} />
-          </button>
+          </IconButton>
         </div>
       </div>
 
-      {/* Image */}
-      <div className="p-4 bg-gray-100 overflow-auto" style={{ maxHeight: '600px' }}>
+      {/* Image. The zoom/rotate transform is the ONLY inline style — it is
+          dynamic maths. Every colour, radius and shadow here is a token, and
+          the inner surface is a GlassPanel so nothing blurs twice. */}
+      <GlassPanel tone="sunken" radius="card" padding="md" className="scroll-region max-h-[600px] border-0">
         <div className="flex items-center justify-center">
           <div
-            style={{
-              transform: `scale(${zoom / 100}) rotate(${rotation}deg)`,
-              transition: 'transform 0.2s',
-            }}
+            className="transition-transform duration-settle ease-settle"
+            style={{ transform: `scale(${zoom / 100}) rotate(${rotation}deg)` }}
           >
             <img
               src={imageUrl}
               alt="Check"
-              className="max-w-full h-auto shadow-lg"
+              className="h-auto max-w-full rounded-input shadow-glass"
             />
           </div>
         </div>
-      </div>
-    </div>
+      </GlassPanel>
+    </GlassCard>
   );
 }

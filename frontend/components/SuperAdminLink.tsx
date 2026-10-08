@@ -25,9 +25,9 @@ export default function SuperAdminLink() {
   return (
     <Link
       href="/admin"
-      className="flex items-center gap-2.5 px-2.5 py-[7px] text-[13px] font-medium text-amber-600 hover:text-amber-700 hover:bg-amber-50/70 rounded-lg transition-colors"
+      className="flex items-center gap-2.5 px-2.5 py-[7px] text-[13px] font-medium rounded-input press text-warning hover:text-warning-foreground hover:bg-warning/20"
     >
-      <Crown className="w-[16px] h-[16px]" />
+      <Crown className="w-4 h-4" />
       <span>Super Admin</span>
     </Link>
   );

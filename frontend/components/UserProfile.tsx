@@ -37,33 +37,33 @@ export default function UserProfile() {
     <div className="relative">
       <button
         onClick={() => setShowMenu(!showMenu)}
-        className="w-full flex items-center gap-3 px-3 py-2.5 hover:bg-gray-100/70 rounded-lg transition-colors"
+        className="w-full flex items-center gap-3 px-3 py-2.5 rounded-input press hover:bg-shell-text/[0.08]"
       >
         {/* Avatar */}
-        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center text-white text-xs font-semibold flex-shrink-0">
+        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-brand-light to-brand-dark flex items-center justify-center text-white text-xs font-semibold flex-shrink-0">
           {initials}
         </div>
         
         {/* User Info */}
         <div className="flex-1 text-left min-w-0">
-          <p className="text-sm font-medium text-gray-200 truncate">
+          <p className="text-sm font-medium text-shell-text truncate">
             {displayName}
           </p>
-          <p className="text-xs text-gray-500 truncate">
+          <p className="text-xs text-shell-muted truncate">
             {user.email}
           </p>
         </div>
 
         {/* Dropdown Icon */}
-        <ChevronDown className={`w-4 h-4 text-gray-400 transition-transform flex-shrink-0 ${showMenu ? 'rotate-180' : ''}`} />
+        <ChevronDown className={`w-4 h-4 text-shell-muted transition-transform duration-quick ease-settle flex-shrink-0 ${showMenu ? 'rotate-180' : ''}`} />
       </button>
 
       {/* Dropdown Menu */}
       {showMenu && (
-        <div className="absolute bottom-full left-0 right-0 mb-2 bg-white rounded-lg shadow-lg border border-gray-200 py-2 z-50">
-          <div className="px-3 py-2 border-b border-gray-100">
-            <p className="text-xs font-medium text-gray-900 truncate">{displayName}</p>
-            <p className="text-xs text-gray-500 truncate">{user.email}</p>
+        <div className="absolute bottom-full left-0 right-0 mb-2 z-50 py-2 rounded-tile bg-shell-solid border border-glass-border-dark shadow-glass-modal animate-popover-in">
+          <div className="px-3 py-2 border-b border-glass-border-dark">
+            <p className="text-xs font-medium text-shell-text truncate">{displayName}</p>
+            <p className="text-xs text-shell-muted truncate">{user.email}</p>
           </div>
           
           <div className="px-2 py-1">

@@ -2,6 +2,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 
 import { createAuthenticatedClient } from '@/lib/supabase/api';
 
+import { getQbToken } from '@/lib/qb-token';
+
 
 
 /**
@@ -49,226 +51,6 @@ import { createAuthenticatedClient } from '@/lib/supabase/api';
 const QBO_BASE = 'https://quickbooks.api.intuit.com';
 
 const QBO_SANDBOX = 'https://sandbox-quickbooks.api.intuit.com';
-
-
-
-interface QBTokens {
-
-  access_token: string;
-
-  refresh_token: string;
-
-  realm_id: string;
-
-  expires_at: string;
-
-  qb_client_id?: string;
-
-  qb_client_secret?: string;
-
-}
-
-
-
-async function getTokens(supabase: any): Promise<QBTokens | null> {
-
-  // Prefer qb_connections (active connection) — multi-company source of truth
-
-  // This stays in sync with what the extension and company switcher use
-
-  try {
-
-    const { data: activeConn } = await supabase
-
-      .from('qb_connections')
-
-      .select('access_token, refresh_token, realm_id, token_expires_at')
-
-      .eq('is_active', true)
-
-      .order('connected_at', { ascending: false })
-
-      .limit(1)
-
-      .single();
-
-
-
-    if (activeConn?.access_token && activeConn?.realm_id) {
-
-      // Also read credentials from integrations for token refresh
-
-      const { data: creds } = await supabase
-
-        .from('integrations')
-
-        .select('qb_client_id, qb_client_secret')
-
-        .eq('provider', 'quickbooks')
-
-        .maybeSingle();
-
-
-
-      return {
-
-        access_token: activeConn.access_token,
-
-        refresh_token: activeConn.refresh_token,
-
-        realm_id: activeConn.realm_id,
-
-        expires_at: activeConn.token_expires_at,
-
-        qb_client_id: creds?.qb_client_id,
-
-        qb_client_secret: creds?.qb_client_secret,
-
-      };
-
-    }
-
-  } catch (_) {
-
-    // Fall through to integrations fallback
-
-  }
-
-
-
-  // Fallback: legacy integrations table (single-company)
-
-  const { data } = await supabase
-
-    .from('integrations')
-
-    .select('access_token, refresh_token, realm_id, expires_at, qb_client_id, qb_client_secret')
-
-    .eq('provider', 'quickbooks')
-
-    .single();
-
-
-
-  if (!data?.access_token || !data?.realm_id) return null;
-
-  return data;
-
-}
-
-
-
-async function refreshAccessToken(supabase: any, tokens: QBTokens): Promise<string | null> {
-
-  const clientId = tokens.qb_client_id || process.env.QUICKBOOKS_CLIENT_ID;
-
-  const clientSecret = tokens.qb_client_secret || process.env.QUICKBOOKS_CLIENT_SECRET;
-
-
-
-  if (!clientId || !clientSecret || !tokens.refresh_token) return null;
-
-
-
-  try {
-
-    const response = await fetch('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
-
-      method: 'POST',
-
-      headers: {
-
-        'Accept': 'application/json',
-
-        'Content-Type': 'application/x-www-form-urlencoded',
-
-        'Authorization': `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`,
-
-      },
-
-      body: new URLSearchParams({
-
-        grant_type: 'refresh_token',
-
-        refresh_token: tokens.refresh_token,
-
-      }),
-
-    });
-
-
-
-    if (!response.ok) {
-
-      console.error('Token refresh failed:', await response.text());
-
-      return null;
-
-    }
-
-
-
-    const newTokens = await response.json();
-
-
-
-    const newExpiresAt = new Date(Date.now() + newTokens.expires_in * 1000).toISOString();
-
-
-
-    // Update tokens in integrations table
-
-    await supabase
-
-      .from('integrations')
-
-      .update({
-
-        access_token: newTokens.access_token,
-
-        refresh_token: newTokens.refresh_token,
-
-        expires_at: newExpiresAt,
-
-        updated_at: new Date().toISOString(),
-
-      })
-
-      .eq('provider', 'quickbooks');
-
-
-
-    // Also sync to qb_connections to keep multi-company source of truth current
-
-    await supabase
-
-      .from('qb_connections')
-
-      .update({
-
-        access_token: newTokens.access_token,
-
-        refresh_token: newTokens.refresh_token,
-
-        token_expires_at: newExpiresAt,
-
-      })
-
-      .eq('realm_id', tokens.realm_id);
-
-
-
-    return newTokens.access_token;
-
-  } catch (error) {
-
-    console.error('Token refresh error:', error);
-
-    return null;
-
-  }
-
-}
 
 
 
@@ -546,51 +328,30 @@ export default async function handler(
 
 
 
-    // Get stored tokens
+    // One resolver for every QuickBooks token in the app (lib/qb-token.ts).
+    // It reads qb_connections first and falls back to the legacy integrations
+    // row, trims the credentials, writes a refreshed token to BOTH stores, and
+    // records connection health on every outcome.
+    const token = await getQbToken(supabase);
 
-    const tokens = await getTokens(supabase);
-
-    if (!tokens) {
-
-      return res.status(401).json({
-
-        error: 'QuickBooks not connected',
-
-        message: 'Please connect to QuickBooks in Settings → Integrations first.',
-
-      });
-
-    }
-
-
-
-    // Check if token is expired and refresh if needed
-
-    let accessToken = tokens.access_token;
-
-    if (new Date(tokens.expires_at) <= new Date()) {
-
-      const refreshed = await refreshAccessToken(supabase, tokens);
-
-      if (!refreshed) {
-
+    if (!token.ok) {
+      if (token.reason === 'not_connected') {
         return res.status(401).json({
-
-          error: 'Token expired',
-
-          message: 'QuickBooks token expired. Please reconnect in Settings.',
-
+          error: 'QuickBooks not connected',
+          message: 'Please connect to QuickBooks in Settings → Integrations first.',
         });
-
       }
-
-      accessToken = refreshed;
-
+      return res.status(401).json({
+        error: 'Token expired',
+        message: 'QuickBooks token expired. Please reconnect in Settings.',
+      });
     }
 
+    const accessToken = token.accessToken;
 
 
-    const realmId = tokens.realm_id;
+
+    const realmId = token.connection.realmId;
 
     const useSandbox = req.query.sandbox === 'true';
 
@@ -1219,7 +980,7 @@ export default async function handler(
 
           try {
 
-            const realmId = tokens.realm_id;
+            const realmId = token.connection.realmId;
 
             const qbTxnRows = filteredEntries.map(e => ({
 

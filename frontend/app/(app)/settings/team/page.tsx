@@ -1,7 +1,23 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { UserPlus, Mail, Shield, Trash2, MoreVertical, CheckCircle, XCircle } from 'lucide-react';
+import Link from 'next/link';
+import { ArrowLeft, CheckCircle, Mail, Trash2, UserPlus } from 'lucide-react';
+import toast from 'react-hot-toast';
+import { DeleteConfirmModal } from '@/components/DeleteConfirmModal';
+import {
+  Badge,
+  Button,
+  Field,
+  GlassCard,
+  GlassCardTitle,
+  GlassPanel,
+  IconButton,
+  Input,
+  Select,
+  Skeleton,
+  StatusPill,
+} from '@/components/ui';
 
 interface TeamMember {
   id: string;
@@ -13,12 +29,22 @@ interface TeamMember {
   last_active?: string;
 }
 
+type Role = TeamMember['role'];
+
+/** Roles are a closed set, so the badge tone is a map, not a switch. */
+const ROLE_TONE: Record<Role, 'brand' | 'neutral' | 'outline'> = {
+  admin: 'brand',
+  member: 'neutral',
+  viewer: 'outline',
+};
+
 export default function TeamPage() {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState<'admin' | 'member' | 'viewer'>('member');
+  const [inviteRole, setInviteRole] = useState<Role>('member');
   const [inviting, setInviting] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [removing, setRemoving] = useState<TeamMember | null>(null);
 
   useEffect(() => {
     fetchTeamMembers();
@@ -54,22 +80,21 @@ export default function TeamPage() {
         setInviteEmail('');
         setInviteRole('member');
         fetchTeamMembers();
-        alert('Invitation sent successfully');
+        toast.success('Invitation sent');
       } else {
         const error = await response.json();
-        alert(error.message || 'Failed to send invitation');
+        toast.error(error.message || 'Failed to send invitation');
       }
     } catch (error) {
       console.error('Failed to invite member:', error);
-      alert('Failed to send invitation');
+      toast.error('Failed to send invitation');
     } finally {
       setInviting(false);
     }
   };
 
+  /** The confirm step is a Sheet, not window.confirm. */
   const handleRemoveMember = async (memberId: string) => {
-    if (!confirm('Are you sure you want to remove this team member?')) return;
-
     try {
       const response = await fetch(`/api/team/members/${memberId}`, {
         method: 'DELETE',
@@ -77,14 +102,17 @@ export default function TeamPage() {
 
       if (response.ok) {
         fetchTeamMembers();
+        toast.success('Team member removed');
+      } else {
+        toast.error('Failed to remove member');
       }
     } catch (error) {
       console.error('Failed to remove member:', error);
-      alert('Failed to remove member');
+      toast.error('Failed to remove member');
     }
   };
 
-  const handleUpdateRole = async (memberId: string, newRole: 'admin' | 'member' | 'viewer') => {
+  const handleUpdateRole = async (memberId: string, newRole: Role) => {
     try {
       const response = await fetch(`/api/team/members/${memberId}`, {
         method: 'PATCH',
@@ -94,185 +122,236 @@ export default function TeamPage() {
 
       if (response.ok) {
         fetchTeamMembers();
+        toast.success('Role updated');
+      } else {
+        toast.error('Failed to update role');
       }
     } catch (error) {
       console.error('Failed to update role:', error);
-      alert('Failed to update role');
+      toast.error('Failed to update role');
     }
   };
 
-  const getRoleBadgeColor = (role: string) => {
-    switch (role) {
-      case 'admin':
-        return 'bg-purple-100 text-purple-800 border-purple-200';
-      case 'member':
-        return 'bg-blue-100 text-blue-800 border-blue-200';
-      case 'viewer':
-        return 'bg-gray-100 text-gray-800 border-gray-200';
-      default:
-        return 'bg-gray-100 text-gray-800 border-gray-200';
-    }
-  };
+  const pending = teamMembers.filter((m) => m.status === 'pending');
 
   return (
-    <div className="max-w-5xl mx-auto space-y-8">
+    <div className="mx-auto max-w-5xl space-y-5 p-5" data-tone="brand">
       <div>
-        <h1 className="text-3xl font-bold text-gray-900">Team Management</h1>
-        <p className="text-gray-600 mt-1">Invite team members and manage access</p>
+        <Link
+          href="/settings"
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-ink-body transition-colors duration-quick ease-settle hover:text-ink-strong"
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          Settings
+        </Link>
+        <h1 className="mt-3 font-heading text-2xl font-semibold text-ink-strong">
+          Team Management
+        </h1>
+        <p className="mt-0.5 text-sm text-ink-faint">Invite team members and manage access</p>
       </div>
 
-      {/* Invite Section */}
-      <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-xl font-semibold text-gray-900 mb-4">Invite Team Member</h2>
-        <form onSubmit={handleInvite} className="flex gap-4">
-          <div className="flex-1">
-            <input
+      {/* ── Invite ──────────────────────────────────── */}
+      <GlassCard padding="lg" className="space-y-4">
+        <GlassCardTitle>Invite Team Member</GlassCardTitle>
+
+        <form onSubmit={handleInvite} className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <Field label="Email" htmlFor="inviteEmail" required className="flex-1">
+            <Input
+              id="inviteEmail"
               type="email"
+              autoComplete="off"
               value={inviteEmail}
               onChange={(e) => setInviteEmail(e.target.value)}
-              placeholder="email@example.com"
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              placeholder="name@theirfirm.com"
               required
             />
-          </div>
-          <div className="w-40">
-            <select
+          </Field>
+          <Field label="Role" htmlFor="inviteRole" className="sm:w-40">
+            <Select
+              id="inviteRole"
               value={inviteRole}
-              onChange={(e) => setInviteRole(e.target.value as 'admin' | 'member' | 'viewer')}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              onChange={(e) => setInviteRole(e.target.value as Role)}
             >
               <option value="viewer">Viewer</option>
               <option value="member">Member</option>
               <option value="admin">Admin</option>
-            </select>
-          </div>
-          <button
+            </Select>
+          </Field>
+          <Button
             type="submit"
-            disabled={inviting}
-            className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+            loading={inviting}
+            icon={<UserPlus size={16} />}
+            className="sm:mb-[1.625rem]"
           >
-            <UserPlus size={18} />
-            {inviting ? 'Inviting...' : 'Invite'}
-          </button>
+            {inviting ? 'Inviting…' : 'Invite'}
+          </Button>
         </form>
 
-        <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-4">
-          <p className="text-sm text-blue-900 font-medium mb-2">Role Permissions:</p>
-          <ul className="text-sm text-blue-800 space-y-1">
-            <li><strong>Admin:</strong> Full access including team management and settings</li>
-            <li><strong>Member:</strong> Can upload, review, and export checks</li>
-            <li><strong>Viewer:</strong> Can only view checks and analytics (read-only)</li>
+        <GlassPanel tone="sunken" radius="input" padding="sm">
+          <p className="mb-1.5 text-xs font-semibold text-ink-strong">Role permissions</p>
+          <ul className="space-y-1 text-xs text-ink-body">
+            <li>
+              <strong className="text-ink-strong">Admin:</strong> full access including team
+              management and settings
+            </li>
+            <li>
+              <strong className="text-ink-strong">Member:</strong> can upload, review and export
+              cheques
+            </li>
+            <li>
+              <strong className="text-ink-strong">Viewer:</strong> can only view cheques and
+              analytics (read-only)
+            </li>
           </ul>
-        </div>
-      </div>
+        </GlassPanel>
+      </GlassCard>
 
-      {/* Team Members List */}
-      <div className="bg-white rounded-lg shadow">
-        <div className="px-6 py-4 border-b">
-          <h2 className="text-xl font-semibold text-gray-900">Team Members ({teamMembers.length})</h2>
+      {/* ── Members ─────────────────────────────────── */}
+      <GlassCard padding="none" className="overflow-hidden">
+        <div className="border-b border-glass-hairline px-5 py-3.5">
+          <GlassCardTitle className="text-base">
+            Team Members <span className="nums text-ink-faint">({teamMembers.length})</span>
+          </GlassCardTitle>
         </div>
 
         {loading ? (
-          <div className="p-8 text-center text-gray-500">Loading team members...</div>
-        ) : teamMembers.length === 0 ? (
-          <div className="p-8 text-center text-gray-500">
-            No team members yet. Invite someone to get started.
+          <div className="space-y-3 p-5">
+            <Skeleton className="h-12 w-full" />
+            <Skeleton className="h-12 w-full" />
           </div>
+        ) : teamMembers.length === 0 ? (
+          <p className="px-5 py-10 text-center text-sm text-ink-faint">
+            No team members yet. Invite someone to get started.
+          </p>
         ) : (
-          <div className="divide-y">
+          <div>
             {teamMembers.map((member) => (
-              <div key={member.id} className="px-6 py-4 flex items-center justify-between hover:bg-gray-50">
-                <div className="flex items-center gap-4 flex-1">
-                  <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-semibold">
-                    {member.name ? member.name.charAt(0).toUpperCase() : member.email.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-3">
-                      <p className="font-medium text-gray-900">{member.name || member.email}</p>
+              <div
+                key={member.id}
+                className="glass-divider flex flex-wrap items-center justify-between gap-3 px-5 py-3 transition-colors duration-quick ease-settle hover:bg-brand/[0.045]"
+              >
+                <div className="flex min-w-0 flex-1 items-center gap-3">
+                  <span
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-brand to-brand-dark text-sm font-semibold text-white"
+                    aria-hidden
+                  >
+                    {(member.name || member.email).charAt(0).toUpperCase()}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="truncate text-sm font-medium text-ink-strong">
+                        {member.name || member.email}
+                      </p>
                       {member.status === 'active' ? (
-                        <span className="flex items-center gap-1 text-xs text-green-600">
-                          <CheckCircle size={14} />
-                          Active
-                        </span>
+                        <Badge tone="success" size="sm">
+                          <CheckCircle size={11} aria-hidden /> Active
+                        </Badge>
                       ) : (
-                        <span className="flex items-center gap-1 text-xs text-yellow-600">
-                          <Mail size={14} />
-                          Pending
-                        </span>
+                        <StatusPill
+                          status="pending"
+                          size="sm"
+                          icon={<Mail size={11} aria-hidden />}
+                        />
                       )}
                     </div>
-                    <p className="text-sm text-gray-600">{member.email}</p>
+                    <p className="truncate text-xs text-ink-body">{member.email}</p>
                     {member.last_active && (
-                      <p className="text-xs text-gray-500 mt-1">
+                      <p className="nums mt-0.5 text-xs text-ink-faint">
                         Last active: {new Date(member.last_active).toLocaleDateString()}
                       </p>
                     )}
                   </div>
                 </div>
 
-                <div className="flex items-center gap-4">
-                  <select
+                <div className="flex items-center gap-2">
+                  <label className="sr-only" htmlFor={`role-${member.id}`}>
+                    Role for {member.email}
+                  </label>
+                  <Select
+                    id={`role-${member.id}`}
+                    inputSize="sm"
                     value={member.role}
-                    onChange={(e) => handleUpdateRole(member.id, e.target.value as 'admin' | 'member' | 'viewer')}
-                    className={`px-3 py-1 text-sm font-medium rounded-full border ${getRoleBadgeColor(member.role)}`}
+                    onChange={(e) => handleUpdateRole(member.id, e.target.value as Role)}
+                    className="w-32 rounded-pill pr-7 text-center"
                   >
                     <option value="viewer">Viewer</option>
                     <option value="member">Member</option>
                     <option value="admin">Admin</option>
-                  </select>
+                  </Select>
 
-                  <button
-                    onClick={() => handleRemoveMember(member.id)}
-                    className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                  <IconButton
+                    aria-label={`Remove ${member.email}`}
+                    size="icon-sm"
                     title="Remove member"
+                    onClick={() => setRemoving(member)}
+                    className="text-ink-faint hover:text-error-text"
                   >
-                    <Trash2 size={18} />
-                  </button>
+                    <Trash2 size={16} />
+                  </IconButton>
                 </div>
               </div>
             ))}
           </div>
         )}
-      </div>
+      </GlassCard>
 
-      {/* Pending Invitations */}
-      {teamMembers.filter(m => m.status === 'pending').length > 0 && (
-        <div className="bg-white rounded-lg shadow">
-          <div className="px-6 py-4 border-b">
-            <h2 className="text-xl font-semibold text-gray-900">
-              Pending Invitations ({teamMembers.filter(m => m.status === 'pending').length})
-            </h2>
+      {/* ── Pending invitations ─────────────────────── */}
+      {pending.length > 0 && (
+        <GlassCard padding="none" className="overflow-hidden">
+          <div className="border-b border-glass-hairline px-5 py-3.5">
+            <GlassCardTitle className="text-base">
+              Pending Invitations <span className="nums text-ink-faint">({pending.length})</span>
+            </GlassCardTitle>
           </div>
-          <div className="divide-y">
-            {teamMembers
-              .filter(m => m.status === 'pending')
-              .map((member) => (
-                <div key={member.id} className="px-6 py-4 flex items-center justify-between">
-                  <div className="flex items-center gap-4">
-                    <Mail className="text-yellow-600" size={20} />
-                    <div>
-                      <p className="font-medium text-gray-900">{member.email}</p>
-                      <p className="text-sm text-gray-600">
-                        Invited {new Date(member.invited_at).toLocaleDateString()}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <span className={`px-3 py-1 text-sm font-medium rounded-full border ${getRoleBadgeColor(member.role)}`}>
-                      {member.role}
-                    </span>
-                    <button
-                      onClick={() => handleRemoveMember(member.id)}
-                      className="text-sm text-red-600 hover:underline"
-                    >
-                      Cancel
-                    </button>
+          <div>
+            {pending.map((member) => (
+              <div
+                key={member.id}
+                className="glass-divider flex flex-wrap items-center justify-between gap-3 px-5 py-3"
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  <span
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-warning-bg"
+                    aria-hidden
+                  >
+                    <Mail className="h-4 w-4 text-warning-text" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-ink-strong">{member.email}</p>
+                    <p className="nums text-xs text-ink-body">
+                      Invited {new Date(member.invited_at).toLocaleDateString()}
+                    </p>
                   </div>
                 </div>
-              ))}
+                <div className="flex items-center gap-2.5">
+                  <Badge tone={ROLE_TONE[member.role]} size="sm" className="capitalize">
+                    {member.role}
+                  </Badge>
+                  <Button variant="ghost" size="sm" onClick={() => setRemoving(member)}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ))}
           </div>
-        </div>
+        </GlassCard>
       )}
+
+      <DeleteConfirmModal
+        isOpen={removing !== null}
+        onClose={() => setRemoving(null)}
+        onConfirm={() => {
+          if (removing) handleRemoveMember(removing.id);
+          setRemoving(null);
+        }}
+        title="Remove team member?"
+        message={
+          removing
+            ? `${removing.email} will lose access to this firm immediately. Any pending invitation is cancelled.`
+            : ''
+        }
+        confirmText="Remove"
+      />
     </div>
   );
 }

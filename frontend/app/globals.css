@@ -2,85 +2,283 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ===========================================================================
+   Kyriq premium glass — token root.
+   Spec: docs/DESIGN-SYSTEM.md. Values are measured from depthme.app and
+   inverted for a light substrate. Do not re-derive them.
+
+   Every token here is also mapped in tailwind.config.js. If you add one,
+   add it there too — a :root variable with no theme entry produces no
+   utility, which is how the old @apply block ended up silently inert.
+   =========================================================================== */
+
 @layer base {
   :root {
-    /* Kyriq Brand Colors */
+    /* ---- Base ---- */
     --background: 0 0% 100%;
     --foreground: 222 47% 11%;
     --border: 214 32% 91%;
     --input: 214 32% 91%;
-    --ring: 245 58% 67%;
-    
-    /* Primary - Kyriq Purple */
-    --primary: 245 58% 67%;
+    --ring: 239 84% 67%;
+
+    /* ---- Brand: Indigo #6366f1, Emerald #10b981 ---- */
+    --brand: 239 84% 67%;        /* #6366f1 */
+    --brand-light: 234 89% 74%;  /* #818cf8 */
+    --brand-dark: 243 75% 59%;   /* #4f46e5 */
+    --brand-deep: 245 58% 51%;   /* #4338ca */
+    --brand-tint: 226 100% 94%;  /* #e0e7ff */
+    --brand-wash: 226 100% 97%;  /* #eef2ff */
+
+    --emerald: 160 84% 39%;      /* #10b981 */
+    --emerald-dark: 163 82% 20%; /* #065f46 */
+    --emerald-tint: 152 76% 90%; /* #d1fae5 */
+
+    /* ---- Primary = brand indigo (resolves the blue-600 vs purple drift) ---- */
+    --primary: 239 84% 67%;
     --primary-foreground: 0 0% 100%;
+    --primary-light: 234 89% 74%;
     --primary-dark: 243 75% 59%;
-    --primary-light: 258 90% 66%;
-    
-    /* Success - Kyriq Green */
-    --success: 158 64% 52%;
+    --primary-deep: 245 58% 51%;
+    --primary-bg: 226 100% 94%;
+    --primary-text: 244 55% 41%;  /* #3730a3 — 7.8:1 on --primary-bg */
+
+    /* ---- State families.
+           Each `-text` is verified >= 4.5:1 against its own `-bg`,
+           not against white (DESIGN-SYSTEM 7). ---- */
+    --success: 160 84% 39%;
     --success-foreground: 0 0% 100%;
-    --success-dark: 160 84% 39%;
-    --success-bg: 152 76% 90%;
-    
-    /* Warning - Amber */
+    --success-dark: 163 82% 20%;   /* #065f46 — also the pill text */
+    --success-bg: 152 76% 90%;     /* #d1fae5 */
+    --success-text: 163 82% 20%;   /* 5.9:1 on --success-bg */
+    --success-border: 156 72% 67%;
+
     --warning: 38 92% 50%;
     --warning-foreground: 0 0% 100%;
-    --warning-bg: 48 96% 89%;
-    --warning-text: 32 95% 44%;
-    
-    /* Error - Red */
+    --warning-dark: 26 90% 37%;
+    --warning-bg: 48 96% 89%;      /* #fef3c7 */
+    --warning-text: 26 90% 37%;    /* #b45309 — 4.6:1 on --warning-bg */
+    --warning-border: 45 93% 68%;
+
+    --error: 0 84% 60%;
+    --error-foreground: 0 0% 100%;
+    --error-dark: 0 72% 51%;
+    --error-bg: 0 93% 94%;         /* #fee2e2 */
+    --error-text: 0 74% 42%;       /* #b91c1c — 5.1:1 on --error-bg */
+    --error-border: 0 91% 80%;
+
     --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
-    --error-bg: 0 86% 97%;
-    --error-text: 0 74% 42%;
-    
-    /* Surfaces */
+    --destructive-dark: 0 72% 51%;
+
+    --info: 239 84% 67%;
+    --info-foreground: 0 0% 100%;
+    --info-dark: 243 75% 59%;
+    --info-bg: 226 100% 94%;
+    --info-text: 244 55% 41%;
+    --info-border: 230 94% 82%;
+
+    --neutral-bg: 210 40% 96%;
+    --neutral-text: 215 25% 27%;   /* #334155 — 9.6:1 */
+    --neutral-border: 214 32% 91%;
+
+    /* ---- Ink. Body text is full strength over glass, never muted. ---- */
+    --ink: 222 47% 11%;
+    --ink-strong: 222 47% 11%;     /* #0f172a */
+    --ink-body: 215 25% 27%;       /* #334155 */
+    --ink-soft: 215 19% 35%;       /* #3f4d61 — the floor for text on glass */
+    --ink-faint: 215 16% 47%;      /* #64748b — labels/meta only, never prose */
+    --ink-invert: 0 0% 100%;
+
+    /* ---- shadcn compatibility aliases (kept so existing call sites build) ---- */
     --secondary: 0 0% 96%;
     --secondary-foreground: 222 47% 11%;
     --muted: 210 40% 96%;
     --muted-foreground: 215 16% 47%;
-    --accent: 210 40% 96%;
-    --accent-foreground: 222 47% 11%;
-    
-    /* App backgrounds */
-    --app-bg: 220 14% 96%;
+    --accent: 226 100% 97%;
+    --accent-foreground: 244 55% 41%;
+
+    /* ---- Opaque surfaces ---- */
+    --app-bg: 225 30% 97%;
     --surface: 0 0% 100%;
-    --surface-tint: 250 100% 99%;
-    
-    /* Sidebar */
-    --sidebar-bg: 235 21% 15%;
-    --sidebar-text: 0 0% 100%;
-    --sidebar-active-bg: 245 58% 67%;
-    --sidebar-active-text: 245 89% 81%;
-    
-    /* Border radius */
-    --radius: 0.5rem;
-    --radius-sm: 0.375rem;
-    --radius-lg: 0.625rem;
-    --radius-xl: 0.875rem;
+    --surface-tint: 226 100% 99%;
+    --surface-sunken: 220 20% 95%;
+
+    /* ---- Glass. Raw rgba because the alpha IS the token. ---- */
+    --glass-card-bg: rgba(255, 255, 255, 0.72);
+    --glass-panel-bg: rgba(255, 255, 255, 0.6);
+    --glass-modal-bg: rgba(255, 255, 255, 0.92);
+    --glass-chrome-bg: rgba(255, 255, 255, 0.7);
+    --glass-toast-bg: rgba(255, 255, 255, 0.8);
+    --glass-selected-bg: rgba(255, 255, 255, 0.86);
+    --glass-border: rgba(255, 255, 255, 0.7);
+    --glass-hairline: rgba(15, 23, 42, 0.07);
+    --glass-border-dark: rgba(255, 255, 255, 0.08);
+    --glass-hairline-dark: rgba(255, 255, 255, 0.06);
+
+    /* Opacity ladder for the three-tier degradation in 2.5:
+       0.72 translucent -> 0.94 @supports -> 0.97 reduced-transparency. */
+    --glass-fallback-bg: rgba(255, 255, 255, 0.94);
+    --glass-opaque-bg: rgba(255, 255, 255, 0.97);
+
+    /* ---- Dark shell (sidebar / app chrome). Stays dark, becomes true glass. ---- */
+    --shell-bg: rgba(13, 18, 38, 0.72);
+    --shell-bg-fallback: rgba(13, 18, 38, 0.94);
+    --shell-solid: 228 50% 10%;
+    --shell-text: 220 30% 96%;
+    --shell-text-muted: 218 20% 72%;
+    --shell-active-text: 234 89% 86%;
+
+    /* Legacy sidebar names, re-pointed at the shell tokens. */
+    --sidebar-bg: 228 50% 10%;
+    --sidebar-text: 220 30% 96%;
+    --sidebar-active-bg: 239 84% 67%;
+    --sidebar-active-text: 234 89% 86%;
+
+    /* ---- Bevel + shadows. Never pure black; blur ~= 2.2x the y-offset. ---- */
+    --bevel: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    --bevel-dark: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+
+    --shadow-hairline: 0 0 0 1px rgba(15, 23, 42, 0.05);
+    --shadow-contact: 0 1px 2px rgba(15, 23, 42, 0.04);
+    --shadow-glass: inset 0 1px 0 rgba(255, 255, 255, 0.9),
+      0 1px 2px rgba(15, 23, 42, 0.04),
+      0 10px 30px rgba(15, 23, 42, 0.08);
+    --shadow-glass-hover: inset 0 1px 0 rgba(255, 255, 255, 0.95),
+      0 1px 2px rgba(15, 23, 42, 0.05),
+      0 20px 44px rgba(15, 23, 42, 0.1);
+    --shadow-glass-panel: inset 0 1px 0 rgba(255, 255, 255, 0.8),
+      0 1px 2px rgba(15, 23, 42, 0.03),
+      0 10px 30px rgba(15, 23, 42, 0.06);
+    --shadow-glass-modal: inset 0 1px 0 rgba(255, 255, 255, 0.95),
+      0 2px 4px rgba(15, 23, 42, 0.06),
+      0 24px 60px rgba(15, 23, 42, 0.18);
+    --shadow-glass-sheet: inset 0 1px 0 rgba(255, 255, 255, 0.95),
+      0 -8px 48px rgba(15, 23, 42, 0.18);
+    --shadow-glass-toast: inset 0 1px 0 rgba(255, 255, 255, 0.95),
+      0 2px 4px rgba(15, 23, 42, 0.05),
+      0 30px 80px rgba(15, 23, 42, 0.16);
+    /* Selected gets denser, never lighter. Border WIDTH is never changed. */
+    --shadow-glass-selected: inset 0 1px 0 rgba(255, 255, 255, 0.95),
+      0 0 0 1px rgba(99, 102, 241, 0.55),
+      0 22px 56px rgba(99, 102, 241, 0.16);
+    --shadow-brand-glow: 0 8px 26px rgba(99, 102, 241, 0.32);
+    --shadow-danger-glow: 0 8px 26px rgba(239, 68, 68, 0.3);
+    --shadow-inner-track: inset 0 1px 2px rgba(15, 23, 42, 0.08),
+      inset 0 0 0 1px rgba(15, 23, 42, 0.05);
+
+    /* ---- Radius. Nothing sharp, nothing under 10px. ---- */
+    --radius: 0.75rem;
+    --radius-sm: 0.625rem;
+    --radius-lg: 0.875rem;
+    --radius-xl: 1rem;
+    --radius-input: 14px;
+    --radius-btn: 16px;
+    --radius-pill: 20px;
+    --radius-tile: 20px;
+    --radius-card: 24px;
+    --radius-modal: 26px;
+
+    /* ---- Motion. One house curve. ---- */
+    --ease-settle: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+    --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+    --dur-tap: 120ms;
+    --dur-quick: 200ms;
+    --dur-settle: 240ms;
+    --dur-reveal: 280ms;
+    --press-scale: 0.96;
+    --disabled-opacity: 0.45;
+
+    /* ---- Type. -apple-system leads; Inter is the non-Apple fallback. ---- */
+    /* --font-inter is injected on <html> by next/font in app/layout.tsx.
+       Never declared here, or it would shadow the loaded face. */
+    --font-sans: -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+      var(--font-inter, 'Inter'), 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-heading: -apple-system, BlinkMacSystemFont, 'SF Pro Display',
+      var(--font-inter, 'Inter'), 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --font-heading-weight: 600;
+    --font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+
+    /* ---- Ambient mesh. Retuned per section via a single data-tone attribute. ---- */
+    --mesh-base: #f5f6fc;
+    --mesh-a: rgba(99, 102, 241, 0.22);
+    --mesh-b: rgba(16, 185, 129, 0.14);
+    --mesh-veil: rgba(255, 255, 255, 0.35);
   }
 
+  /* Per-section identity without extra DOM: retune four variables only. */
+  [data-tone='brand'] {
+    --mesh-a: rgba(99, 102, 241, 0.3);
+    --mesh-b: rgba(129, 140, 248, 0.18);
+  }
+  [data-tone='success'] {
+    --mesh-a: rgba(16, 185, 129, 0.22);
+    --mesh-b: rgba(99, 102, 241, 0.12);
+  }
+  [data-tone='calm'] {
+    --mesh-a: rgba(99, 102, 241, 0.14);
+    --mesh-b: rgba(148, 163, 184, 0.14);
+  }
+
+  /* Dark mode is NOT built yet (CHECKLIST 2.4): nothing toggles .dark and no
+     `dark:` prefix is used anywhere. The block is kept and re-pointed at the
+     new token names so the names stay valid when a theme provider is wired. */
   .dark {
-    --background: 222 47% 11%;
+    --background: 228 50% 7%;
     --foreground: 210 40% 98%;
     --border: 217 33% 17%;
     --input: 217 33% 17%;
-    --ring: 245 58% 67%;
-    --primary: 245 58% 67%;
-    --primary-foreground: 0 0% 100%;
+
+    --ink: 210 40% 98%;
+    --ink-strong: 0 0% 100%;
+    --ink-body: 215 25% 88%;
+    --ink-soft: 215 20% 78%;
+    --ink-faint: 215 20% 65%;
+    --ink-invert: 222 47% 11%;
+
     --secondary: 217 33% 17%;
     --secondary-foreground: 210 40% 98%;
-    --destructive: 0 63% 31%;
-    --destructive-foreground: 210 40% 98%;
     --muted: 217 33% 17%;
     --muted-foreground: 215 20% 65%;
-    --accent: 217 33% 17%;
-    --accent-foreground: 210 40% 98%;
-    --success: 158 64% 52%;
-    --success-foreground: 0 0% 100%;
-    --warning: 38 92% 50%;
-    --warning-foreground: 0 0% 100%;
+    --accent: 243 40% 20%;
+    --accent-foreground: 234 89% 86%;
+
+    --app-bg: 228 50% 7%;
+    --surface: 228 44% 10%;
+    --surface-tint: 230 40% 12%;
+    --surface-sunken: 228 50% 6%;
+
+    --glass-card-bg: rgba(11, 16, 32, 0.74);
+    --glass-panel-bg: rgba(11, 16, 32, 0.62);
+    --glass-modal-bg: rgba(11, 16, 32, 0.92);
+    --glass-chrome-bg: rgba(11, 16, 32, 0.7);
+    --glass-toast-bg: rgba(11, 16, 32, 0.8);
+    --glass-selected-bg: rgba(17, 24, 44, 0.88);
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --glass-hairline: rgba(255, 255, 255, 0.06);
+    --glass-fallback-bg: rgba(11, 16, 32, 0.94);
+    --glass-opaque-bg: rgba(11, 16, 32, 0.98);
+
+    --bevel: inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    --shadow-glass: inset 0 1px 0 rgba(255, 255, 255, 0.08),
+      0 1px 2px rgba(0, 0, 0, 0.2), 0 10px 30px rgba(0, 0, 0, 0.35);
+
+    --success-bg: 163 60% 14%;
+    --success-text: 152 76% 85%;
+    --warning-bg: 28 60% 14%;
+    --warning-text: 48 96% 85%;
+    --error-bg: 0 50% 16%;
+    --error-text: 0 93% 90%;
+    --info-bg: 243 40% 20%;
+    --info-text: 230 94% 90%;
+    --neutral-bg: 217 33% 17%;
+    --neutral-text: 215 25% 88%;
+    --neutral-border: 217 33% 24%;
+
+    --mesh-base: #050814;
+    --mesh-a: rgba(99, 102, 241, 0.26);
+    --mesh-b: rgba(16, 185, 129, 0.14);
+    --mesh-veil: rgba(5, 8, 20, 0.35);
   }
 }
 
@@ -88,77 +286,440 @@
   * {
     @apply border-border;
   }
+
+  html {
+    scroll-behavior: smooth;
+    /* The mesh lives on a fixed element; html carries its base so the page
+       never flashes white before paint. */
+    background-color: var(--mesh-base);
+  }
+
   body {
-    @apply bg-background text-foreground;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background-color: transparent;
+    color: hsl(var(--ink-strong));
+    font-family: var(--font-sans);
+    font-size: 1rem;
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* One heading face behind one token, set once at the root.
+     NOTE: deliberately no :not([class*="text-"]) guard — that selector also
+     matches text-white / text-center and silently kills the size. */
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-heading);
+    font-weight: var(--font-heading-weight);
+    letter-spacing: -0.015em;
+  }
+
+  /* Inputs must be >= 16px on mobile or iOS zooms the viewport on focus. */
+  @media (max-width: 767px) {
+    input, select, textarea {
+      font-size: 1rem;
+    }
+  }
+
+  ::selection {
+    background: hsl(var(--brand) / 0.22);
+  }
+
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px hsl(var(--ring) / 0.5);
+  }
+
+  @media (prefers-contrast: more) {
+    :root {
+      --glass-card-bg: rgba(255, 255, 255, 0.97);
+      --glass-panel-bg: rgba(255, 255, 255, 0.95);
+      --glass-border: rgba(15, 23, 42, 0.3);
+      --glass-hairline: rgba(15, 23, 42, 0.2);
+      --ink-faint: 215 25% 32%;
+    }
   }
 }
 
-/* Kyriq Brand Overrides */
+/* ===========================================================================
+   Glass surfaces.
+
+   Declared as real classes, not inherited, and each one restates its own
+   backdrop-filter. depthme.app hit a render where backdrop-filter computed to
+   `none`; every surface therefore degrades in two steps:
+   translucent -> @supports fallback -> prefers-reduced-transparency.
+   =========================================================================== */
+
 @layer components {
-  /* Buttons */
-  .btn-primary {
-    @apply bg-gradient-to-br from-primary to-primary-light text-white shadow-lg;
-    box-shadow: 0 10px 15px -3px hsl(var(--primary) / 0.35), 0 4px 6px -4px hsl(var(--primary) / 0.35);
+  .glass-surface {
+    background: var(--glass-card-bg);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-glass);
+    -webkit-backdrop-filter: blur(18px) saturate(120%);
+    backdrop-filter: blur(18px) saturate(120%);
   }
-  
+
+  /* Cards, list groups — blur tier 2 of 5. */
+  .glass-card {
+    background: var(--glass-card-bg);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-glass);
+    -webkit-backdrop-filter: blur(18px) saturate(120%);
+    backdrop-filter: blur(18px) saturate(120%);
+  }
+
+  /* Over photos or bright artwork. */
+  .glass-card-bright {
+    -webkit-backdrop-filter: blur(28px) saturate(150%);
+    backdrop-filter: blur(28px) saturate(150%);
+  }
+
+  /* Nested group inside a glass card. Carries NO blur of its own —
+     never nest two blurred surfaces directly (rule 2). */
+  .glass-panel {
+    background: var(--glass-panel-bg);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-glass-panel);
+  }
+
+  /* Modals, popovers, sheets — tier 3. */
+  .glass-modal {
+    background: var(--glass-modal-bg);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-glass-modal);
+    -webkit-backdrop-filter: blur(24px) saturate(150%);
+    backdrop-filter: blur(24px) saturate(150%);
+  }
+
+  /* Shell chrome and sticky table headers — tier 4, heaviest blur. */
+  .glass-chrome {
+    background: var(--glass-chrome-bg);
+    border-color: var(--glass-border);
+    -webkit-backdrop-filter: blur(26px) saturate(160%);
+    backdrop-filter: blur(26px) saturate(160%);
+  }
+
+  /* Toasts — tier 5. */
+  .glass-toast {
+    background: var(--glass-toast-bg);
+    border: 1px solid var(--glass-border);
+    box-shadow: var(--shadow-glass-toast);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    backdrop-filter: blur(30px) saturate(180%);
+  }
+
+  /* The dark shell. Same technique, dark substrate. */
+  .glass-shell {
+    background: var(--shell-bg);
+    border-color: var(--glass-border-dark);
+    box-shadow: var(--bevel-dark), 0 24px 60px rgba(5, 8, 20, 0.35);
+    -webkit-backdrop-filter: blur(26px) saturate(160%);
+    backdrop-filter: blur(26px) saturate(160%);
+  }
+
+  /* Selected: denser, not lighter. Border width inherited, never changed. */
+  .glass-selected {
+    background: var(--glass-selected-bg);
+    border-color: rgba(99, 102, 241, 0.9);
+    box-shadow: var(--shadow-glass-selected);
+  }
+
+  /* Divider inside an inset-grouped list: starts at the text column, via
+     ::after rather than a border, so it aligns past the icon. */
+  .glass-divider {
+    position: relative;
+  }
+  .glass-divider::after {
+    content: '';
+    position: absolute;
+    left: var(--divider-inset, 1rem);
+    right: 0;
+    bottom: 0;
+    height: 1px;
+    background: var(--glass-hairline);
+  }
+  .glass-divider:last-child::after {
+    display: none;
+  }
+
+  /* Recessed track for segmented controls. No per-item borders. */
+  .glass-track {
+    background: var(--surface-sunken);
+    border: 1px solid var(--glass-hairline);
+    box-shadow: var(--shadow-inner-track);
+  }
+
+  /* Tier 1: the page veil over the mesh. */
+  .glass-veil {
+    background: var(--mesh-veil);
+    -webkit-backdrop-filter: blur(0.6px) saturate(120%);
+    backdrop-filter: blur(0.6px) saturate(120%);
+  }
+
+  /* --- Tier 2 degradation: blur unavailable --- */
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .glass-surface,
+    .glass-card,
+    .glass-chrome,
+    .glass-toast,
+    .glass-modal {
+      background: var(--glass-fallback-bg);
+    }
+    .glass-shell {
+      background: var(--shell-bg-fallback);
+    }
+    .glass-veil {
+      background: transparent;
+    }
+  }
+
+  /* --- Tier 3 degradation: the reader asked for less transparency --- */
+  @media (prefers-reduced-transparency: reduce) {
+    .glass-surface,
+    .glass-card,
+    .glass-chrome,
+    .glass-toast,
+    .glass-modal,
+    .glass-panel {
+      background: var(--glass-opaque-bg);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+    .glass-shell {
+      background: hsl(var(--shell-solid));
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+    .glass-veil {
+      background: transparent;
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+}
+
+/* ===========================================================================
+   Ambient background mesh — mounted once in the root layout.
+   Two blurred colour fields on prime-ratio loops (60s / 75s) so they never
+   resync, plus a zero-cost grain overlay. transform only; blur never animates.
+   =========================================================================== */
+
+@layer components {
+  .ambient-mesh {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    overflow: hidden;
+    pointer-events: none;
+    background-color: var(--mesh-base);
+  }
+
+  .ambient-field {
+    position: absolute;
+    border-radius: 9999px;
+    filter: blur(90px);
+    will-change: transform;
+  }
+
+  .ambient-field-a {
+    top: -20%;
+    left: -10%;
+    width: 70vw;
+    height: 70vw;
+    background: radial-gradient(circle at 50% 50%, var(--mesh-a), transparent 70%);
+    animation: mesh-drift-a 60s var(--ease-settle) infinite;
+  }
+
+  .ambient-field-b {
+    bottom: -25%;
+    right: -15%;
+    width: 60vw;
+    height: 60vw;
+    background: radial-gradient(circle at 50% 50%, var(--mesh-b), transparent 70%);
+    animation: mesh-drift-b 75s var(--ease-settle) infinite;
+  }
+
+  /* Grain from two tiled radial gradients at mismatched sizes (5px / 7px) so
+     the pattern never visibly repeats. No image, no network cost. */
+  .ambient-grain {
+    position: absolute;
+    inset: 0;
+    opacity: 0.08;
+    mix-blend-mode: soft-light;
+    background-image: radial-gradient(
+        rgba(15, 23, 42, 0.5) 0.5px,
+        transparent 0.5px
+      ),
+      radial-gradient(rgba(15, 23, 42, 0.35) 0.5px, transparent 0.5px);
+    background-size: 5px 5px, 7px 7px;
+    background-position: 0 0, 2px 3px;
+  }
+}
+
+/* ===========================================================================
+   Utilities
+   =========================================================================== */
+
+@layer utilities {
+  /* Columns of figures must line up. Non-negotiable in a reconciliation
+     product. `tabular-nums` is core Tailwind; this adds the right-aligned
+     money variant so the two never drift apart. */
+  .nums {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+  }
+  .nums-money {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum' 1;
+    text-align: right;
+  }
+
+  .text-eyebrow {
+    font-size: 0.6875rem;
+    line-height: 1.2;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+
+  .hairline {
+    border-color: var(--glass-hairline);
+  }
+
+  /* Press feedback, faster than everything else. transition-property is
+     always enumerated — transitioning `all` animates backdrop-filter and
+     tanks the frame rate. */
+  .press {
+    transition-property: transform, box-shadow, background-color, border-color, color, opacity;
+    transition-duration: var(--dur-tap);
+    transition-timing-function: var(--ease-settle);
+  }
+  .press:active:not(:disabled) {
+    transform: scale(var(--press-scale));
+  }
+
+  /* Touch devices must never show a stuck hover state. */
+  @media (hover: hover) and (pointer: fine) {
+    .hover-lift:hover {
+      box-shadow: var(--shadow-glass-hover);
+      transform: translateY(-1px);
+    }
+  }
+
+  /* Scroll regions: one scrollbar per page, and rubber-banding must not
+     chain to the frame. */
+  .scroll-region {
+    overflow: auto;
+    overscroll-behavior-y: contain;
+  }
+
+  /* Capped stagger — the fifth child onwards shares a delay so a long list
+     does not make the reader wait. */
+  .stagger > * { animation-delay: 0ms; }
+  .stagger > *:nth-child(2) { animation-delay: 45ms; }
+  .stagger > *:nth-child(3) { animation-delay: 90ms; }
+  .stagger > *:nth-child(4) { animation-delay: 135ms; }
+  .stagger > *:nth-child(n + 5) { animation-delay: 180ms; }
+}
+
+/* ===========================================================================
+   Legacy component classes.
+   Kept working so parcels B-I can migrate call sites instead of the build
+   going red. The utilities they @apply now actually exist.
+   =========================================================================== */
+
+@layer components {
+  .btn-primary {
+    @apply bg-gradient-to-r from-primary to-primary-dark text-white;
+    box-shadow: var(--shadow-brand-glow);
+  }
+
   .btn-success {
     @apply bg-success text-white hover:bg-success-dark;
   }
-  
-  /* Sidebar */
+
   .sidebar-item.active {
     @apply font-semibold;
-    background-color: hsl(var(--primary) / 0.18);
-    color: hsl(var(--primary-light));
+    color: hsl(var(--shell-active-text));
+    background-image: radial-gradient(
+      circle at 18% 50%,
+      hsl(var(--brand) / 0.28),
+      transparent 68%
+    );
   }
-  
-  /* Status pills */
+
   .pill-matched {
-    @apply bg-success-bg text-success-dark;
+    @apply bg-success-bg text-success-text;
   }
-  
   .pill-approved {
-    @apply bg-blue-100 text-blue-800;
+    @apply bg-info-bg text-info-text;
   }
-  
   .pill-pending {
     @apply bg-warning-bg text-warning-text;
   }
-  
   .pill-error {
     @apply bg-error-bg text-error-text;
   }
-  
-  /* QB Match rows */
+
   .qb-row-matched {
-    @apply border-green-300;
+    @apply border-success-border;
   }
-  
   .qb-row-pending {
-    @apply border-yellow-300;
+    @apply border-warning-border;
   }
-  
   .qb-row-error {
-    @apply border-red-300 bg-red-50/30;
+    @apply border-error-border bg-error-bg/30;
   }
-  
-  /* Focus rings */
-  input:focus,
-  select:focus,
-  textarea:focus {
-    @apply ring-2 ring-primary ring-offset-2;
-  }
-  
-  /* Checkbox accent */
-  input[type="checkbox"],
-  input[type="radio"] {
+
+  input[type='checkbox'],
+  input[type='radio'] {
     @apply accent-primary;
   }
 }
 
-/* Landing page smooth scroll */
-html {
-  scroll-behavior: smooth;
+/* ===========================================================================
+   Reduced motion degrades, it does not delete. Ambient loops stop; entrances
+   retarget to a short fade, because an instant pop is more disorienting than
+   a gentle one.
+   =========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .ambient-field-a,
+  .ambient-field-b {
+    animation: none !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 160ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 160ms !important;
+  }
+
+  .animate-glass-rise,
+  .animate-dialog-pop,
+  .animate-popover-in,
+  .animate-sheet-up,
+  .animate-toast-in {
+    animation-name: glass-fade !important;
+  }
+
+  .press:active:not(:disabled) {
+    transform: none;
+  }
+
+  .animate-marquee,
+  .animate-marquee-vertical,
+  .animate-border-beam,
+  .animate-shimmer-slide,
+  .animate-spin-around,
+  .animate-float,
+  .animate-glow-pulse,
+  .animate-gradient-flow,
+  .animate-skeleton-sheen {
+    animation: none !important;
+  }
 }

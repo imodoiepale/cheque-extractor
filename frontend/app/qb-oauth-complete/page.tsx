@@ -3,6 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Suspense } from 'react';
+import { CheckCircle2 } from 'lucide-react';
+import { Button, GlassCard, GlassPanel } from '@/components/ui';
 
 function QBOAuthCompleteContent() {
   const searchParams = useSearchParams();
@@ -25,57 +27,31 @@ function QBOAuthCompleteContent() {
   }, []);
 
   return (
-    <div style={{
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      justifyContent: 'center',
-      minHeight: '100vh',
-      fontFamily: 'system-ui, -apple-system, sans-serif',
-      background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
-      padding: '24px',
-      textAlign: 'center',
-    }}>
-      <div style={{
-        background: '#fff',
-        borderRadius: '16px',
-        padding: '48px 40px',
-        boxShadow: '0 4px 24px rgba(0,0,0,0.08)',
-        maxWidth: '420px',
-        width: '100%',
-      }}>
-        <div style={{ fontSize: '64px', marginBottom: '16px' }}>✅</div>
-        <h1 style={{ fontSize: '24px', fontWeight: 700, color: '#111827', margin: '0 0 8px' }}>
-          QuickBooks Connected!
-        </h1>
+    // Transparent over the ambient mesh mounted in app/layout.tsx. This page
+    // previously painted its own green gradient and used inline styles only,
+    // which bypassed every token.
+    <div className="min-h-screen flex flex-col items-center justify-center p-6 text-center">
+      <GlassCard padding="none" reveal className="w-full max-w-[420px] px-10 py-12">
+        <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-success-bg">
+          <CheckCircle2 className="h-9 w-9 text-success-text" aria-hidden />
+        </div>
+        <h1 className="text-2xl font-bold text-ink-strong mb-2">QuickBooks Connected!</h1>
         {company && (
-          <p style={{ fontSize: '16px', color: '#6b7280', margin: '0 0 24px' }}>
-            Connected to <strong style={{ color: '#111827' }}>{company}</strong>
+          <p className="text-base text-ink-body mb-6">
+            Connected to <strong className="text-ink-strong">{company}</strong>
           </p>
         )}
-        <p style={{ fontSize: '14px', color: '#9ca3af', margin: '0 0 24px' }}>
+        <p className="text-sm text-ink-faint mb-6 nums" aria-live="polite">
           This tab will close in {countdown} second{countdown !== 1 ? 's' : ''}…
         </p>
-        <p style={{ fontSize: '13px', color: '#6b7280', background: '#f9fafb', borderRadius: '8px', padding: '12px', margin: 0 }}>
+        {/* GlassPanel, not another glass card — no blur nested inside blur. */}
+        <GlassPanel tone="plain" radius="input" padding="sm" className="text-[13px] text-ink-body">
           The Kyriq extension has been notified. You can return to the side panel.
-        </p>
-        <button
-          onClick={() => window.close()}
-          style={{
-            marginTop: '20px',
-            padding: '10px 24px',
-            background: '#10b981',
-            color: '#fff',
-            border: 'none',
-            borderRadius: '8px',
-            fontSize: '14px',
-            fontWeight: 600,
-            cursor: 'pointer',
-          }}
-        >
+        </GlassPanel>
+        <Button size="sm" className="mt-5" onClick={() => window.close()}>
           Close Tab Now
-        </button>
-      </div>
+        </Button>
+      </GlassCard>
     </div>
   );
 }
@@ -83,8 +59,8 @@ function QBOAuthCompleteContent() {
 export default function QBOAuthCompletePage() {
   return (
     <Suspense fallback={
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
-        <p>Connected to QuickBooks! Closing tab…</p>
+      <div className="min-h-screen flex items-center justify-center p-6">
+        <p className="text-ink-body">Connected to QuickBooks! Closing tab…</p>
       </div>
     }>
       <QBOAuthCompleteContent />

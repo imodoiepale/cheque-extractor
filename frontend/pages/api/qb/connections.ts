@@ -40,6 +40,35 @@ export default async function handler(
 
     if (error) return res.status(500).json({ error: 'Failed to fetch connections' });
 
+    // Health status and the cached account count, both best-effort.
+    //
+    // Neither is selected in the query above on purpose: migration 034 adds
+    // qb_connections.status and 036 adds qb_accounts, and a database with
+    // either unapplied would 42703 the whole switcher rather than degrade. A
+    // separate tolerant read means an unapplied migration costs the status
+    // badge, not the company list.
+    const statusByRealm = new Map<string, string>();
+    try {
+      const { data: health } = await supabase
+        .from('qb_connections')
+        .select('realm_id, status')
+        .eq('tenant_id', tenantId);
+      for (const row of health || []) {
+        if (row?.realm_id && row.status) statusByRealm.set(row.realm_id, row.status);
+      }
+    } catch { /* column absent — fall back to 'connected' below */ }
+
+    const accountsByRealm = new Map<string, number>();
+    try {
+      const { data: accts } = await supabase
+        .from('qb_accounts')
+        .select('realm_id')
+        .eq('tenant_id', tenantId);
+      for (const row of accts || []) {
+        if (row?.realm_id) accountsByRealm.set(row.realm_id, (accountsByRealm.get(row.realm_id) || 0) + 1);
+      }
+    } catch { /* table absent — the switcher shows no account count */ }
+
     // Enrich with pending check counts
     const enriched = await Promise.all(
       (connections || []).map(async (conn) => {
@@ -58,6 +87,10 @@ export default async function handler(
           isActive: conn.is_active,
           connectedAt: conn.connected_at,
           pendingCount: count || 0,
+          // 'connected' is migration 034's own column default, so a row with
+          // no recorded health has not failed — it has not been checked.
+          status: statusByRealm.get(conn.realm_id) || 'connected',
+          accountCount: accountsByRealm.get(conn.realm_id) || 0,
         };
       })
     );

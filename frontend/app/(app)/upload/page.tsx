@@ -1,13 +1,37 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { useRouter } from 'next/navigation';
+import { Suspense, useState, useCallback } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import DropzoneUpload from './components/DropzoneUpload';
+import PageSelectGrid, {
+  defaultPageSelection,
+  selectedRange,
+} from './components/PageSelectGrid';
 import {
   Upload, FileText, Image as ImageIcon, Loader2, CheckCircle,
   ChevronRight, ChevronLeft, Eye, LayoutGrid, List, ZoomIn, ZoomOut,
-  Settings2, Play, X, AlertCircle, HardDrive,
+  Settings2, Play, X, AlertCircle, HardDrive, CreditCard,
 } from 'lucide-react';
+import {
+  Badge,
+  Button,
+  Dialog,
+  GlassCard,
+  GlassCardTitle,
+  GlassPanel,
+  IconButton,
+  Input,
+  KpiTile,
+  Table,
+  TableScroll,
+  TableShell,
+  Tbody,
+  Td,
+  Th,
+  Thead,
+  Tr,
+} from '@/components/ui';
+import { cn } from '@/lib/utils';
 
 // ── Types ──────────────────────────────────────────────────
 interface CheckInfo {
@@ -51,6 +75,14 @@ type Step = 'upload' | 'preview' | 'configure' | 'starting';
 type ViewMode = 'card' | 'table';
 type RangeType = 'all' | 'pages' | 'cheques';
 
+/** One pending "you uploaded this before" question, awaiting the reader. */
+interface ReuploadAsk {
+  key: string;
+  fileName: string;
+  previousUploadedAt: string | null;
+  resolve: (proceed: boolean) => void;
+}
+
 function fmtSize(bytes?: number): string {
   if (!bytes) return '—';
   if (bytes < 1024) return bytes + ' B';
@@ -58,30 +90,132 @@ function fmtSize(bytes?: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
-// ── Extraction methods available ───────────────────────────
-const EXTRACTION_METHODS = [
-  { id: 'tesseract', name: 'Tesseract OCR', desc: 'Fast offline text recognition via Tesseract', icon: '🔍' },
-  { id: 'numarkdown', name: 'NuMarkdown', desc: 'Vision-language model — good for structured layouts', icon: '📝' },
-  { id: 'ai', name: 'Gemini AI', desc: 'Google Gemini 2.0 Flash — best for handwritten fields', icon: '🤖' },
-  { id: 'hybrid', name: 'All (Hybrid)', desc: 'Run all 3 engines and merge results for best accuracy', icon: '⚡' },
-];
+// Kyriq picks the engine; the user is never asked. Michael, 21 Sep: "The software
+// should just extract the data they need" — no OCR, image or confidence settings.
+const EXTRACTION_METHODS = ['ai'] as const;
+
+/** The upload was blocked by the trial or billing gate — never fall back past this. */
+class ProcessingBlocked extends Error {
+  constructor(public readonly detail: Record<string, any>) {
+    const parts: string[] = [];
+    if (detail?.reason === 'trial_expired') parts.push('Your 14-day trial has ended.');
+    else if (detail?.reason === 'trial_check_limit_reached') parts.push('You have used all 250 trial cheques.');
+    else if (detail?.reason) parts.push('Processing is currently paused.');
+    if (typeof detail?.checksRemaining === 'number') parts.push(`${detail.checksRemaining} cheques remaining.`);
+    super(parts.join(' ') || detail?.message || 'Processing is not available on your plan right now.');
+    this.name = 'ProcessingBlocked';
+  }
+}
+
+/** The user declined to re-process a file they had uploaded before. */
+class DuplicateSkipped extends Error {
+  constructor(fileName: string) {
+    super(`${fileName} was already uploaded and was not processed again.`);
+    this.name = 'DuplicateSkipped';
+  }
+}
 
 const STEP_ORDER: ('upload' | 'preview' | 'configure')[] = ['upload', 'preview', 'configure'];
 const STEP_LABELS: Record<string, string> = { upload: 'Upload', preview: 'Preview', configure: 'Configure & Extract' };
 
+/** Status dot for the multi-job strip. Colour marks state only (rule 10). */
+const STATUS_DOT: Record<JobStatus, string> = {
+  uploading: 'bg-brand-light',
+  analyzed: 'bg-success',
+  extracting: 'bg-warning animate-pulse',
+  complete: 'bg-success-dark',
+  error: 'bg-error',
+};
+
+/** Zoom + paging controls, shared by the page viewer and the cheque viewer. */
+function ViewerToolbar({
+  zoom,
+  onZoom,
+  onPrev,
+  onNext,
+  canPrev,
+  canNext,
+}: {
+  zoom: number;
+  onZoom: (next: number) => void;
+  onPrev: () => void;
+  onNext: () => void;
+  canPrev: boolean;
+  canNext: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-center gap-1 border-b border-glass-hairline pb-3">
+      <IconButton
+        aria-label="Zoom out"
+        size="icon-sm"
+        onClick={() => onZoom(Math.max(0.25, zoom - 0.25))}
+        disabled={zoom <= 0.25}
+      >
+        <ZoomOut size={14} />
+      </IconButton>
+      <span className="nums min-w-[2.75rem] text-center text-xs font-medium text-ink-body">
+        {(zoom * 100).toFixed(0)}%
+      </span>
+      <IconButton
+        aria-label="Zoom in"
+        size="icon-sm"
+        onClick={() => onZoom(Math.min(3, zoom + 0.25))}
+        disabled={zoom >= 3}
+      >
+        <ZoomIn size={14} />
+      </IconButton>
+      <div className="mx-1 h-4 w-px bg-glass-hairline" />
+      <IconButton aria-label="Previous" size="icon-sm" onClick={onPrev} disabled={!canPrev}>
+        <ChevronLeft size={16} />
+      </IconButton>
+      <IconButton aria-label="Next" size="icon-sm" onClick={onNext} disabled={!canNext}>
+        <ChevronRight size={16} />
+      </IconButton>
+    </div>
+  );
+}
+
+/**
+ * useSearchParams opts the subtree out of prerendering, so it has to sit under
+ * a Suspense boundary or `next build` fails on this route. Same shape as
+ * /reconcile, which reads `?batch=` for the same reason.
+ */
 export default function UploadPage() {
+  return (
+    <Suspense fallback={null}>
+      <UploadPageInner />
+    </Suspense>
+  );
+}
+
+function UploadPageInner() {
   const router = useRouter();
+  /**
+   * Step 1 of /reconcile sends the user here as `/upload?batch=<id>`, and
+   * start-extraction attaches the job to that batch. Without this the job is
+   * created unattached, the batch's `jobs_complete` and `checks_total` stay at
+   * zero, step 1 never completes and the stepper cannot advance — which is
+   * exactly how it behaved before: the link and the API both carried the batch,
+   * and only this read was missing.
+   */
+  const searchParams = useSearchParams();
+  const batchId = searchParams?.get('batch') || null;
 
   // ── Step state ───────────────────────────────────────────
   const [step, setStep] = useState<Step>('upload');
   const [files, setFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** ProcessingBlocked's message, surfaced in the UI rather than only thrown. */
+  const [blocked, setBlocked] = useState<string | null>(null);
   const [progressMessages, setProgressMessages] = useState<Record<string, string[]>>({});
 
   // ── Multi-job state ────────────────────────────────────────
   const [jobEntries, setJobEntries] = useState<JobEntry[]>([]);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
+
+  // ── Re-upload confirmations, queued so two concurrent 409s both get asked ──
+  const [reuploadQueue, setReuploadQueue] = useState<ReuploadAsk[]>([]);
 
   // ── Preview state ────────────────────────────────────────
   const [viewMode, setViewMode] = useState<ViewMode>('card');
@@ -90,10 +224,10 @@ export default function UploadPage() {
   const [zoom, setZoom] = useState(1);
 
   // ── Extraction config ────────────────────────────────────
-  const [selectedMethods, setSelectedMethods] = useState<string[]>(['ai']);
   const [rangeType, setRangeType] = useState<RangeType>('all');
-  const [pageFrom, setPageFrom] = useState(1);
-  const [pageTo, setPageTo] = useState(1);
+  // Explicit per-page selection. Defaults to the pages where detection found
+  // cheques; billing counts cheques, so this must never be guessed wider.
+  const [selectedPages, setSelectedPages] = useState<Set<number>>(new Set());
   const [chequeFrom, setChequeFrom] = useState(1);
   const [chequeTo, setChequeTo] = useState(1);
   const [forceExtract, setForceExtract] = useState(false);
@@ -104,8 +238,27 @@ export default function UploadPage() {
   const pages = analyzeResult?.pages || [];
   const totalPages = analyzeResult?.total_pages || 0;
   const totalChecks = analyzeResult?.total_checks || 0;
+  const reuploadAsk = reuploadQueue[0];
 
   // ── Helpers ────────────────────────────────────────────────
+  /** Resolves when the reader answers the dialog. Replaces window.confirm. */
+  const askReupload = useCallback(
+    (fileName: string, previousUploadedAt: string | null) =>
+      new Promise<boolean>((resolve) => {
+        setReuploadQueue((q) => [
+          ...q,
+          { key: `${fileName}:${q.length}:${Date.now()}`, fileName, previousUploadedAt, resolve },
+        ]);
+      }),
+    []
+  );
+
+  /** Answer the head of the queue. Dismissing counts as declining, as cancel did. */
+  const answerReupload = (proceed: boolean) => {
+    reuploadAsk?.resolve(proceed);
+    setReuploadQueue((q) => q.slice(1));
+  };
+
   const hydrateJobResult = useCallback(async (jobId: string, fallbackFile: File, fallbackDuplicate = false) => {
     const response = await fetch(`/api/jobs/${jobId}?source=db`);
     if (!response.ok) {
@@ -170,51 +323,51 @@ export default function UploadPage() {
         const response = await fetch(`${backendUrl}/api/jobs/${jobId}`);
         if (response.ok) {
           const jobData = await response.json();
-          
+
           // Build detailed progress messages
           const messages: string[] = [];
-          
+
           // Status-based messages with real-time updates
           if (jobData.status === 'pending') {
-            messages.push('📄 Uploading PDF...');
+            messages.push('Uploading PDF...');
           } else if (jobData.status === 'analyzing') {
-            messages.push('🔍 Converting PDF to images...');
+            messages.push('Converting PDF to images...');
           } else if (jobData.status === 'detecting') {
-            messages.push('🔎 Detecting checks on pages...');
+            messages.push('Detecting cheques on pages...');
           } else if (jobData.status === 'extracting') {
-            messages.push('✂️ Extracting check images...');
+            messages.push('Extracting cheque images...');
           } else if (jobData.status === 'ocr_running') {
-            messages.push('🤖 Running OCR extraction...');
+            messages.push('Reading the cheques...');
           } else if (jobData.status === 'analyzed') {
-            messages.push('✅ Analysis complete');
+            messages.push('Analysis complete');
           } else if (jobData.status === 'complete') {
-            messages.push('✅ Extraction complete');
+            messages.push('Extraction complete');
           }
-          
+
           // Show page conversion progress
           if (jobData.total_pages > 0) {
-            messages.push(`📑 ${jobData.total_pages} pages converted`);
+            messages.push(`${jobData.total_pages} pages converted`);
             if (jobData.doc_format) {
-              messages.push(`📐 Format: ${jobData.doc_format}`);
+              messages.push(`Format: ${jobData.doc_format}`);
             }
           }
-          
+
           // Show check detection progress
           if (jobData.total_checks > 0) {
-            messages.push(`✓ ${jobData.total_checks} checks detected`);
+            messages.push(`${jobData.total_checks} cheques detected`);
           }
-          
+
           // Show per-page detection if available
           if (jobData.pages && Array.isArray(jobData.pages) && jobData.pages.length > 0) {
             const pagesWithChecks = jobData.pages.filter((p: any) => p.checks_on_page > 0);
             if (pagesWithChecks.length > 0 && pagesWithChecks.length <= 5) {
               // Show first few pages with check counts
               pagesWithChecks.slice(0, 5).forEach((p: any) => {
-                messages.push(`Page ${p.page_number}: ${p.checks_on_page} checks`);
+                messages.push(`Page ${p.page_number}: ${p.checks_on_page} cheques`);
               });
             }
           }
-          
+
           // Only update if messages changed
           const newStatus = messages.join('|');
           if (newStatus !== lastStatus) {
@@ -246,19 +399,46 @@ export default function UploadPage() {
 
     let data: any;
     let isDuplicate = false;
-    
+
     // Set initial progress message
     setProgressMessages(prev => ({ ...prev, [entryId]: ['Uploading PDF...'] }));
-    
+
     try {
-      const response = await fetch(`${backendUrl}/api/upload-analyze`, {
+      // Through the Next proxy, not straight at the Python backend. The proxy
+      // carries the session, which is what lets the backend resolve the tenant,
+      // stamp tenant_id on the job and record the upload fingerprint that backs
+      // the duplicate warning. Called directly, every one of those was missing.
+      let response = await fetch('/api/upload-analyze', {
         method: 'POST',
         body: formData,
       });
+
+      // Michael, 30 Sep: warn that the file went up before, and let them opt in
+      // to processing it again knowing it counts against their monthly checks.
+      if (response.status === 409) {
+        const dup = await response.json().catch(() => ({} as any));
+        const proceed = await askReupload(file.name, dup.previous_uploaded_at ?? null);
+        if (!proceed) {
+          setProgressMessages(prev => ({ ...prev, [entryId]: ['Skipped — already uploaded'] }));
+          throw new DuplicateSkipped(file.name);
+        }
+        response = await fetch('/api/upload-analyze?confirm_reupload=true', {
+          method: 'POST',
+          body: formData,
+        });
+      }
+
+      // A trial or payment block must stop here. Falling through to the
+      // unauthenticated direct-to-backend path below would bypass the gate.
+      if (response.status === 402 || response.status === 401) {
+        const blockedDetail = await response.json().catch(() => ({} as any));
+        throw new ProcessingBlocked(blockedDetail);
+      }
+
       if (response.ok) {
         data = await response.json();
         isDuplicate = data.duplicate === true;
-        
+
         // Start polling for progress if we have a job_id
         if (data.job_id) {
           pollJobProgress(data.job_id, entryId);
@@ -266,9 +446,12 @@ export default function UploadPage() {
       } else {
         throw new Error('analyze endpoint unavailable');
       }
-    } catch {
+    } catch (analyzeErr) {
+      if (analyzeErr instanceof ProcessingBlocked || analyzeErr instanceof DuplicateSkipped) {
+        throw analyzeErr;
+      }
       setProgressMessages(prev => ({ ...prev, [entryId]: ['Converting PDF to images...'] }));
-      
+
       const formData2 = new FormData();
       formData2.append('file', file);
       const response = await fetch(`${backendUrl}/api/upload-pdf`, {
@@ -281,7 +464,7 @@ export default function UploadPage() {
       }
       data = await response.json();
       isDuplicate = data.duplicate === true;
-      
+
       // Start polling for progress
       if (data.job_id || data.id) {
         pollJobProgress(data.job_id || data.id, entryId);
@@ -289,25 +472,23 @@ export default function UploadPage() {
     }
 
     const jobId = data.job_id || data.id;
-    
+
     // Wait for backend to complete Phase 1 (check detection)
     // Poll until status is 'analyzed' or 'complete'
     if (jobId && !isDuplicate) {
-      console.log(`⏳ Waiting for Phase 1 completion for job ${jobId}...`);
       let attempts = 0;
       const maxAttempts = 120; // 60 seconds max (500ms * 120)
-      
+
       while (attempts < maxAttempts) {
         try {
           const statusRes = await fetch(`${backendUrl}/api/jobs/${jobId}`);
           if (statusRes.ok) {
             const jobData = await statusRes.json();
-            
+
             // Check if Phase 1 is complete: status is 'analyzed' OR we have real page+check data
             // Fixed: was total_checks >= 0 (always true), now total_checks > 0
             if (jobData.status === 'analyzed' || jobData.status === 'complete' ||
                 (jobData.total_pages > 0 && jobData.total_checks > 0)) {
-              console.log(`✅ Phase 1 complete: ${jobData.total_pages} pages, ${jobData.total_checks} checks`);
               data = jobData; // Use the complete data
               break;
             }
@@ -315,13 +496,13 @@ export default function UploadPage() {
         } catch (pollErr) {
           console.error('Status poll error:', pollErr);
         }
-        
+
         await new Promise(resolve => setTimeout(resolve, 500));
         attempts++;
       }
-      
+
       if (attempts >= maxAttempts) {
-        console.warn('⚠️ Timeout waiting for Phase 1 completion');
+        console.warn('Timeout waiting for Phase 1 completion');
       }
     }
 
@@ -348,16 +529,13 @@ export default function UploadPage() {
       isDuplicate,
     };
 
-    // If duplicate and status is 'analyzed', auto-extract it
-    if (isDuplicate && data.status === 'analyzed') {
-      console.log(`🔄 Duplicate detected (${result.job_id}), auto-extracting...`);
-      setTimeout(() => {
-        handleStartExtraction(result.job_id);
-      }, 1000);
-    }
+    // A re-uploaded duplicate used to auto-extract here. Same bug as the
+    // multi-file path: it ran before the user could reach Configure, so every
+    // page was billed regardless of the selection they were about to make.
+    // It now waits for Start like any other job.
 
     return result;
-  }, []);
+  }, [askReupload]);
 
   // ── Handlers ─────────────────────────────────────────────
   const handleFilesSelected = (newFiles: File[]) => {
@@ -371,18 +549,10 @@ export default function UploadPage() {
 
   const handleUploadAndAnalyze = async () => {
     if (files.length === 0) return;
-    
-    // Check for large files and warn user
-    const largeFiles = files.filter(f => f.size > 5 * 1024 * 1024); // > 5MB
-    if (largeFiles.length > 0) {
-      const totalSize = files.reduce((sum, f) => sum + f.size, 0);
-      const sizeInMB = (totalSize / (1024 * 1024)).toFixed(1);
-      console.log(`📦 Processing ${files.length} file(s) (${sizeInMB} MB total)`);
-      console.log('⏱️ Large files detected - this may take 1-2 minutes');
-    }
-    
+
     setUploading(true);
     setError(null);
+    setBlocked(null);
 
     const entries: JobEntry[] = files.map((file, i) => ({
       id: `pending_${Date.now()}_${i}`,
@@ -420,18 +590,33 @@ export default function UploadPage() {
       | PromiseFulfilledResult<AnalyzeResult>
       | undefined;
 
+    const rejections = settled
+      .filter((s): s is PromiseRejectedResult => s.status === 'rejected')
+      .map((s) => s.reason);
+
+    // The billing gate is the one failure that gets its own banner — "try
+    // again" is the wrong instruction when retrying cannot possibly work.
+    const gate = rejections.find((r) => r instanceof ProcessingBlocked) as ProcessingBlocked | undefined;
+    if (gate) setBlocked(gate.message);
+
     if (firstSuccess) {
       setActiveJobId(firstSuccess.value.job_id);
-      setPageTo(firstSuccess.value.total_pages);
+      setSelectedPages(defaultPageSelection(firstSuccess.value.pages || []));
       setChequeTo(firstSuccess.value.total_checks || 1);
       setStep('preview');
-      
-      // Auto-extract all uploaded jobs so they appear in QB Comparisons
-      setTimeout(() => {
-        handleExtractAll();
-      }, 500);
-    } else {
-      setError('All uploads failed. Please try again.');
+      // Deliberately NO auto-extract here. Usage is billed per cheque
+      // processed, and the per-page grid in Configure exists so the user can
+      // exclude the non-cheque pages of a bank statement. Firing extraction
+      // before they reach that step would bill pages they never chose.
+      // Extraction starts when the user presses Start (or Extract All).
+    } else if (!gate) {
+      const allSkipped =
+        rejections.length > 0 && rejections.every((r) => r instanceof DuplicateSkipped);
+      setError(
+        allSkipped
+          ? 'Nothing was processed — every file had already been uploaded.'
+          : 'All uploads failed. Please try again.'
+      );
     }
 
     setUploading(false);
@@ -441,9 +626,8 @@ export default function UploadPage() {
     setActiveJobId(jobId);
     const job = jobEntries.find((j) => j.id === jobId);
     if (job?.result) {
-      setPageTo(job.result.total_pages);
+      setSelectedPages(defaultPageSelection(job.result.pages || []));
       setChequeTo(job.result.total_checks || 1);
-      setPageFrom(1);
       setChequeFrom(1);
       setRangeType('all');
       setSelectedPage(null);
@@ -451,16 +635,6 @@ export default function UploadPage() {
     }
   };
 
-  const toggleMethod = (methodId: string) => {
-    setSelectedMethods((prev) => {
-      if (methodId === 'hybrid') return ['hybrid'];
-      const without = prev.filter((m) => m !== 'hybrid' && m !== methodId);
-      if (prev.includes(methodId)) {
-        return without.length === 0 ? ['hybrid'] : without;
-      }
-      return [...without, methodId];
-    });
-  };
 
   const handleStartExtraction = async (targetJobId?: string) => {
     const jobId = targetJobId || analyzeResult?.job_id;
@@ -474,27 +648,41 @@ export default function UploadPage() {
 
     try {
       const r = job.result;
-      const isReExtract = forceExtract;
-      const methodsToRun = isReExtract ? ['ai'] : selectedMethods;
-
-      if (isReExtract) {
-        const wantsAllMethods = window.confirm('Use all extraction methods for this re-run? Click OK for the full extraction suite or Cancel to continue with the recommended fast re-run.');
-        if (wantsAllMethods) {
-          window.alert('This re-run currently uses the recommended fast extraction path to avoid reprocessing every engine. Continuing with the fast re-run.');
-        }
-      }
+      const methodsToRun = [...EXTRACTION_METHODS];
 
       const body: Record<string, unknown> = {
         job_id: jobId,
         methods: methodsToRun,
         force: forceExtract,
+        // Only when we arrived from the reconcile stepper. A plain /upload
+        // visit sends nothing and the job stays unattached, which is correct.
+        ...(batchId ? { batch_id: batchId } : {}),
       };
-      if (rangeType === 'pages') {
-        body.page_range = { from: pageFrom, to: pageTo };
-      } else if (rangeType === 'cheques') {
+      // The per-page selection belongs to the job on screen. Other jobs in an
+      // "Extract All" run get everything, which is what their own default is.
+      if (rangeType === 'pages' && jobId === activeJobId) {
+        const sel = selectedPages;
+        if (sel.size === 0) throw new Error('Select at least one page to extract.');
+        // `pages` is the real instruction and the backend prefers it, so a
+        // statement whose cheque pages are not consecutive runs as selected.
+        // page_range still goes along as the contiguous envelope: it is what an
+        // older extractor would fall back to, and for a contiguous selection
+        // the two agree exactly. Usage is billed on cheques detected, so the
+        // list must never be widened silently.
+        body.pages = [...sel].sort((a, b) => a - b);
+        body.page_range = selectedRange(sel);
+      } else if (rangeType === 'cheques' && jobId === activeJobId) {
         body.cheque_range = { from: chequeFrom, to: chequeTo };
-      } else {
+      } else if (jobId === activeJobId) {
+        // The user explicitly chose "All pages" for the job on screen.
         body.page_range = { from: 1, to: r.total_pages };
+      } else {
+        // An "Extract All" sibling: nobody has reviewed its pages, so it runs
+        // on its OWN default selection (pages where detection found cheques),
+        // not on every page. Billing is per cheque processed.
+        const sel = defaultPageSelection(r.pages || []);
+        body.pages = [...sel].sort((a, b) => a - b);
+        body.page_range = sel.size > 0 ? selectedRange(sel) : { from: 1, to: r.total_pages };
       }
 
       const response = await fetch('/api/start-extraction', {
@@ -530,9 +718,34 @@ export default function UploadPage() {
   // ── Step indicator helpers ─────────────────────────────────
   const currentStepIdx = STEP_ORDER.indexOf(step === 'starting' ? 'configure' : step);
 
+  // ── Multi-job strip, rendered identically in preview and configure ───────
+  const jobStrip = jobEntries.length > 1 && (
+    <div className="scroll-region flex items-center gap-2 overflow-x-auto pb-1">
+      {jobEntries.map((entry) => {
+        const isActive = entry.id === activeJobId;
+        return (
+          <Button
+            key={entry.id}
+            size="sm"
+            variant={isActive ? 'secondary' : 'ghost'}
+            onClick={() => handleSelectJob(entry.id)}
+            aria-current={isActive || undefined}
+            className={cn('shrink-0 font-medium', isActive && 'glass-selected')}
+            icon={<span className={cn('h-2 w-2 rounded-full', STATUS_DOT[entry.status])} />}
+          >
+            {entry.result?.pdf_name || entry.file.name}
+            {entry.result && (
+              <span className="nums text-xs text-ink-faint">{entry.result.total_checks} chq</span>
+            )}
+          </Button>
+        );
+      })}
+    </div>
+  );
+
   // ── Render ───────────────────────────────────────────────
   return (
-    <div className="max-w-5xl mx-auto p-5 space-y-5">
+    <div className="mx-auto max-w-5xl space-y-5 p-5">
       {/* ── Step indicator ──────────────────────────────── */}
       <div className="flex items-center gap-1.5">
         {STEP_ORDER.map((s, i) => {
@@ -540,27 +753,66 @@ export default function UploadPage() {
           const isDone = i < currentStepIdx;
           return (
             <div key={s} className="flex items-center gap-1.5">
-              {i > 0 && <ChevronRight size={12} className="text-gray-300" />}
-              <div className={`flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium transition ${
-                isCurrent ? 'bg-gray-900 text-white' :
-                isDone ? 'bg-emerald-100 text-emerald-700' :
-                'bg-gray-100 text-gray-400'
-              }`}>
-                {isDone ? <CheckCircle size={12} /> : <span className="w-3.5 h-3.5 rounded-full border-[1.5px] border-current flex items-center justify-center text-[9px] font-bold">{i + 1}</span>}
+              {i > 0 && <ChevronRight size={12} className="text-ink-faint" aria-hidden />}
+              <Badge
+                size="sm"
+                tone={isCurrent ? 'solid' : isDone ? 'success' : 'outline'}
+                className={cn('py-1', !isCurrent && !isDone && 'text-ink-faint')}
+                aria-current={isCurrent || undefined}
+              >
+                {isDone ? (
+                  <CheckCircle size={12} aria-hidden />
+                ) : (
+                  <span className="nums flex h-3.5 w-3.5 items-center justify-center rounded-full border-[1.5px] border-current text-[9px] font-bold">
+                    {i + 1}
+                  </span>
+                )}
                 {STEP_LABELS[s]}
-              </div>
+              </Badge>
             </div>
           );
         })}
       </div>
 
+      {/* ── Trial / billing gate ────────────────────────── */}
+      {blocked && (
+        <GlassPanel
+          role="alert"
+          radius="input"
+          padding="sm"
+          className="flex items-start gap-2.5 border-warning-border bg-warning-bg/50"
+        >
+          <AlertCircle size={16} className="mt-0.5 shrink-0 text-warning-text" aria-hidden />
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-warning-text">Processing is paused</p>
+            <p className="mt-0.5 text-sm text-ink-body">{blocked}</p>
+          </div>
+          <Button
+            size="sm"
+            variant="secondary"
+            icon={<CreditCard size={14} />}
+            onClick={() => router.push('/billing')}
+            className="shrink-0"
+          >
+            View billing
+          </Button>
+        </GlassPanel>
+      )}
+
       {/* ── Error banner ────────────────────────────────── */}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2.5 rounded-lg flex items-center gap-2 text-[13px]">
-          <AlertCircle size={14} />
-          <span className="flex-1">{error}</span>
-          <button onClick={() => setError(null)} className="p-0.5 hover:bg-red-100 rounded"><X size={14} /></button>
-        </div>
+        <GlassPanel
+          role="alert"
+          radius="input"
+          padding="sm"
+          className="flex items-center gap-2 border-error-border bg-error-bg/50"
+        >
+          <AlertCircle size={14} className="shrink-0 text-error-text" aria-hidden />
+          <span className="flex-1 text-sm text-ink-body">{error}</span>
+          <IconButton aria-label="Dismiss error" size="icon-sm" onClick={() => setError(null)}>
+            <X size={14} />
+          </IconButton>
+        </GlassPanel>
       )}
 
       {/* ══════════════════════════════════════════════════
@@ -569,8 +821,8 @@ export default function UploadPage() {
       {step === 'upload' && (
         <>
           <div>
-            <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Upload Document</h1>
-            <p className="text-[13px] text-gray-500 mt-0.5">
+            <h1 className="font-heading text-2xl font-semibold text-ink-strong">Upload Document</h1>
+            <p className="mt-0.5 text-sm text-ink-body">
               Upload a PDF. We&apos;ll detect pages and cheques before extraction.
             </p>
           </div>
@@ -579,76 +831,79 @@ export default function UploadPage() {
 
           {files.length > 0 && (
             <div className="space-y-3">
-              <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-                <div className="px-4 py-2.5 border-b border-gray-100">
-                  <h3 className="text-[13px] font-semibold text-gray-900">Files ({files.length})</h3>
+              <GlassCard padding="none" className="overflow-hidden">
+                <div className="border-b border-glass-hairline px-4 py-2.5">
+                  <GlassCardTitle className="text-sm">Files ({files.length})</GlassCardTitle>
                 </div>
-                <div className="divide-y divide-gray-50">
+                <div>
                   {files.map((file, index) => (
-                    <div key={index} className="px-4 py-2.5 flex items-center justify-between hover:bg-gray-50/50 transition">
+                    <div
+                      key={index}
+                      className="glass-divider flex items-center justify-between px-4 py-2.5 transition-colors duration-quick ease-settle hover:bg-brand/[0.045]"
+                    >
                       <div className="flex items-center gap-2.5">
-                        <div className="p-1.5 bg-gray-100 rounded">
-                          <FileText className="text-gray-500" size={14} />
-                        </div>
-                        <div>
-                          <p className="font-medium text-gray-900 text-[13px]">{file.name}</p>
-                          <p className="text-[11px] text-gray-400">{fmtSize(file.size)}</p>
+                        <span className="rounded-input bg-brand-wash p-1.5">
+                          <FileText className="text-brand-deep" size={14} aria-hidden />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-ink-strong">{file.name}</p>
+                          <p className="nums text-xs text-ink-faint">{fmtSize(file.size)}</p>
                         </div>
                       </div>
-                      <button onClick={() => handleRemoveFile(index)} className="p-1 text-gray-300 hover:text-red-500 transition">
+                      <IconButton
+                        aria-label={`Remove ${file.name}`}
+                        size="icon-sm"
+                        onClick={() => handleRemoveFile(index)}
+                        className="text-ink-faint hover:text-error-text"
+                      >
                         <X size={14} />
-                      </button>
+                      </IconButton>
                     </div>
                   ))}
                 </div>
-              </div>
+              </GlassCard>
 
               {/* Progress Display During Upload */}
               {uploading && jobEntries.length > 0 && (
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                <GlassPanel className="border-info-border bg-info-bg/40">
                   <div className="flex items-start gap-3">
-                    <Loader2 className="text-blue-600 flex-shrink-0 mt-0.5 animate-spin" size={20} />
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between mb-2">
-                        <h3 className="text-sm font-semibold text-blue-900">Processing Documents...</h3>
-                        {(() => {
-                          const totalSize = files.reduce((sum, f) => sum + f.size, 0);
-                          const largeFile = totalSize > 5 * 1024 * 1024;
-                          if (largeFile) {
-                            return (
-                              <span className="text-xs text-blue-700 bg-blue-100 px-2 py-1 rounded-full">
-                                ⏱️ Large file - may take 1-2 minutes
-                              </span>
-                            );
-                          }
-                          return null;
-                        })()}
+                    <Loader2 className="mt-0.5 shrink-0 animate-spin text-brand" size={20} aria-hidden />
+                    <div className="min-w-0 flex-1">
+                      <div className="mb-2 flex items-center justify-between gap-3">
+                        <h3 className="font-heading text-sm font-semibold text-ink-strong">
+                          Processing documents…
+                        </h3>
+                        {files.reduce((sum, f) => sum + f.size, 0) > 5 * 1024 * 1024 && (
+                          <Badge tone="brand" size="sm">
+                            Large file — may take 1–2 minutes
+                          </Badge>
+                        )}
                       </div>
                       <div className="space-y-2">
                         {jobEntries.map((entry) => {
                           const messages = progressMessages[entry.id] || [];
                           return (
                             <div key={entry.id} className="space-y-1">
-                              <div className="flex items-center justify-between text-xs">
-                                <span className="text-blue-800 font-medium truncate max-w-[300px]">
+                              <div className="flex items-center justify-between gap-4 text-xs">
+                                <span className="max-w-[300px] truncate font-medium text-ink-strong">
                                   {entry.file.name}
                                 </span>
-                                <div className="flex items-center gap-3 ml-4">
+                                <div className="flex shrink-0 items-center gap-3">
                                   {entry.status === 'uploading' && (
-                                    <span className="text-blue-600 flex items-center gap-1">
-                                      <Loader2 size={12} className="animate-spin" />
-                                      {messages.length > 0 ? messages[messages.length - 1] : 'Analyzing...'}
+                                    <span className="flex items-center gap-1 text-ink-body">
+                                      <Loader2 size={12} className="animate-spin" aria-hidden />
+                                      {messages.length > 0 ? messages[messages.length - 1] : 'Analyzing…'}
                                     </span>
                                   )}
                                   {entry.status === 'analyzed' && entry.result && (
-                                    <span className="text-emerald-700 font-semibold flex items-center gap-2">
-                                      <CheckCircle size={12} />
-                                      {entry.result.total_pages} pages, {entry.result.total_checks} checks found
+                                    <span className="nums flex items-center gap-2 font-semibold text-success-text">
+                                      <CheckCircle size={12} aria-hidden />
+                                      {entry.result.total_pages} pages, {entry.result.total_checks} cheques found
                                     </span>
                                   )}
                                   {entry.status === 'error' && (
-                                    <span className="text-red-600 flex items-center gap-1">
-                                      <AlertCircle size={12} />
+                                    <span className="flex items-center gap-1 text-error-text">
+                                      <AlertCircle size={12} aria-hidden />
                                       {entry.error || 'Failed'}
                                     </span>
                                   )}
@@ -658,8 +913,8 @@ export default function UploadPage() {
                               {entry.status === 'uploading' && messages.length > 0 && (
                                 <div className="ml-4 space-y-0.5">
                                   {messages.map((msg, idx) => (
-                                    <div key={idx} className="text-[11px] text-blue-600 flex items-center gap-1">
-                                      <span className="w-1 h-1 bg-blue-400 rounded-full"></span>
+                                    <div key={idx} className="flex items-center gap-1.5 text-xs text-ink-body">
+                                      <span className="h-1 w-1 rounded-full bg-brand" aria-hidden />
                                       {msg}
                                     </div>
                                   ))}
@@ -669,54 +924,41 @@ export default function UploadPage() {
                           );
                         })}
                       </div>
-                      
+
                       {/* Helpful tips during processing */}
-                      <div className="mt-3 pt-3 border-t border-blue-200">
-                        <p className="text-xs text-blue-700 flex items-start gap-2">
-                          <span className="text-blue-500 mt-0.5">💡</span>
-                          <span>
-                            <strong>Tip:</strong> Processing time varies by file size. 
-                            {(() => {
-                              const analyzing = jobEntries.filter(e => e.status === 'uploading').length;
-                              const completed = jobEntries.filter(e => e.status === 'analyzed').length;
-                              if (analyzing > 0 && completed > 0) {
-                                return ` ${completed} of ${jobEntries.length} completed.`;
-                              }
-                              return ' You can continue working while we process in the background.';
-                            })()}
-                          </span>
+                      <div className="mt-3 border-t border-glass-hairline pt-3">
+                        <p className="text-xs text-ink-body">
+                          <strong className="font-semibold text-ink-strong">Tip:</strong> Processing
+                          time varies by file size.
+                          {(() => {
+                            const analyzing = jobEntries.filter(e => e.status === 'uploading').length;
+                            const completed = jobEntries.filter(e => e.status === 'analyzed').length;
+                            if (analyzing > 0 && completed > 0) {
+                              return ` ${completed} of ${jobEntries.length} completed.`;
+                            }
+                            return ' You can continue working while we process in the background.';
+                          })()}
                         </p>
                       </div>
                     </div>
                   </div>
-                </div>
+                </GlassPanel>
               )}
 
               <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => setFiles([])}
-                  className="px-3.5 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 text-[13px] text-gray-600 transition"
-                  disabled={uploading}
-                >
+                <Button size="sm" variant="ghost" onClick={() => setFiles([])} disabled={uploading}>
                   Clear
-                </button>
-                <button
+                </Button>
+                <Button
+                  size="sm"
                   onClick={handleUploadAndAnalyze}
-                  disabled={uploading}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 text-[13px] font-medium transition shadow-sm"
+                  loading={uploading}
+                  icon={<Upload size={14} />}
                 >
-                  {uploading ? (
-                    <>
-                      <Loader2 size={14} className="animate-spin" />
-                      Analyzing {files.length} file{files.length > 1 ? 's' : ''}...
-                    </>
-                  ) : (
-                    <>
-                      <Upload size={14} />
-                      Upload &amp; Analyze
-                    </>
-                  )}
-                </button>
+                  {uploading
+                    ? `Analyzing ${files.length} file${files.length > 1 ? 's' : ''}…`
+                    : 'Upload & Analyze'}
+                </Button>
               </div>
             </div>
           )}
@@ -728,299 +970,280 @@ export default function UploadPage() {
          ══════════════════════════════════════════════════ */}
       {step === 'preview' && analyzeResult && (
         <>
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Document Preview</h1>
-              <p className="text-[13px] text-gray-500 mt-0.5">{analyzeResult.pdf_name}</p>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h1 className="font-heading text-2xl font-semibold text-ink-strong">Document Preview</h1>
+              <p className="mt-0.5 truncate text-sm text-ink-body">{analyzeResult.pdf_name}</p>
             </div>
-            <button
+            <Button
+              size="sm"
+              variant="link"
               onClick={() => setStep('upload')}
-              className="text-[12px] text-gray-400 hover:text-gray-600 flex items-center gap-0.5 transition"
+              icon={<ChevronLeft size={12} />}
             >
-              <ChevronLeft size={12} /> Back
-            </button>
+              Back
+            </Button>
           </div>
 
           {/* ── Multi-job tabs ──────────────────────────── */}
-          {jobEntries.length > 1 && (
-            <div className="flex items-center gap-2 overflow-x-auto pb-1">
-              {jobEntries.map((entry) => {
-                const isActive = entry.id === activeJobId;
-                const statusColors: Record<JobStatus, string> = {
-                  uploading: 'bg-blue-400',
-                  analyzed: 'bg-emerald-400',
-                  extracting: 'bg-amber-400 animate-pulse',
-                  complete: 'bg-emerald-500',
-                  error: 'bg-red-400',
-                };
-                return (
-                  <button
-                    key={entry.id}
-                    onClick={() => handleSelectJob(entry.id)}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12px] font-medium whitespace-nowrap transition border ${
-                      isActive
-                        ? 'border-gray-900 bg-gray-50 text-gray-900'
-                        : 'border-gray-200 text-gray-500 hover:border-gray-300 hover:text-gray-700'
-                    }`}
-                  >
-                    <span className={`w-2 h-2 rounded-full ${statusColors[entry.status]}`} />
-                    {entry.result?.pdf_name || entry.file.name}
-                    {entry.result && (
-                      <span className="text-[10px] text-gray-400">
-                        {entry.result.total_checks} chq
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          {jobStrip}
 
           {/* ── Action Buttons (Top) ──────────────────── */}
-          <div className="flex items-center justify-between gap-3 bg-white rounded-xl border border-gray-100 p-4">
+          <GlassCard padding="sm" className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <button
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<ChevronLeft size={14} />}
                 onClick={() => {
                   setStep('upload');
                   setActiveJobId(null);
                 }}
-                className="flex items-center gap-1.5 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 text-[13px] text-gray-600 transition"
               >
-                <ChevronLeft size={14} />
                 Back to Upload
-              </button>
-              <button
-                onClick={() => {
-                  router.push('/dashboard');
-                }}
-                className="flex items-center gap-1.5 px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 text-[13px] text-gray-600 transition"
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                icon={<X size={14} />}
+                onClick={() => router.push('/dashboard')}
               >
-                <X size={14} />
                 Extract Later
-              </button>
+              </Button>
             </div>
-            <button
-              onClick={() => setStep('configure')}
-              className="flex items-center gap-1.5 px-5 py-2.5 bg-gray-900 text-white rounded-lg hover:bg-gray-800 text-[13px] font-medium transition shadow-sm"
-            >
+            <Button size="sm" onClick={() => setStep('configure')}>
               Continue to Configure
-              <ChevronRight size={14} />
-            </button>
-          </div>
+              <ChevronRight size={14} aria-hidden />
+            </Button>
+          </GlassCard>
 
           {/* ── Duplicate Warning Banner ──────────────── */}
           {analyzeResult.isDuplicate && (
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 flex items-start gap-3">
-              <AlertCircle className="text-amber-600 flex-shrink-0 mt-0.5" size={20} />
-              <div className="flex-1">
-                <h3 className="text-sm font-semibold text-amber-900 mb-1">Duplicate Document Detected</h3>
-                <p className="text-sm text-amber-700">
-                  This file has already been uploaded. Using existing job <span className="font-mono font-medium">{analyzeResult.job_id}</span>.
-                  {' '}Auto-extracting checks in the background...
+            <GlassPanel
+              radius="input"
+              padding="sm"
+              className="flex items-start gap-3 border-warning-border bg-warning-bg/50"
+            >
+              <AlertCircle className="mt-0.5 shrink-0 text-warning-text" size={20} aria-hidden />
+              <div className="min-w-0 flex-1">
+                <h3 className="mb-1 font-heading text-sm font-semibold text-warning-text">
+                  Duplicate Document Detected
+                </h3>
+                <p className="text-sm text-ink-body">
+                  This file has already been uploaded. Using existing job{' '}
+                  <span className="nums font-mono font-medium text-ink-strong">{analyzeResult.job_id}</span>.
+                  {' '}Auto-extracting cheques in the background…
                 </p>
               </div>
-            </div>
+            </GlassPanel>
           )}
 
-          {/* Stats cards */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="bg-white rounded-xl border border-gray-100 p-3.5 flex items-center gap-3">
-              <div className="p-2 bg-blue-50 rounded-lg">
-                <FileText className="text-blue-600" size={16} />
-              </div>
-              <div>
-                <p className="text-[11px] text-gray-400 uppercase tracking-wider font-medium">Pages</p>
-                <p className="text-xl font-semibold text-gray-900 -mt-0.5">{totalPages}</p>
-              </div>
-            </div>
-            <div className="bg-white rounded-xl border border-gray-100 p-3.5 flex items-center gap-3">
-              <div className="p-2 bg-emerald-50 rounded-lg">
-                <ImageIcon className="text-emerald-600" size={16} />
-              </div>
-              <div>
-                <p className="text-[11px] text-gray-400 uppercase tracking-wider font-medium">Cheques</p>
-                <p className="text-xl font-semibold text-gray-900 -mt-0.5">{totalChecks}</p>
-              </div>
-            </div>
-            <div className="bg-white rounded-xl border border-gray-100 p-3.5 flex items-center gap-3">
-              <div className="p-2 bg-purple-50 rounded-lg">
-                <HardDrive className="text-purple-600" size={16} />
-              </div>
-              <div>
-                <p className="text-[11px] text-gray-400 uppercase tracking-wider font-medium">File Size</p>
-                <p className="text-xl font-semibold text-gray-900 -mt-0.5">{fmtSize(analyzeResult.file_size)}</p>
-              </div>
-            </div>
-            <div className="bg-white rounded-xl border border-gray-100 p-3.5 flex items-center gap-3">
-              <div className="p-2 bg-amber-50 rounded-lg">
-                <Settings2 className="text-amber-600" size={16} />
-              </div>
-              <div>
-                <p className="text-[11px] text-gray-400 uppercase tracking-wider font-medium">Format</p>
-                <p className="text-sm font-semibold text-gray-900 mt-0.5">{analyzeResult.doc_format}</p>
-              </div>
-            </div>
+          {/* Stats */}
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <KpiTile
+              tone="brand"
+              label="Pages"
+              value={totalPages}
+              icon={<FileText size={16} aria-hidden />}
+            />
+            <KpiTile
+              tone="success"
+              label="Cheques"
+              value={totalChecks}
+              icon={<ImageIcon size={16} aria-hidden />}
+            />
+            <KpiTile
+              label="File Size"
+              value={fmtSize(analyzeResult.file_size)}
+              icon={<HardDrive size={16} aria-hidden />}
+            />
+            <KpiTile
+              tone="warning"
+              label="Format"
+              value={analyzeResult.doc_format}
+              icon={<Settings2 size={16} aria-hidden />}
+            />
           </div>
 
           {/* View mode toggle */}
-          <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-gray-900">Page Previews</h2>
-            <div className="flex items-center gap-0.5 bg-gray-100 rounded-lg p-0.5">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="font-heading text-sm font-semibold text-ink-strong">Page Previews</h2>
+            <div className="glass-track inline-flex items-center gap-0.5 rounded-pill p-1">
               <button
                 onClick={() => setViewMode('card')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[12px] font-medium transition ${
-                  viewMode === 'card' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
-                }`}
+                aria-pressed={viewMode === 'card'}
+                className={cn(
+                  'press inline-flex items-center gap-1 rounded-pill px-3 py-1.5 text-xs font-medium',
+                  viewMode === 'card'
+                    ? 'glass-card font-semibold text-brand-deep'
+                    : 'text-ink-body hover:text-ink-strong'
+                )}
               >
-                <LayoutGrid size={12} /> Cards
+                <LayoutGrid size={12} aria-hidden /> Cards
               </button>
               <button
                 onClick={() => setViewMode('table')}
-                className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-[12px] font-medium transition ${
-                  viewMode === 'table' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
-                }`}
+                aria-pressed={viewMode === 'table'}
+                className={cn(
+                  'press inline-flex items-center gap-1 rounded-pill px-3 py-1.5 text-xs font-medium',
+                  viewMode === 'table'
+                    ? 'glass-card font-semibold text-brand-deep'
+                    : 'text-ink-body hover:text-ink-strong'
+                )}
               >
-                <List size={12} /> Table
+                <List size={12} aria-hidden /> Table
               </button>
             </div>
           </div>
 
           {/* ── Card View ─────────────────────────────── */}
           {viewMode === 'card' && (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-4">
               {pages.map((page) => (
-                <div
+                <GlassCard
                   key={page.page_number}
+                  padding="none"
+                  interactive
                   onClick={() => setSelectedPage(page.page_number)}
-                  className="bg-white rounded-xl border border-gray-100 hover:border-blue-300 hover:shadow-md transition cursor-pointer overflow-hidden group"
+                  className="group overflow-hidden"
                 >
-                  <div className="aspect-[3/4] bg-gray-50 relative overflow-hidden">
+                  <div className="relative aspect-[3/4] overflow-hidden bg-surface-sunken">
                     <img
                       src={`/api/page-image/${analyzeResult.job_id}/${page.page_number}`}
                       alt={`Page ${page.page_number}`}
-                      className="w-full h-full object-contain"
+                      className="h-full w-full object-contain"
                       onError={(e) => {
                         (e.target as HTMLImageElement).style.display = 'none';
                         (e.target as HTMLImageElement).nextElementSibling?.classList.remove('hidden');
                       }}
                     />
-                    <div className="hidden absolute inset-0 flex items-center justify-center text-gray-300">
-                      <FileText size={36} />
+                    {/* `hidden` is removed by the onError handler above; `flex`
+                        then takes over, which is why both are present. */}
+                    <div className="absolute inset-0 hidden flex items-center justify-center text-ink-faint">
+                      <FileText size={36} aria-hidden />
                     </div>
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition flex items-center justify-center opacity-0 group-hover:opacity-100">
-                      <div className="bg-white/90 rounded-full p-1.5 shadow">
-                        <Eye size={14} className="text-gray-700" />
-                      </div>
+                    <div className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-quick ease-settle group-hover:bg-ink-strong/5 group-hover:opacity-100">
+                      <span className="glass-card rounded-full p-1.5">
+                        <Eye size={14} className="text-ink-strong" aria-hidden />
+                      </span>
                     </div>
-                    <div className="absolute top-1.5 left-1.5 bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded font-medium">
+                    <span className="nums absolute left-1.5 top-1.5 rounded-input bg-ink-strong/55 px-1.5 py-0.5 text-[10px] font-medium text-ink-invert">
                       {page.page_number}
-                    </div>
+                    </span>
                   </div>
                   <div className="p-2.5">
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium text-[12px] text-gray-900">Page {page.page_number}</span>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium text-ink-strong">Page {page.page_number}</span>
                       {page.checks_on_page > 0 && (
-                        <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-medium">
+                        <Badge tone="success" size="sm" className="nums">
                           {page.checks_on_page} cheque{page.checks_on_page > 1 ? 's' : ''}
-                        </span>
+                        </Badge>
                       )}
                     </div>
                     {page.width > 0 && (
-                      <p className="text-[11px] text-gray-400 mt-0.5">{page.width} x {page.height}px</p>
+                      <p className="nums mt-0.5 text-xs text-ink-faint">
+                        {page.width} x {page.height}px
+                      </p>
                     )}
                   </div>
-                </div>
+                </GlassCard>
               ))}
             </div>
           )}
 
           {/* ── Table View ────────────────────────────── */}
           {viewMode === 'table' && (
-            <div className="bg-white rounded-xl border border-gray-100 overflow-hidden">
-              <table className="w-full text-[13px]">
-                <thead>
-                  <tr className="border-b border-gray-50 bg-gray-50/50">
-                    <th className="px-3 py-2.5 text-left text-[11px] font-medium text-gray-400 uppercase tracking-wider">Preview</th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-medium text-gray-400 uppercase tracking-wider">Page</th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-medium text-gray-400 uppercase tracking-wider">Cheques</th>
-                    <th className="px-3 py-2.5 text-left text-[11px] font-medium text-gray-400 uppercase tracking-wider">Dimensions</th>
-                    <th className="px-3 py-2.5 text-center text-[11px] font-medium text-gray-400 uppercase tracking-wider">View</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {pages.map((page) => (
-                    <tr
-                      key={page.page_number}
-                      className="hover:bg-blue-50/30 cursor-pointer transition"
-                      onClick={() => setSelectedPage(page.page_number)}
-                    >
-                      <td className="px-3 py-2">
-                        <div className="w-12 h-16 bg-gray-100 rounded overflow-hidden">
-                          <img
-                            src={`/api/page-image/${analyzeResult.job_id}/${page.page_number}`}
-                            alt={`Page ${page.page_number}`}
-                            className="w-full h-full object-contain"
-                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                          />
-                        </div>
-                      </td>
-                      <td className="px-3 py-2 font-medium text-gray-900">Page {page.page_number}</td>
-                      <td className="px-3 py-2">
-                        {page.checks_on_page > 0 ? (
-                          <span className="text-[11px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-medium">
-                            {page.checks_on_page}
-                          </span>
-                        ) : (
-                          <span className="text-gray-400">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-gray-500 text-[12px] font-mono">
-                        {page.width > 0 ? `${page.width} x ${page.height}` : '—'}
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <button className="text-blue-500 hover:text-blue-700">
-                          <Eye size={14} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <TableShell>
+              <TableScroll className="max-h-[70vh]">
+                <Table>
+                  <Thead>
+                    <Tr>
+                      <Th>Preview</Th>
+                      <Th>Page</Th>
+                      <Th numeric>Cheques</Th>
+                      <Th numeric>Dimensions</Th>
+                      <Th className="text-center">View</Th>
+                    </Tr>
+                  </Thead>
+                  <Tbody>
+                    {pages.map((page) => (
+                      <Tr
+                        key={page.page_number}
+                        interactive
+                        onClick={() => setSelectedPage(page.page_number)}
+                      >
+                        <Td>
+                          <div className="h-16 w-12 overflow-hidden rounded-input bg-surface-sunken">
+                            <img
+                              src={`/api/page-image/${analyzeResult.job_id}/${page.page_number}`}
+                              alt={`Page ${page.page_number}`}
+                              className="h-full w-full object-contain"
+                              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                            />
+                          </div>
+                        </Td>
+                        <Td className="font-medium">Page {page.page_number}</Td>
+                        <Td numeric>
+                          {page.checks_on_page > 0 ? (
+                            <Badge tone="success" size="sm" className="nums">
+                              {page.checks_on_page}
+                            </Badge>
+                          ) : (
+                            <span className="text-ink-faint">—</span>
+                          )}
+                        </Td>
+                        <Td numeric muted className="font-mono text-xs">
+                          {page.width > 0 ? `${page.width} x ${page.height}` : '—'}
+                        </Td>
+                        <Td className="text-center">
+                          <IconButton aria-label={`View page ${page.page_number}`} size="icon-sm">
+                            <Eye size={14} />
+                          </IconButton>
+                        </Td>
+                      </Tr>
+                    ))}
+                  </Tbody>
+                </Table>
+              </TableScroll>
+            </TableShell>
           )}
 
           {/* ── Detected Cheques Preview ──────────────── */}
           {analyzeResult.checks.length > 0 && (
             <div className="space-y-3">
-              <h2 className="text-sm font-semibold text-gray-900">Detected Cheques ({analyzeResult.checks.length})</h2>
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              <h2 className="font-heading text-sm font-semibold text-ink-strong">
+                Detected Cheques ({analyzeResult.checks.length})
+              </h2>
+              <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
                 {analyzeResult.checks.map((check, idx) => (
-                  <div
+                  <GlassCard
                     key={check.check_id}
+                    padding="none"
+                    interactive
                     onClick={() => { setSelectedCheck(check.check_id); setZoom(1); }}
-                    className="bg-white rounded-xl border border-gray-100 hover:border-emerald-300 hover:shadow-md transition cursor-pointer overflow-hidden group"
+                    className="group overflow-hidden"
                   >
-                    <div className="aspect-[2/1] bg-gray-50 relative overflow-hidden">
+                    <div className="relative aspect-[2/1] overflow-hidden bg-surface-sunken">
                       <img
                         src={`/api/check-image/${analyzeResult.job_id}/${check.check_id}`}
                         alt={`Cheque ${check.check_id}`}
-                        className="w-full h-full object-contain"
+                        className="h-full w-full object-contain"
                         onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                       />
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition flex items-center justify-center opacity-0 group-hover:opacity-100">
-                        <div className="bg-white/90 rounded-full p-1.5 shadow">
-                          <Eye size={14} className="text-gray-700" />
-                        </div>
+                      <div className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-quick ease-settle group-hover:bg-ink-strong/5 group-hover:opacity-100">
+                        <span className="glass-card rounded-full p-1.5">
+                          <Eye size={14} className="text-ink-strong" aria-hidden />
+                        </span>
                       </div>
-                      <div className="absolute top-1.5 left-1.5 bg-black/50 text-white text-[10px] px-1.5 py-0.5 rounded font-medium">
+                      <span className="nums absolute left-1.5 top-1.5 rounded-input bg-ink-strong/55 px-1.5 py-0.5 text-[10px] font-medium text-ink-invert">
                         #{idx + 1}
-                      </div>
+                      </span>
                     </div>
-                    <div className="p-2.5 flex items-center justify-between">
-                      <span className="text-[12px] font-medium text-gray-900">Cheque #{idx + 1}</span>
-                      <span className="text-[11px] text-gray-400">Page {check.page}</span>
+                    <div className="flex items-center justify-between p-2.5">
+                      <span className="nums text-xs font-medium text-ink-strong">Cheque #{idx + 1}</span>
+                      <span className="nums text-xs text-ink-faint">Page {check.page}</span>
                     </div>
-                  </div>
+                  </GlassCard>
                 ))}
               </div>
             </div>
@@ -1028,69 +1251,91 @@ export default function UploadPage() {
 
 
           {/* ── Full-size page image modal ──────────────── */}
-          {selectedPage !== null && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setSelectedPage(null)}>
-              <div className="bg-white rounded-xl shadow-2xl w-[90vw] max-w-4xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-                <div className="flex items-center justify-between px-5 py-3 border-b">
-                  <h3 className="text-sm font-semibold text-gray-900">Page {selectedPage} of {totalPages}</h3>
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => setZoom(Math.max(0.25, zoom - 0.25))} className="p-1.5 hover:bg-gray-100 rounded" disabled={zoom <= 0.25}><ZoomOut size={14} /></button>
-                    <span className="text-[11px] font-medium text-gray-500 min-w-[2.5rem] text-center">{(zoom * 100).toFixed(0)}%</span>
-                    <button onClick={() => setZoom(Math.min(3, zoom + 0.25))} className="p-1.5 hover:bg-gray-100 rounded" disabled={zoom >= 3}><ZoomIn size={14} /></button>
-                    <div className="w-px h-4 bg-gray-200 mx-1" />
-                    <button onClick={() => setSelectedPage(Math.max(1, selectedPage - 1))} disabled={selectedPage <= 1} className="p-1.5 hover:bg-gray-100 rounded disabled:opacity-30"><ChevronLeft size={16} /></button>
-                    <button onClick={() => setSelectedPage(Math.min(totalPages, selectedPage + 1))} disabled={selectedPage >= totalPages} className="p-1.5 hover:bg-gray-100 rounded disabled:opacity-30"><ChevronRight size={16} /></button>
-                    <button onClick={() => { setSelectedPage(null); setZoom(1); }} className="p-1.5 hover:bg-gray-100 rounded ml-1"><X size={14} /></button>
-                  </div>
-                </div>
-                <div className="flex-1 overflow-auto p-4 bg-gray-50 flex items-center justify-center">
-                  <img src={`/api/page-image/${analyzeResult.job_id}/${selectedPage}`} alt={`Page ${selectedPage}`}
-                    className="shadow-lg rounded transition-transform" style={{ transform: `scale(${zoom})`, transformOrigin: 'center center', maxWidth: '100%', maxHeight: '75vh' }} />
-                </div>
-                {(() => {
-                  const pg = pages.find((p) => p.page_number === selectedPage);
-                  return pg ? (
-                    <div className="px-5 py-2.5 border-t bg-white flex items-center justify-between text-[12px] text-gray-500">
-                      <span>{pg.checks_on_page > 0 ? `${pg.checks_on_page} cheque${pg.checks_on_page > 1 ? 's' : ''} detected` : 'No cheques detected'}</span>
-                      {pg.width > 0 && <span className="font-mono text-gray-400">{pg.width} x {pg.height}px</span>}
+          {selectedPage !== null && (() => {
+            const pg = pages.find((p) => p.page_number === selectedPage);
+            return (
+              <Dialog
+                open
+                size="full"
+                title={`Page ${selectedPage} of ${totalPages}`}
+                onClose={() => { setSelectedPage(null); setZoom(1); }}
+                footer={
+                  pg ? (
+                    <div className="flex flex-1 items-center justify-between text-xs text-ink-body">
+                      <span>
+                        {pg.checks_on_page > 0
+                          ? `${pg.checks_on_page} cheque${pg.checks_on_page > 1 ? 's' : ''} detected`
+                          : 'No cheques detected'}
+                      </span>
+                      {pg.width > 0 && (
+                        <span className="nums font-mono text-ink-faint">
+                          {pg.width} x {pg.height}px
+                        </span>
+                      )}
                     </div>
-                  ) : null;
-                })()}
-              </div>
-            </div>
-          )}
+                  ) : undefined
+                }
+              >
+                <ViewerToolbar
+                  zoom={zoom}
+                  onZoom={setZoom}
+                  onPrev={() => setSelectedPage(Math.max(1, selectedPage - 1))}
+                  onNext={() => setSelectedPage(Math.min(totalPages, selectedPage + 1))}
+                  canPrev={selectedPage > 1}
+                  canNext={selectedPage < totalPages}
+                />
+                <div className="scroll-region mt-3 flex max-h-[68vh] items-center justify-center rounded-card bg-surface-sunken p-4">
+                  <img
+                    src={`/api/page-image/${analyzeResult.job_id}/${selectedPage}`}
+                    alt={`Page ${selectedPage}`}
+                    className="rounded-input shadow-glass transition-transform duration-settle ease-settle"
+                    /* Zoom is a runtime number, so the transform stays inline.
+                       Radius, shadow and easing are tokens. */
+                    style={{ transform: `scale(${zoom})`, transformOrigin: 'center center', maxWidth: '100%', maxHeight: '60vh' }}
+                  />
+                </div>
+              </Dialog>
+            );
+          })()}
 
           {/* ── Cheque detail dialog ────────────────────── */}
-          {selectedCheck !== null && analyzeResult && (() => {
+          {selectedCheck !== null && (() => {
             const chks = analyzeResult.checks;
             const idx = chks.findIndex((c) => c.check_id === selectedCheck);
             const check = chks[idx];
             if (!check) return null;
             return (
-              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setSelectedCheck(null)}>
-                <div className="bg-white rounded-xl shadow-2xl w-[90vw] max-w-3xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
-                  <div className="flex items-center justify-between px-5 py-3 border-b">
-                    <h3 className="text-sm font-semibold text-gray-900">Cheque #{idx + 1} of {chks.length}</h3>
-                    <div className="flex items-center gap-1">
-                      <button onClick={() => setZoom(Math.max(0.25, zoom - 0.25))} className="p-1.5 hover:bg-gray-100 rounded" disabled={zoom <= 0.25}><ZoomOut size={14} /></button>
-                      <span className="text-[11px] font-medium text-gray-500 min-w-[2.5rem] text-center">{(zoom * 100).toFixed(0)}%</span>
-                      <button onClick={() => setZoom(Math.min(3, zoom + 0.25))} className="p-1.5 hover:bg-gray-100 rounded" disabled={zoom >= 3}><ZoomIn size={14} /></button>
-                      <div className="w-px h-4 bg-gray-200 mx-1" />
-                      <button onClick={() => { if (idx > 0) { setSelectedCheck(chks[idx - 1].check_id); setZoom(1); } }} disabled={idx <= 0} className="p-1.5 hover:bg-gray-100 rounded disabled:opacity-30"><ChevronLeft size={16} /></button>
-                      <button onClick={() => { if (idx < chks.length - 1) { setSelectedCheck(chks[idx + 1].check_id); setZoom(1); } }} disabled={idx >= chks.length - 1} className="p-1.5 hover:bg-gray-100 rounded disabled:opacity-30"><ChevronRight size={16} /></button>
-                      <button onClick={() => { setSelectedCheck(null); setZoom(1); }} className="p-1.5 hover:bg-gray-100 rounded ml-1"><X size={14} /></button>
-                    </div>
+              <Dialog
+                open
+                size="full"
+                title={`Cheque #${idx + 1} of ${chks.length}`}
+                onClose={() => { setSelectedCheck(null); setZoom(1); }}
+                footer={
+                  <div className="flex flex-1 items-center justify-between text-xs text-ink-body">
+                    <span className="nums">Page {check.page}</span>
+                    <span className="nums font-mono text-ink-faint">
+                      {check.width} x {check.height}px
+                    </span>
                   </div>
-                  <div className="flex-1 overflow-auto p-4 bg-gray-50 flex items-center justify-center">
-                    <img src={`/api/check-image/${analyzeResult.job_id}/${check.check_id}`} alt={`Cheque ${check.check_id}`}
-                      className="shadow-lg rounded transition-transform" style={{ transform: `scale(${zoom})`, transformOrigin: 'center center', maxWidth: '100%', maxHeight: '70vh' }} />
-                  </div>
-                  <div className="px-5 py-2.5 border-t bg-white flex items-center justify-between text-[12px] text-gray-500">
-                    <span>Page {check.page}</span>
-                    <span className="font-mono text-gray-400">{check.width} x {check.height}px</span>
-                  </div>
+                }
+              >
+                <ViewerToolbar
+                  zoom={zoom}
+                  onZoom={setZoom}
+                  onPrev={() => { if (idx > 0) { setSelectedCheck(chks[idx - 1].check_id); setZoom(1); } }}
+                  onNext={() => { if (idx < chks.length - 1) { setSelectedCheck(chks[idx + 1].check_id); setZoom(1); } }}
+                  canPrev={idx > 0}
+                  canNext={idx < chks.length - 1}
+                />
+                <div className="scroll-region mt-3 flex max-h-[68vh] items-center justify-center rounded-card bg-surface-sunken p-4">
+                  <img
+                    src={`/api/check-image/${analyzeResult.job_id}/${check.check_id}`}
+                    alt={`Cheque ${check.check_id}`}
+                    className="rounded-input shadow-glass transition-transform duration-settle ease-settle"
+                    style={{ transform: `scale(${zoom})`, transformOrigin: 'center center', maxWidth: '100%', maxHeight: '58vh' }}
+                  />
                 </div>
-              </div>
+              </Dialog>
             );
           })()}
         </>
@@ -1101,246 +1346,219 @@ export default function UploadPage() {
          ══════════════════════════════════════════════════ */}
       {(step === 'configure' || step === 'starting') && analyzeResult && (
         <>
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-semibold text-gray-900 tracking-tight">Configure Extraction</h1>
-              <p className="text-[13px] text-gray-500 mt-0.5">{analyzeResult.pdf_name} — {totalPages} pages, {totalChecks} cheques</p>
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <h1 className="font-heading text-2xl font-semibold text-ink-strong">Configure Extraction</h1>
+              <p className="nums mt-0.5 truncate text-sm text-ink-body">
+                {analyzeResult.pdf_name} — {totalPages} pages, {totalChecks} cheques
+              </p>
             </div>
-            <button
+            <Button
+              size="sm"
+              variant="link"
               onClick={() => setStep('preview')}
-              className="text-[12px] text-gray-400 hover:text-gray-600 flex items-center gap-0.5 transition"
+              icon={<ChevronLeft size={12} />}
             >
-              <ChevronLeft size={12} /> Back to Preview
-            </button>
+              Back to Preview
+            </Button>
           </div>
 
           {/* ── Multi-job tabs ──────────────────────────── */}
           {jobEntries.length > 1 && (
-            <div className="flex items-center gap-2 overflow-x-auto pb-1">
-              {jobEntries.map((entry) => {
-                const isActive = entry.id === activeJobId;
-                const statusColors: Record<JobStatus, string> = {
-                  uploading: 'bg-blue-400',
-                  analyzed: 'bg-emerald-400',
-                  extracting: 'bg-amber-400 animate-pulse',
-                  complete: 'bg-emerald-500',
-                  error: 'bg-red-400',
-                };
-                return (
-                  <button
-                    key={entry.id}
-                    onClick={() => handleSelectJob(entry.id)}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-[12px] font-medium whitespace-nowrap transition border ${
-                      isActive
-                        ? 'border-gray-900 bg-gray-50 text-gray-900'
-                        : 'border-gray-200 text-gray-500 hover:border-gray-300 hover:text-gray-700'
-                    }`}
-                  >
-                    <span className={`w-2 h-2 rounded-full ${statusColors[entry.status]}`} />
-                    {entry.result?.pdf_name || entry.file.name}
-                  </button>
-                );
-              })}
+            <div className="flex items-center gap-2">
+              <div className="min-w-0 flex-1">{jobStrip}</div>
               {jobEntries.filter((j) => j.status === 'analyzed').length > 1 && (
-                <button
+                <Button
+                  size="sm"
                   onClick={handleExtractAll}
-                  className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-[12px] font-medium bg-gray-900 text-white hover:bg-gray-800 transition ml-auto"
+                  icon={<Play size={12} />}
+                  className="shrink-0"
                 >
-                  <Play size={12} />
                   Extract All ({jobEntries.filter((j) => j.status === 'analyzed').length})
-                </button>
+                </Button>
               )}
             </div>
           )}
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* ── Method Selection ──────────────────── */}
-            <div className="bg-white rounded-xl border border-gray-100 p-4">
-              <div className="flex items-center gap-2 mb-2.5">
-                <Settings2 size={14} className="text-gray-500" />
-                <h3 className="text-[13px] font-semibold text-gray-900">Extraction Method</h3>
-              </div>
-              <div className="space-y-1.5">
-                {EXTRACTION_METHODS.map((method) => {
-                  const isSelected = selectedMethods.includes(method.id);
-                  return (
-                    <button
-                      key={method.id}
-                      onClick={() => toggleMethod(method.id)}
-                      disabled={step === 'starting'}
-                      className={`w-full text-left p-2.5 rounded-lg border transition ${
-                        isSelected ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-300'
-                      } disabled:opacity-50`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="text-base">{method.icon}</span>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-[12px] text-gray-900">{method.name}</p>
-                          <p className="text-[10px] text-gray-400 truncate">{method.desc}</p>
-                        </div>
-                        <div className={`w-3.5 h-3.5 rounded-full border-[1.5px] flex items-center justify-center transition flex-shrink-0 ${
-                          isSelected ? 'border-gray-900 bg-gray-900' : 'border-gray-300'
-                        }`}>
-                          {isSelected && <CheckCircle size={8} className="text-white" />}
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
+          {/* ── Range Selection ──────────────────── */}
+          <GlassCard padding="sm">
+            <div className="mb-2.5 flex items-center gap-2">
+              <FileText size={14} className="text-ink-faint" aria-hidden />
+              <GlassCardTitle className="text-sm">Range</GlassCardTitle>
             </div>
-
-            {/* ── Range Selection ──────────────────── */}
-            <div className="bg-white rounded-xl border border-gray-100 p-4">
-              <div className="flex items-center gap-2 mb-2.5">
-                <FileText size={14} className="text-gray-500" />
-                <h3 className="text-[13px] font-semibold text-gray-900">Range</h3>
-              </div>
-              <div className="space-y-1.5">
-                <button
-                  onClick={() => setRangeType('all')}
-                  disabled={step === 'starting'}
-                  className={`w-full text-left p-2.5 rounded-lg border transition ${
-                    rangeType === 'all' ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-300'
-                  } disabled:opacity-50`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-medium text-[12px] text-gray-900">All</p>
-                      <p className="text-[10px] text-gray-400">{totalPages} pages, {totalChecks} cheques</p>
-                    </div>
-                    <div className={`w-3.5 h-3.5 rounded-full border-[1.5px] flex items-center justify-center ${
-                      rangeType === 'all' ? 'border-gray-900 bg-gray-900' : 'border-gray-300'
-                    }`}>
-                      {rangeType === 'all' && <CheckCircle size={8} className="text-white" />}
-                    </div>
-                  </div>
-                </button>
-
-                <button
-                  onClick={() => setRangeType('pages')}
-                  disabled={step === 'starting'}
-                  className={`w-full text-left p-2.5 rounded-lg border transition ${
-                    rangeType === 'pages' ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-300'
-                  } disabled:opacity-50`}
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="font-medium text-[12px] text-gray-900">Page Range</p>
-                      <p className="text-[10px] text-gray-400">Select specific pages</p>
-                    </div>
-                    <div className={`w-3.5 h-3.5 rounded-full border-[1.5px] flex items-center justify-center ${
-                      rangeType === 'pages' ? 'border-gray-900 bg-gray-900' : 'border-gray-300'
-                    }`}>
-                      {rangeType === 'pages' && <CheckCircle size={8} className="text-white" />}
-                    </div>
-                  </div>
-                </button>
-                {rangeType === 'pages' && (
-                  <div className="flex items-center gap-2 pl-3 pt-0.5">
-                    <div>
-                      <label className="text-[10px] text-gray-400 block">From</label>
-                      <input type="number" min={1} max={totalPages} value={pageFrom}
-                        onChange={(e) => setPageFrom(Math.max(1, Math.min(totalPages, parseInt(e.target.value) || 1)))}
-                        disabled={step === 'starting'}
-                        className="w-14 px-2 py-1 border rounded text-[12px] disabled:opacity-50" />
-                    </div>
-                    <span className="text-gray-400 mt-3 text-[11px]">to</span>
-                    <div>
-                      <label className="text-[10px] text-gray-400 block">To</label>
-                      <input type="number" min={pageFrom} max={totalPages} value={pageTo}
-                        onChange={(e) => setPageTo(Math.max(pageFrom, Math.min(totalPages, parseInt(e.target.value) || 1)))}
-                        disabled={step === 'starting'}
-                        className="w-14 px-2 py-1 border rounded text-[12px] disabled:opacity-50" />
-                    </div>
-                    <span className="text-[10px] text-gray-400 mt-3">of {totalPages}</span>
-                  </div>
-                )}
-
-                {totalChecks > 0 && (
-                  <>
-                    <button
-                      onClick={() => setRangeType('cheques')}
-                      disabled={step === 'starting'}
-                      className={`w-full text-left p-2.5 rounded-lg border transition ${
-                        rangeType === 'cheques' ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-300'
-                      } disabled:opacity-50`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="font-medium text-[12px] text-gray-900">Cheque Range</p>
-                          <p className="text-[10px] text-gray-400">Select specific cheques</p>
-                        </div>
-                        <div className={`w-3.5 h-3.5 rounded-full border-[1.5px] flex items-center justify-center ${
-                          rangeType === 'cheques' ? 'border-gray-900 bg-gray-900' : 'border-gray-300'
-                        }`}>
-                          {rangeType === 'cheques' && <CheckCircle size={8} className="text-white" />}
-                        </div>
-                      </div>
-                    </button>
-                    {rangeType === 'cheques' && (
-                      <div className="flex items-center gap-2 pl-3 pt-0.5">
-                        <div>
-                          <label className="text-[10px] text-gray-400 block">From</label>
-                          <input type="number" min={1} max={totalChecks} value={chequeFrom}
-                            onChange={(e) => setChequeFrom(Math.max(1, Math.min(totalChecks, parseInt(e.target.value) || 1)))}
-                            disabled={step === 'starting'}
-                            className="w-14 px-2 py-1 border rounded text-[12px] disabled:opacity-50" />
-                        </div>
-                        <span className="text-gray-400 mt-3 text-[11px]">to</span>
-                        <div>
-                          <label className="text-[10px] text-gray-400 block">To</label>
-                          <input type="number" min={chequeFrom} max={totalChecks} value={chequeTo}
-                            onChange={(e) => setChequeTo(Math.max(chequeFrom, Math.min(totalChecks, parseInt(e.target.value) || 1)))}
-                            disabled={step === 'starting'}
-                            className="w-14 px-2 py-1 border rounded text-[12px] disabled:opacity-50" />
-                        </div>
-                        <span className="text-[10px] text-gray-400 mt-3">of {totalChecks}</span>
-                      </div>
+            <div role="radiogroup" aria-label="Extraction range" className="space-y-1.5">
+              {([
+                { key: 'all', title: 'All pages', hint: `${totalPages} pages, ${totalChecks} cheques` },
+                {
+                  key: 'pages',
+                  title: 'Choose pages',
+                  hint: 'Tick the pages to extract — cheque pages are pre-ticked',
+                },
+                ...(totalChecks > 0
+                  ? [{ key: 'cheques', title: 'Cheque Range', hint: 'Select specific cheques' }]
+                  : []),
+              ] as { key: RangeType; title: string; hint: string }[]).map((opt) => (
+                <div key={opt.key}>
+                  <button
+                    role="radio"
+                    aria-checked={rangeType === opt.key}
+                    onClick={() => setRangeType(opt.key)}
+                    disabled={step === 'starting'}
+                    className={cn(
+                      'press glass-panel w-full rounded-tile p-2.5 text-left',
+                      'transition-[box-shadow,border-color,background-color] duration-quick ease-settle',
+                      'disabled:pointer-events-none disabled:opacity-disabled',
+                      rangeType === opt.key && 'glass-selected'
                     )}
-                  </>
-                )}
-              </div>
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-xs font-medium text-ink-strong">{opt.title}</p>
+                        <p className="nums text-[10px] text-ink-faint">{opt.hint}</p>
+                      </div>
+                      <span
+                        aria-hidden
+                        className={cn(
+                          'flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border-[1.5px]',
+                          rangeType === opt.key ? 'border-brand bg-brand' : 'border-ink-faint/50'
+                        )}
+                      >
+                        {rangeType === opt.key && <CheckCircle size={8} className="text-ink-invert" />}
+                      </span>
+                    </div>
+                  </button>
+
+                  {opt.key === 'pages' && rangeType === 'pages' && (
+                    <div className="space-y-2 pl-3 pt-1.5">
+                      <PageSelectGrid
+                        pages={pages}
+                        selected={selectedPages}
+                        onChange={setSelectedPages}
+                        disabled={step === 'starting'}
+                      />
+                      {selectedPages.size === 0 && (
+                        <p className="text-[10px] text-warning-text">
+                          Select at least one page, or choose All pages.
+                        </p>
+                      )}
+                    </div>
+                  )}
+
+                  {opt.key === 'cheques' && rangeType === 'cheques' && (
+                    <div className="flex items-end gap-2 pl-3 pt-1.5">
+                      <label className="block">
+                        <span className="block text-[10px] text-ink-faint">From</span>
+                        <Input
+                          type="number"
+                          inputSize="sm"
+                          min={1}
+                          max={totalChecks}
+                          value={chequeFrom}
+                          onChange={(e) => setChequeFrom(Math.max(1, Math.min(totalChecks, parseInt(e.target.value) || 1)))}
+                          disabled={step === 'starting'}
+                          className="nums w-16"
+                        />
+                      </label>
+                      <span className="pb-2 text-xs text-ink-faint">to</span>
+                      <label className="block">
+                        <span className="block text-[10px] text-ink-faint">To</span>
+                        <Input
+                          type="number"
+                          inputSize="sm"
+                          min={chequeFrom}
+                          max={totalChecks}
+                          value={chequeTo}
+                          onChange={(e) => setChequeTo(Math.max(chequeFrom, Math.min(totalChecks, parseInt(e.target.value) || 1)))}
+                          disabled={step === 'starting'}
+                          className="nums w-16"
+                        />
+                      </label>
+                      <span className="nums pb-2 text-[10px] text-ink-faint">of {totalChecks}</span>
+                    </div>
+                  )}
+                </div>
+              ))}
             </div>
-          </div>
+          </GlassCard>
 
           {/* Force re-extract toggle */}
-          <label className="flex items-center gap-2 cursor-pointer select-none">
+          <label className="flex cursor-pointer select-none items-center gap-2">
             <input
               type="checkbox"
               checked={forceExtract}
               onChange={(e) => setForceExtract(e.target.checked)}
               disabled={step === 'starting'}
-              className="w-3.5 h-3.5 rounded border-gray-300 text-gray-900 focus:ring-gray-500 disabled:opacity-50"
+              className="h-3.5 w-3.5 rounded-sm border-glass-hairline disabled:opacity-disabled"
             />
-            <span className="text-[12px] text-gray-600">
+            <span className="text-xs text-ink-body">
               Force re-run extraction
-              <span className="text-gray-400 ml-1">— run again even if results already exist</span>
+              <span className="ml-1 text-ink-faint">— run again even if results already exist</span>
             </span>
           </label>
 
           {/* Start extraction button */}
           <div className="flex justify-end">
-            <button
+            <Button
               onClick={() => handleStartExtraction()}
-              disabled={step === 'starting' || selectedMethods.length === 0}
-              className="flex items-center gap-1.5 px-6 py-2.5 bg-gray-900 text-white rounded-lg hover:bg-gray-800 disabled:opacity-50 text-[13px] font-medium transition shadow-sm"
+              disabled={rangeType === 'pages' && selectedPages.size === 0}
+              loading={step === 'starting'}
+              icon={<Play size={14} />}
             >
-              {step === 'starting' ? (
-                <>
-                  <Loader2 size={14} className="animate-spin" />
-                  Starting Extraction...
-                </>
-              ) : (
-                <>
-                  <Play size={14} />
-                  Start Extraction
-                </>
-              )}
-            </button>
+              {step === 'starting' ? 'Starting Extraction…' : 'Start Extraction'}
+            </Button>
           </div>
         </>
       )}
+
+      {/* ══════════════════════════════════════════════════
+          Re-upload confirmation. Replaces window.confirm, same behaviour:
+          decline skips the file, accept retries with ?confirm_reupload=true.
+         ══════════════════════════════════════════════════ */}
+      <Dialog
+        open={!!reuploadAsk}
+        size="md"
+        title="You uploaded this file before"
+        onClose={() => answerReupload(false)}
+        footer={
+          <>
+            <Button variant="secondary" size="sm" onClick={() => answerReupload(false)}>
+              Skip this file
+            </Button>
+            <Button size="sm" onClick={() => answerReupload(true)}>
+              Process it again
+            </Button>
+          </>
+        }
+      >
+        {reuploadAsk && (
+          <div className="space-y-3">
+            <GlassPanel radius="input" padding="sm" className="flex items-center gap-2.5">
+              <FileText size={16} className="shrink-0 text-ink-faint" aria-hidden />
+              <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink-strong">
+                {reuploadAsk.fileName}
+              </span>
+            </GlassPanel>
+            <p className="text-sm text-ink-body">
+              {reuploadAsk.previousUploadedAt
+                ? `This document was already uploaded on ${new Date(
+                    reuploadAsk.previousUploadedAt
+                  ).toLocaleDateString(undefined, {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                  })}.`
+                : 'This document has already been uploaded.'}
+            </p>
+            <p className="text-sm text-ink-body">
+              Processing it again will re-read every cheque, and{' '}
+              <strong className="font-semibold text-ink-strong">
+                those cheques count against this month&apos;s total
+              </strong>
+              . Skip it to leave your existing results untouched.
+            </p>
+          </div>
+        )}
+      </Dialog>
     </div>
   );
 }

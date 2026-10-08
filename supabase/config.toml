@@ -67,9 +67,9 @@ file_size_limit = "50MiB"
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
-site_url = "http://localhost:3000"
+site_url = "http://localhost:3080"
 # A list of *exact* URLs that auth providers are permitted to redirect to post authentication.
-additional_redirect_urls = ["https://localhost:3000"]
+additional_redirect_urls = ["http://localhost:3080", "https://kyriq.com", "https://www.kyriq.com"]
 # How long tokens are valid for, in seconds. Defaults to 3600 (1 hour), maximum 604,800 (1 week).
 jwt_expiry = 3600
 # If disabled, the refresh token will never expire.
@@ -87,7 +87,20 @@ enable_signup = true
 # addresses. If disabled, only the new email is required to confirm.
 double_confirm_changes = true
 # If enabled, users need to confirm their email address before signing in.
-enable_confirmations = false
+#
+# Turned on per CHECKLIST section 6. It was false, which is why signup dropped
+# straight to the dashboard, and it is also one of the three things that stop
+# somebody opening repeated free trials from throwaway addresses (the other two
+# being one trial per QuickBooks realm and a disposable-domain block).
+#
+# Two consequences to handle before this is switched on in the HOSTED project,
+# which this file does not control:
+#   1. The trial clock should start at verification, not at signup, or a user
+#      burns trial days before they can sign in.
+#   2. Supabase's default sender is rate limited to a handful of mails an hour,
+#      so custom SMTP through Resend has to be configured first or confirmation
+#      mail silently fails at any real volume (CHECKLIST sections 1 and 14).
+enable_confirmations = true
 
 # Use pre-defined map of claims
 [auth.jwt]

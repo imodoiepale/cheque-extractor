@@ -4,10 +4,15 @@ import { useParams, useSearchParams, useRouter } from 'next/navigation';
 import { useCheckProcessing } from '@/lib/hooks/useCheckProcessing';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  CheckCircle, Clock, Loader2, FileText, Image as ImageIcon,
-  Download, Eye, X, ChevronLeft, ChevronRight, LayoutGrid, List,
-  ZoomIn, ZoomOut, AlertCircle, RefreshCw, Terminal,
+  CheckCircle, Loader2, FileText, Image as ImageIcon,
+  Download, Eye, ChevronLeft, ChevronRight, LayoutGrid, List,
+  ZoomIn, ZoomOut, RefreshCw,
 } from 'lucide-react';
+import {
+  Badge, Button, Dialog, GlassCard, GlassCardTitle, GlassPanel, IconButton, KpiTile, StatusPill, Tabs,
+  Table, TableScroll, TableShell, Tbody, Td, Th, Thead, Tr, type StatusKey,
+} from '@/components/ui';
+import { cn } from '@/lib/utils';
 
 type ViewMode = 'card' | 'table';
 
@@ -18,6 +23,22 @@ const STAGES = [
   { name: 'merging', label: 'Merge & Validate' },
   { name: 'complete', label: 'Complete' },
 ];
+
+const EXPORT_FORMATS = [
+  { id: 'csv', name: 'Generic CSV', desc: 'Excel, Google Sheets' },
+  { id: 'iif', name: 'QuickBooks Desktop', desc: 'IIF format (CHECK transactions)' },
+  { id: 'qbo', name: 'QuickBooks Online', desc: 'CSV bank transaction import' },
+  { id: 'xero', name: 'Xero', desc: 'Bank statement CSV' },
+  { id: 'zoho', name: 'Zoho Books', desc: 'Bank statement CSV' },
+  { id: 'sage', name: 'Sage', desc: 'Accounting CSV import' },
+];
+
+/** Engine status -> the one status vocabulary, so a word is never two colours. */
+const METHOD_STATUS: Record<string, StatusKey> = {
+  complete: 'complete',
+  running: 'processing',
+  error: 'error',
+};
 
 function extVal(ext: any, field: string): string {
   if (!ext) return '';
@@ -33,6 +54,13 @@ function extConf(ext: any, field: string): number {
   const f = ext[field];
   if (typeof f === 'object' && f !== null) return f.confidence || 0;
   return 0;
+}
+
+/** Confidence -> state tone. One threshold table, used by both views. */
+function confTone(conf: number): 'success' | 'warning' | 'error' {
+  if (conf >= 0.9) return 'success';
+  if (conf >= 0.7) return 'warning';
+  return 'error';
 }
 
 export default function ProcessingPage() {
@@ -69,28 +97,11 @@ export default function ProcessingPage() {
   const [panStart, setPanStart] = useState({ x: 0, y: 0 });
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const imageRef = useRef<HTMLImageElement>(null);
-  const logsEndRef = useRef<HTMLDivElement>(null);
 
   const stageIndex = STAGES.findIndex((s) => s.name === currentStage);
   const checks = jobData?.checks || [];
-  const progressLogs = jobData?.progress_logs || [];
-  const extractionPct = jobData?.extraction_progress ?? 0;
   const processedCount = jobData?.processed_count ?? 0;
   const processingCount = jobData?.processing_count ?? 0;
-
-  // Auto-scroll logs to bottom
-  useEffect(() => {
-    logsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [progressLogs.length]);
-
-  const EXPORT_FORMATS = [
-    { id: 'csv', name: 'Generic CSV', desc: 'Excel, Google Sheets', icon: '📊' },
-    { id: 'iif', name: 'QuickBooks Desktop', desc: 'IIF format (CHECK transactions)', icon: '💼' },
-    { id: 'qbo', name: 'QuickBooks Online', desc: 'CSV bank transaction import', icon: '☁️' },
-    { id: 'xero', name: 'Xero', desc: 'Bank statement CSV', icon: '📘' },
-    { id: 'zoho', name: 'Zoho Books', desc: 'Bank statement CSV', icon: '📗' },
-    { id: 'sage', name: 'Sage', desc: 'Accounting CSV import', icon: '📕' },
-  ];
 
   // Arrow key navigation in dialog
   const handleKeyDown = useCallback(
@@ -123,11 +134,6 @@ export default function ProcessingPage() {
   };
 
   const handleReExtract = async (force: boolean = true) => {
-    const wantsAllMethods = window.confirm('Use all extraction methods for this re-run? Click OK for the full extraction suite or Cancel to continue with the recommended fast re-run.');
-    if (wantsAllMethods) {
-      window.alert('This re-run currently uses the recommended fast extraction path to avoid reprocessing every engine. Continuing with the fast re-run.');
-    }
-
     setReExtracting(true);
     try {
       const res = await fetch('/api/start-extraction', {
@@ -146,81 +152,60 @@ export default function ProcessingPage() {
   const selected = selectedIdx !== null ? checks[selectedIdx] : null;
   const missingCount = checks.filter((c: any) => !c.extraction).length;
 
-  // Method progress status icon
-  const methodStatusIcon = (status: string) => {
-    if (status === 'complete') return <CheckCircle className="text-green-600" size={18} />;
-    if (status === 'running') return <Loader2 className="text-blue-600 animate-spin" size={18} />;
-    if (status === 'error') return <AlertCircle className="text-red-600" size={18} />;
-    return <Clock className="text-gray-400" size={18} />;
-  };
-
-  const methodStatusColor = (status: string) => {
-    if (status === 'complete') return 'border-green-200 bg-green-50';
-    if (status === 'running') return 'border-blue-200 bg-blue-50';
-    if (status === 'error') return 'border-red-200 bg-red-50';
-    return 'border-gray-200 bg-gray-50';
-  };
-
-  const methodBarColor = (status: string) => {
-    if (status === 'complete') return 'bg-green-500';
-    if (status === 'running') return 'bg-blue-500';
-    if (status === 'error') return 'bg-red-500';
-    return 'bg-gray-300';
+  const resetView = () => {
+    setImageZoom(1);
+    setPanOffset({ x: 0, y: 0 });
   };
 
   return (
-    <div className="max-w-7xl mx-auto space-y-6 p-6">
+    <div className="mx-auto max-w-7xl space-y-6 p-6" data-tone="brand">
       {/* ── Header ──────────────────────────────────────────── */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="font-heading text-3xl font-semibold text-ink-strong">
             {isComplete ? 'Extraction Results' : 'Processing Cheques'}
           </h1>
-          <p className="text-gray-600 mt-1">
-            {jobData?.pdf_name || 'Uploading...'}
-            {jobData?.doc_format && (
-              <span className="ml-2 text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded">
-                {jobData.doc_format}
-              </span>
-            )}
+          <p className="mt-1 flex items-center gap-2 text-sm text-ink-body">
+            <span className="truncate">{jobData?.pdf_name || 'Uploading...'}</span>
+            {jobData?.doc_format && <Badge tone="brand" size="sm">{jobData.doc_format}</Badge>}
           </p>
         </div>
         {isComplete && checks.length > 0 && (
-          <div className="flex items-center gap-2">
-            {/* Re-extract button */}
-            <button
-              onClick={() => handleReExtract(missingCount > 0 ? false : true)}
-              disabled={reExtracting}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg hover:bg-blue-100 transition disabled:opacity-50 text-sm font-medium"
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<RefreshCw size={16} />}
+              loading={reExtracting}
+              onClick={() => handleReExtract(missingCount === 0)}
               title={missingCount > 0 ? `Re-run extraction for ${missingCount} missing cheques` : 'Re-run extraction for all cheques'}
             >
-              {reExtracting ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
               {missingCount > 0 ? `Re-run (${missingCount} missing)` : 'Re-run extraction'}
-            </button>
+            </Button>
             {/* Export dropdown */}
             <div className="relative">
-            <button
-              onClick={() => setExportOpen(!exportOpen)}
-              className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
-            >
-              <Download size={18} />
-              Export
-              <ChevronRight size={14} className={`transition-transform ${exportOpen ? 'rotate-90' : ''}`} />
-            </button>
-            {exportOpen && (
-              <div className="absolute right-0 mt-2 w-72 bg-white rounded-lg shadow-xl border z-50 py-1">
-                {EXPORT_FORMATS.map((fmt) => (
-                  <button
-                    key={fmt.id}
-                    onClick={() => handleExport(fmt.id)}
-                    className="w-full text-left px-4 py-2.5 hover:bg-gray-50 transition"
-                  >
-                    <p className="text-sm font-medium text-gray-900">{fmt.name}</p>
-                    <p className="text-xs text-gray-500">{fmt.desc}</p>
-                  </button>
-                ))}
-              </div>
-            )}
+              <Button
+                size="sm"
+                icon={<Download size={16} />}
+                onClick={() => setExportOpen(!exportOpen)}
+              >
+                Export
+                <ChevronRight size={14} className={cn('transition-transform duration-quick ease-settle', exportOpen && 'rotate-90')} />
+              </Button>
+              {exportOpen && (
+                <div className="glass-modal animate-popover-in absolute right-0 z-50 mt-2 w-72 rounded-input py-1">
+                  {EXPORT_FORMATS.map((fmt) => (
+                    <button
+                      key={fmt.id}
+                      onClick={() => handleExport(fmt.id)}
+                      className="w-full px-4 py-2.5 text-left transition-colors duration-quick ease-settle hover:bg-ink-strong/[0.04]"
+                    >
+                      <p className="text-sm font-medium text-ink-strong">{fmt.name}</p>
+                      <p className="text-xs text-ink-faint">{fmt.desc}</p>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -228,242 +213,154 @@ export default function ProcessingPage() {
 
       {/* ── Error ───────────────────────────────────────────── */}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
+        <div className="rounded-card border border-error-border bg-error-bg px-4 py-3 text-error-text">
           <p className="font-medium">Processing Error</p>
-          <p className="text-sm mt-1">{error}</p>
+          <p className="mt-1 text-sm">{error}</p>
         </div>
       )}
 
       {/* ── Stats row ───────────────────────────────────────── */}
       {jobData && (jobData.total_pages > 0 || jobData.total_checks > 0) && (
-        <div className="grid grid-cols-3 gap-4">
-          <div className="bg-white rounded-xl shadow p-4 flex items-center gap-3">
-            <div className="p-2.5 bg-blue-50 rounded-lg">
-              <FileText className="text-blue-600" size={20} />
-            </div>
-            <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wide">Pages</p>
-              <p className="text-2xl font-bold">{jobData.total_pages}</p>
-            </div>
-          </div>
-          <div className="bg-white rounded-xl shadow p-4 flex items-center gap-3">
-            <div className="p-2.5 bg-green-50 rounded-lg">
-              <ImageIcon className="text-green-600" size={20} />
-            </div>
-            <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wide">Cheques</p>
-              <p className="text-2xl font-bold">{jobData.total_checks}</p>
-            </div>
-          </div>
-          <div className="bg-white rounded-xl shadow p-4 flex items-center gap-3">
-            <div className="p-2.5 bg-purple-50 rounded-lg">
-              <CheckCircle className="text-purple-600" size={20} />
-            </div>
-            <div>
-              <p className="text-xs text-gray-500 uppercase tracking-wide">Status</p>
-              <p className="text-2xl font-bold capitalize">{isComplete ? 'Complete' : jobData.status}</p>
-            </div>
-          </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+          <KpiTile tone="brand" label="Pages" value={jobData.total_pages} icon={<FileText size={20} />} />
+          <KpiTile tone="success" label="Cheques" value={jobData.total_checks} icon={<ImageIcon size={20} />} />
+          <KpiTile
+            tone={isComplete ? 'success' : 'brand'}
+            label="Status"
+            value={<span className="capitalize">{isComplete ? 'Complete' : jobData.status}</span>}
+            icon={<CheckCircle size={20} />}
+          />
         </div>
       )}
 
       {/* ══════════════════════════════════════════════════════
           PROCESSING VIEW (while not complete)
+
+          The Extraction Engines and Live Progress panels were REMOVED
+          deliberately (Michael, 21 Sep). Status card + stage stepper only.
          ══════════════════════════════════════════════════════ */}
       {!isComplete && (
-        <>
-          {/* ── Big overall progress bar ──────────────────── */}
-          <div className="bg-white rounded-xl shadow p-6">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
-                  progress >= 100 ? 'bg-green-100' : 'bg-blue-100'
-                }`}>
-                  {progress >= 100 ? (
-                    <CheckCircle className="text-green-600" size={20} />
-                  ) : (
-                    <Loader2 className="text-blue-600 animate-spin" size={20} />
-                  )}
-                </div>
-                <div>
-                  <h2 className="text-lg font-semibold text-gray-900">
-                    {currentStage === 'upload' ? 'Uploading & Validating' :
-                     currentStage === 'segmentation' ? 'Detecting Cheques' :
-                     currentStage === 'extraction' ? 'Extracting Data' :
-                     currentStage === 'merging' ? 'Merging Results' : 'Processing'}
-                  </h2>
-                  <p className="text-sm text-gray-500">
-                    {processingCount > 0
-                      ? `${processedCount} of ${processingCount} cheques processed`
-                      : 'Preparing extraction pipeline...'}
-                  </p>
-                </div>
-              </div>
-              <div className="text-right">
-                <p className="text-3xl font-bold text-gray-900">{progress}%</p>
-                <p className="text-xs text-gray-400 mt-0.5">overall</p>
-              </div>
-            </div>
-            {/* Animated progress bar */}
-            <div className="relative w-full h-4 bg-gray-100 rounded-full overflow-hidden">
+        <GlassCard padding="lg">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
               <div
-                className="absolute inset-y-0 left-0 rounded-full transition-all duration-700 ease-out"
-                style={{
-                  width: `${progress}%`,
-                  background: progress >= 100
-                    ? 'linear-gradient(90deg, #22c55e, #16a34a)'
-                    : 'linear-gradient(90deg, #3b82f6, #6366f1, #8b5cf6)',
-                }}
-              />
-              {progress < 100 && progress > 0 && (
-                <div
-                  className="absolute inset-y-0 left-0 rounded-full animate-pulse opacity-30"
-                  style={{
-                    width: `${Math.min(progress + 5, 100)}%`,
-                    background: 'linear-gradient(90deg, #3b82f6, #6366f1, #8b5cf6)',
-                  }}
-                />
-              )}
-            </div>
-            {/* Pipeline stage dots */}
-            <div className="flex items-center justify-between mt-4">
-              {STAGES.map((stage, index) => {
-                const isDone = index < stageIndex || (isComplete && index <= stageIndex);
-                const isCurrent = index === stageIndex && !isComplete;
-                return (
-                  <div key={stage.name} className="flex flex-col items-center gap-1">
-                    <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold transition-all duration-300 ${
-                      isDone ? 'bg-green-500 text-white scale-100' :
-                      isCurrent ? 'bg-blue-500 text-white scale-110 ring-4 ring-blue-100' :
-                      'bg-gray-200 text-gray-400'
-                    }`}>
-                      {isDone ? '✓' : index + 1}
-                    </div>
-                    <span className={`text-[10px] font-medium ${
-                      isCurrent ? 'text-blue-600' : isDone ? 'text-green-600' : 'text-gray-400'
-                    }`}>
-                      {stage.label}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* ── Per-method extraction progress ───────────── */}
-            <div className="bg-white rounded-xl shadow p-6">
-              <h2 className="text-lg font-semibold mb-4">Extraction Engines</h2>
-              {methodsProgress.length > 0 ? (
-                <div className="space-y-4">
-                  {methodsProgress.map((mp) => (
-                    <div key={mp.method} className={`rounded-lg border p-4 transition ${methodStatusColor(mp.status)}`}>
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          {methodStatusIcon(mp.status)}
-                          <span className="font-medium text-sm text-gray-900">{mp.label}</span>
-                        </div>
-                        <span className={`text-sm font-bold ${
-                          mp.status === 'complete' ? 'text-green-600' :
-                          mp.status === 'running' ? 'text-blue-600' :
-                          mp.status === 'error' ? 'text-red-600' : 'text-gray-400'
-                        }`}>{mp.progress}%</span>
-                      </div>
-                      <div className="w-full bg-white/60 rounded-full h-2.5 mb-1.5 overflow-hidden">
-                        <div
-                          className={`h-2.5 rounded-full transition-all duration-700 ease-out ${methodBarColor(mp.status)}`}
-                          style={{ width: `${mp.progress}%` }}
-                        />
-                      </div>
-                      <div className="flex items-center justify-between text-xs text-gray-500">
-                        <span>{mp.checks_processed} / {mp.checks_total} cheques</span>
-                        <span className="capitalize">{mp.status}</span>
-                      </div>
-                      {mp.error && <p className="text-xs text-red-600 mt-1">{mp.error}</p>}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="flex flex-col items-center justify-center py-8 text-gray-400">
-                  <Loader2 className="animate-spin mb-2" size={24} />
-                  <p className="text-sm">Waiting for extraction to begin...</p>
-                </div>
-              )}
-            </div>
-
-            {/* ── Live progress logs ──────────────────────── */}
-            <div className="bg-gray-900 rounded-xl shadow p-5 flex flex-col">
-              <div className="flex items-center gap-2 mb-3">
-                <Terminal size={16} className="text-green-400" />
-                <h2 className="text-sm font-semibold text-green-400">Live Progress</h2>
-                <div className="flex-1" />
-                {progressLogs.length > 0 && (
-                  <span className="text-[10px] text-gray-500 font-mono">{progressLogs.length} entries</span>
+                className={cn(
+                  'flex h-10 w-10 items-center justify-center rounded-full',
+                  progress >= 100 ? 'bg-success-bg' : 'bg-info-bg'
                 )}
-              </div>
-              <div className="flex-1 overflow-y-auto max-h-[280px] font-mono text-[11px] leading-relaxed space-y-0.5 scrollbar-thin scrollbar-thumb-gray-700">
-                {progressLogs.length === 0 ? (
-                  <div className="flex items-center gap-2 text-gray-500 py-4">
-                    <Loader2 size={12} className="animate-spin" />
-                    <span>Waiting for extraction logs...</span>
-                  </div>
+              >
+                {progress >= 100 ? (
+                  <CheckCircle className="text-success-text" size={20} />
                 ) : (
-                  progressLogs.map((log, i) => (
-                    <div key={i} className={`flex items-start gap-2 px-2 py-0.5 rounded ${
-                      log.level === 'success' ? 'text-green-400' :
-                      log.level === 'warn' ? 'text-yellow-400' :
-                      log.level === 'error' ? 'text-red-400' :
-                      'text-gray-400'
-                    }`}>
-                      <span className="text-gray-600 flex-shrink-0 select-none">
-                        {new Date(log.ts).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                      </span>
-                      <span className="flex-shrink-0">
-                        {log.level === 'success' ? '✓' : log.level === 'warn' ? '⚠' : log.level === 'error' ? '✗' : '›'}
-                      </span>
-                      <span>{log.msg}</span>
-                    </div>
-                  ))
+                  <Loader2 className="animate-spin text-info-text" size={20} />
                 )}
-                <div ref={logsEndRef} />
+              </div>
+              <div>
+                <GlassCardTitle>
+                  {currentStage === 'upload' ? 'Uploading & Validating' :
+                   currentStage === 'segmentation' ? 'Detecting Cheques' :
+                   currentStage === 'extraction' ? 'Extracting Data' :
+                   currentStage === 'merging' ? 'Merging Results' : 'Processing'}
+                </GlassCardTitle>
+                <p className="nums text-sm text-ink-faint">
+                  {processingCount > 0
+                    ? `${processedCount} of ${processingCount} cheques processed`
+                    : 'Preparing extraction pipeline...'}
+                </p>
               </div>
             </div>
+            <div className="text-right">
+              <p className="nums font-heading text-3xl font-semibold text-ink-strong">{progress}%</p>
+              <p className="mt-0.5 text-xs text-ink-faint">overall</p>
+            </div>
           </div>
-        </>
+
+          {/* Progress bar. The WIDTH is the only inline style — it has to be.
+              Colour, radius and the inset track are all tokens. */}
+          <div
+            className="relative h-4 w-full overflow-hidden rounded-pill bg-surface-sunken shadow-inner-track"
+            role="progressbar"
+            aria-valuenow={progress}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <div
+              className={cn(
+                'absolute inset-y-0 left-0 rounded-pill bg-gradient-to-r transition-[width] duration-700 ease-settle',
+                progress >= 100 ? 'from-success to-success-dark' : 'from-brand-light via-brand to-brand-deep'
+              )}
+              style={{ width: `${progress}%` }}
+            />
+          </div>
+
+          {/* Pipeline stage stepper */}
+          <div className="mt-4 flex items-start justify-between gap-1">
+            {STAGES.map((stage, index) => {
+              const isDone = index < stageIndex || (isComplete && index <= stageIndex);
+              const isCurrent = index === stageIndex && !isComplete;
+              return (
+                <div key={stage.name} className="flex flex-1 flex-col items-center gap-1 text-center">
+                  <div
+                    className={cn(
+                      'flex h-6 w-6 items-center justify-center rounded-full text-[10px] font-bold transition-transform duration-settle ease-settle',
+                      isDone && 'bg-success text-white',
+                      isCurrent && 'scale-110 bg-brand text-white ring-4 ring-brand/20',
+                      !isDone && !isCurrent && 'bg-ink-strong/[0.1] text-ink-faint'
+                    )}
+                  >
+                    {isDone ? '✓' : index + 1}
+                  </div>
+                  <span
+                    className={cn(
+                      'text-[10px] font-medium',
+                      isCurrent ? 'text-brand-deep' : isDone ? 'text-success-text' : 'text-ink-faint'
+                    )}
+                  >
+                    {stage.label}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </GlassCard>
       )}
 
       {/* ── Cheque image previews (show during processing too) ── */}
       {!isComplete && checks.length > 0 && (
-        <div className="bg-white rounded-xl shadow p-6">
-          <h2 className="text-lg font-semibold mb-4">Detected Cheques ({checks.length})</h2>
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+        <GlassCard padding="lg">
+          <GlassCardTitle className="mb-4">Detected Cheques ({checks.length})</GlassCardTitle>
+          {/* One blurred container; the tiles inside are GlassPanels with no
+              blur of their own, so the cost does not scale with cheque count. */}
+          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-4">
             {checks.map((check: any, idx: number) => (
-              <div
+              <GlassPanel
                 key={check.check_id}
+                radius="tile"
+                padding="none"
                 onClick={() => setSelectedIdx(idx)}
-                className="bg-gray-50 rounded-lg overflow-hidden border hover:border-blue-300 hover:shadow-md transition cursor-pointer group"
+                className="press group cursor-pointer overflow-hidden hover:border-brand/40"
               >
-                <div className="aspect-[16/9] bg-gray-100 relative overflow-hidden">
+                <div className="relative aspect-[16/9] overflow-hidden bg-surface-sunken">
                   <img
                     src={`/api/check-image/${jobId}/${check.check_id}`}
                     alt={`Cheque ${idx + 1}`}
-                    className="w-full h-full object-contain"
+                    className="h-full w-full object-contain"
                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                   />
-                  <div className="absolute inset-0 bg-black/0 group-hover:bg-black/10 transition flex items-center justify-center opacity-0 group-hover:opacity-100">
-                    <div className="bg-white/90 rounded-full p-1.5">
-                      <Eye size={16} className="text-gray-700" />
-                    </div>
+                  <div className="absolute inset-0 flex items-center justify-center bg-ink-strong/0 opacity-0 transition-opacity duration-quick ease-settle group-hover:bg-ink-strong/10 group-hover:opacity-100">
+                    <span className="rounded-full bg-white/90 p-1.5 shadow-contact">
+                      <Eye size={16} className="text-ink-body" />
+                    </span>
                   </div>
                 </div>
-                <div className="p-2 flex items-center justify-between">
-                  <span className="text-xs font-medium text-gray-700">Cheque {idx + 1}</span>
-                  <span className="text-xs text-gray-400">Page {check.page}</span>
+                <div className="flex items-center justify-between px-2 py-2">
+                  <span className="text-xs font-medium text-ink-body">Cheque {idx + 1}</span>
+                  <span className="nums text-xs text-ink-faint">Page {check.page}</span>
                 </div>
-              </div>
+              </GlassPanel>
             ))}
           </div>
-        </div>
+        </GlassCard>
       )}
 
       {/* ══════════════════════════════════════════════════════
@@ -472,292 +369,289 @@ export default function ProcessingPage() {
       {isComplete && checks.length > 0 && (
         <>
           {/* View mode toggle + header */}
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-gray-900">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="font-heading text-lg font-semibold text-ink-strong">
               Extracted Cheques ({checks.length})
             </h2>
             <div className="flex items-center gap-3">
-              <p className="text-xs text-gray-400 hidden md:block">Click to view details. Arrow keys to navigate.</p>
-              <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
-                <button
-                  onClick={() => setViewMode('card')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${
-                    viewMode === 'card' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  <LayoutGrid size={14} /> Cards
-                </button>
-                <button
-                  onClick={() => setViewMode('table')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition ${
-                    viewMode === 'table' ? 'bg-white shadow text-gray-900' : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  <List size={14} /> Table
-                </button>
-              </div>
+              <p className="hidden text-xs text-ink-faint md:block">Click to view details. Arrow keys to navigate.</p>
+              <Tabs
+                aria-label="Result view"
+                value={viewMode}
+                onValueChange={(v) => setViewMode(v as ViewMode)}
+                items={[
+                  { value: 'card', label: 'Cards', icon: <LayoutGrid size={14} /> },
+                  { value: 'table', label: 'Table', icon: <List size={14} /> },
+                ]}
+              />
             </div>
           </div>
 
           {/* ── Card View ─────────────────────────────────── */}
           {viewMode === 'card' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {checks.map((check: any, idx: number) => {
-                const ext = check.extraction;
-                return (
-                  <div
-                    key={check.check_id}
-                    onClick={() => setSelectedIdx(idx)}
-                    className={`bg-white rounded-xl shadow hover:shadow-lg transition cursor-pointer border-2 overflow-hidden group ${
-                      selectedIdx === idx ? 'border-blue-400' : 'border-transparent hover:border-blue-200'
-                    }`}
-                  >
-                    <div className="aspect-[16/9] bg-gray-100 relative overflow-hidden">
-                      <img
-                        src={`/api/check-image/${jobId}/${check.check_id}`}
-                        alt={`Cheque ${idx + 1}`}
-                        className="w-full h-full object-contain"
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                      />
-                      <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 transition flex items-center justify-center opacity-0 group-hover:opacity-100">
-                        <div className="bg-white/90 rounded-full p-2 shadow">
-                          <ZoomIn size={18} className="text-gray-700" />
+            <GlassCard padding="md">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+                {checks.map((check: any, idx: number) => {
+                  const ext = check.extraction;
+                  return (
+                    <GlassPanel
+                      key={check.check_id}
+                      radius="tile"
+                      padding="none"
+                      onClick={() => setSelectedIdx(idx)}
+                      className={cn(
+                        'press group cursor-pointer overflow-hidden',
+                        selectedIdx === idx ? 'border-brand/70 shadow-glass-selected' : 'hover:border-brand/40'
+                      )}
+                    >
+                      <div className="relative aspect-[16/9] overflow-hidden bg-surface-sunken">
+                        <img
+                          src={`/api/check-image/${jobId}/${check.check_id}`}
+                          alt={`Cheque ${idx + 1}`}
+                          className="h-full w-full object-contain"
+                          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                        />
+                        <div className="absolute inset-0 flex items-center justify-center opacity-0 transition-opacity duration-quick ease-settle group-hover:bg-ink-strong/[0.06] group-hover:opacity-100">
+                          <span className="rounded-full bg-white/90 p-2 shadow-contact">
+                            <ZoomIn size={18} className="text-ink-body" />
+                          </span>
+                        </div>
+                        <Badge tone="solid" size="sm" className="nums absolute left-2 top-2">#{idx + 1}</Badge>
+                        <Badge tone="outline" size="sm" className="nums absolute right-2 top-2">Page {check.page}</Badge>
+                      </div>
+                      <div className="space-y-2 p-4">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <p className="truncate font-semibold text-ink-strong">
+                            {extVal(ext, 'payee') || 'Unknown Payee'}
+                          </p>
+                          <p className="nums whitespace-nowrap font-semibold text-success-text">
+                            {extVal(ext, 'amount') ? `$${extVal(ext, 'amount')}` : '—'}
+                          </p>
+                        </div>
+                        <div className="nums flex items-center gap-4 text-xs text-ink-faint">
+                          {extVal(ext, 'checkDate') && <span>{extVal(ext, 'checkDate')}</span>}
+                          {extVal(ext, 'checkNumber') && <span>#{extVal(ext, 'checkNumber')}</span>}
+                          {extVal(ext, 'bankName') && <span className="truncate">{extVal(ext, 'bankName')}</span>}
                         </div>
                       </div>
-                      <div className="absolute top-2 left-2 bg-black/60 text-white text-xs px-2 py-0.5 rounded font-medium">
-                        #{idx + 1}
-                      </div>
-                      <div className="absolute top-2 right-2 bg-black/60 text-white text-xs px-2 py-0.5 rounded">
-                        Page {check.page}
-                      </div>
-                    </div>
-                    <div className="p-4 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <p className="font-semibold text-gray-900 truncate">
-                          {extVal(ext, 'payee') || 'Unknown Payee'}
-                        </p>
-                        <p className="font-bold text-green-700 whitespace-nowrap ml-2">
-                          {extVal(ext, 'amount') ? `$${extVal(ext, 'amount')}` : '—'}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-4 text-xs text-gray-500">
-                        {extVal(ext, 'checkDate') && <span>{extVal(ext, 'checkDate')}</span>}
-                        {extVal(ext, 'checkNumber') && <span>#{extVal(ext, 'checkNumber')}</span>}
-                        {extVal(ext, 'bankName') && <span>{extVal(ext, 'bankName')}</span>}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                    </GlassPanel>
+                  );
+                })}
+              </div>
+            </GlassCard>
           )}
 
           {/* ── Table View ────────────────────────────────── */}
           {viewMode === 'table' && (
-            <div className="bg-white rounded-xl shadow overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-gray-50 border-b">
+            <TableShell>
+              <TableScroll className="max-h-[70vh]">
+                <Table>
+                  <Thead>
                     <tr>
-                      <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Preview</th>
-                      <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">#</th>
-                      <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Page</th>
-                      <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Payee</th>
-                      <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
-                      <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
-                      <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Check #</th>
-                      <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Bank</th>
-                      <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">View</th>
+                      <Th>Preview</Th>
+                      <Th numeric>#</Th>
+                      <Th numeric>Page</Th>
+                      <Th>Payee</Th>
+                      <Th numeric>Amount</Th>
+                      <Th>Date</Th>
+                      <Th numeric>Check #</Th>
+                      <Th>Bank</Th>
+                      <Th className="text-center">View</Th>
                     </tr>
-                  </thead>
-                  <tbody className="divide-y">
+                  </Thead>
+                  <Tbody>
                     {checks.map((check: any, idx: number) => {
                       const ext = check.extraction;
                       return (
-                        <tr
+                        <Tr
                           key={check.check_id}
-                          className={`hover:bg-blue-50 cursor-pointer transition ${
-                            selectedIdx === idx ? 'bg-blue-50' : ''
-                          }`}
+                          interactive
+                          selected={selectedIdx === idx}
                           onClick={() => setSelectedIdx(idx)}
                         >
-                          <td className="px-3 py-2">
-                            <div className="w-20 h-12 bg-gray-100 rounded overflow-hidden">
+                          <Td>
+                            <div className="h-12 w-20 overflow-hidden rounded-md bg-surface-sunken">
                               <img
                                 src={`/api/check-image/${jobId}/${check.check_id}`}
                                 alt={`Cheque ${idx + 1}`}
-                                className="w-full h-full object-contain"
+                                className="h-full w-full object-contain"
                                 onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                               />
                             </div>
-                          </td>
-                          <td className="px-3 py-3 text-gray-500 font-mono text-xs">{idx + 1}</td>
-                          <td className="px-3 py-3">{check.page}</td>
-                          <td className="px-3 py-3 font-medium">{extVal(ext, 'payee') || '—'}</td>
-                          <td className="px-3 py-3 font-medium text-green-700">{extVal(ext, 'amount') ? `$${extVal(ext, 'amount')}` : '—'}</td>
-                          <td className="px-3 py-3">{extVal(ext, 'checkDate') || '—'}</td>
-                          <td className="px-3 py-3">{extVal(ext, 'checkNumber') || '—'}</td>
-                          <td className="px-3 py-3 text-gray-500">{extVal(ext, 'bankName') || '—'}</td>
-                          <td className="px-3 py-3 text-center">
-                            <button className="text-blue-600 hover:text-blue-800">
+                          </Td>
+                          <Td numeric muted>{idx + 1}</Td>
+                          <Td numeric>{check.page}</Td>
+                          <Td className="font-medium">{extVal(ext, 'payee') || '—'}</Td>
+                          <Td numeric className="nums-money font-semibold text-success-text">
+                            {extVal(ext, 'amount') ? `$${extVal(ext, 'amount')}` : '—'}
+                          </Td>
+                          <Td className="nums">{extVal(ext, 'checkDate') || '—'}</Td>
+                          <Td numeric>{extVal(ext, 'checkNumber') || '—'}</Td>
+                          <Td muted>{extVal(ext, 'bankName') || '—'}</Td>
+                          <Td className="text-center">
+                            <span className="inline-flex text-brand" aria-hidden>
                               <Eye size={16} />
-                            </button>
-                          </td>
-                        </tr>
+                            </span>
+                          </Td>
+                        </Tr>
                       );
                     })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+                  </Tbody>
+                </Table>
+              </TableScroll>
+            </TableShell>
           )}
 
-          {/* ── Per-method final summary ──────────────────── */}
+          {/* ── Per-method final summary. Deliberately KEPT (post-completion
+                 only); this is not the removed Live Progress panel. ───────── */}
           {methodsProgress.length > 0 && (
-            <div className="bg-white rounded-xl shadow p-6">
-              <h2 className="text-lg font-semibold mb-4">Extraction Method Results</h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <GlassCard padding="lg">
+              <GlassCardTitle className="mb-4">Extraction Method Results</GlassCardTitle>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
                 {methodsProgress.map((mp) => (
-                  <div key={mp.method} className={`rounded-lg border p-4 ${methodStatusColor(mp.status)}`}>
-                    <div className="flex items-center gap-2 mb-2">
-                      {methodStatusIcon(mp.status)}
-                      <span className="font-medium text-gray-900">{mp.label}</span>
+                  <GlassPanel key={mp.method} radius="tile" padding="md">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <span className="font-medium text-ink-strong">{mp.label}</span>
+                      <StatusPill status={METHOD_STATUS[mp.status] ?? 'idle'} size="sm" />
                     </div>
                     <div className="flex items-center justify-between text-sm">
-                      <span className="text-gray-600">
+                      <span className="nums text-ink-body">
                         {mp.checks_processed} / {mp.checks_total} cheques processed
                       </span>
-                      <span className={`font-bold ${mp.status === 'complete' ? 'text-green-600' : mp.status === 'error' ? 'text-red-600' : 'text-gray-600'}`}>
+                      <span
+                        className={cn(
+                          'nums font-semibold',
+                          mp.status === 'complete' ? 'text-success-text' : mp.status === 'error' ? 'text-error-text' : 'text-ink-body'
+                        )}
+                      >
                         {mp.progress}%
                       </span>
                     </div>
-                    {mp.error && <p className="text-xs text-red-600 mt-2">{mp.error}</p>}
-                  </div>
+                    {mp.error && <p className="mt-2 text-xs text-error-text">{mp.error}</p>}
+                  </GlassPanel>
                 ))}
               </div>
-            </div>
+            </GlassCard>
           )}
 
           {/* ══════════════════════════════════════════════════
               EXPORT SECTION
              ══════════════════════════════════════════════════ */}
-          <div className="bg-white rounded-xl shadow p-6">
-            <div className="flex items-center justify-between mb-5">
+          <GlassCard padding="lg">
+            <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold text-gray-900">Export Results</h2>
-                <p className="text-sm text-gray-500 mt-0.5">Download extracted cheque data in your preferred accounting format</p>
+                <GlassCardTitle>Export Results</GlassCardTitle>
+                <p className="mt-0.5 text-sm text-ink-body">Download extracted cheque data in your preferred accounting format</p>
               </div>
-              <div className="flex items-center gap-2 text-sm text-gray-400">
-                <CheckCircle size={16} className="text-green-500" />
-                {checks.length} cheque{checks.length !== 1 ? 's' : ''} ready
+              <div className="flex items-center gap-2 text-sm text-ink-faint">
+                <CheckCircle size={16} className="text-success" />
+                <span className="nums">{checks.length} cheque{checks.length !== 1 ? 's' : ''} ready</span>
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
               {EXPORT_FORMATS.map((fmt) => (
-                <button
+                <GlassPanel
                   key={fmt.id}
+                  radius="tile"
+                  padding="md"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => handleExport(fmt.id)}
-                  className="flex items-center gap-3 p-4 rounded-lg border border-gray-200 hover:border-green-400 hover:bg-green-50/50 transition text-left group"
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') handleExport(fmt.id); }}
+                  className="press group flex cursor-pointer items-center gap-3 text-left hover:border-brand/40"
                 >
-                  <div className="p-2.5 bg-green-50 rounded-lg group-hover:bg-green-100 transition flex-shrink-0">
-                    <Download size={18} className="text-green-600" />
+                  <span className="shrink-0 rounded-input bg-brand/[0.1] p-2.5 transition-colors duration-quick ease-settle group-hover:bg-brand/20">
+                    <Download size={18} className="text-brand-deep" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-ink-strong">{fmt.name}</p>
+                    <p className="truncate text-xs text-ink-faint">{fmt.desc}</p>
                   </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium text-sm text-gray-900">{fmt.name}</p>
-                    <p className="text-xs text-gray-500 truncate">{fmt.desc}</p>
-                  </div>
-                  <ChevronRight size={14} className="text-gray-300 group-hover:text-green-500 transition flex-shrink-0" />
-                </button>
+                  <ChevronRight size={14} className="shrink-0 text-ink-faint transition-colors duration-quick ease-settle group-hover:text-brand" />
+                </GlassPanel>
               ))}
             </div>
-          </div>
+          </GlassCard>
         </>
       )}
 
       {/* ── No results ──────────────────────────────────────── */}
       {isComplete && checks.length === 0 && !error && (
-        <div className="bg-white rounded-xl shadow p-12 text-center">
-          <ImageIcon className="mx-auto text-gray-300 mb-4" size={48} />
-          <h3 className="text-lg font-semibold text-gray-700">No Cheques Found</h3>
-          <p className="text-sm text-gray-500 mt-1">No cheques were detected in this document.</p>
-        </div>
+        <GlassCard padding="none" className="p-12 text-center">
+          <ImageIcon className="mx-auto mb-4 text-ink-faint/60" size={48} />
+          <h3 className="font-heading text-lg font-semibold text-ink-strong">No Cheques Found</h3>
+          <p className="mt-1 text-sm text-ink-body">No cheques were detected in this document.</p>
+        </GlassCard>
       )}
 
       {/* ══════════════════════════════════════════════════════
           DETAIL DIALOG
          ══════════════════════════════════════════════════════ */}
       {selected && selectedIdx !== null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => { setSelectedIdx(null); setImageZoom(1); }}>
-          <div
-            className="bg-white rounded-xl shadow-2xl w-[92vw] max-w-5xl max-h-[92vh] flex flex-col"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Dialog header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b">
-              <div className="flex items-center gap-3">
-                <h3 className="text-lg font-semibold">
-                  Cheque {selectedIdx + 1} of {checks.length}
-                </h3>
-                <span className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded">
-                  {selected.check_id}
-                </span>
-                <span className="text-xs text-gray-400">Page {selected.page}</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button 
-                  onClick={() => { 
-                    setImageZoom(Math.max(0.5, imageZoom - 0.25)); 
-                    if (imageZoom - 0.25 <= 1) setPanOffset({ x: 0, y: 0 });
-                  }} 
-                  className="p-1.5 hover:bg-gray-100 rounded" 
+        <Dialog
+          open
+          onClose={() => { setSelectedIdx(null); resetView(); }}
+          size="full"
+          title={`Cheque ${selectedIdx + 1} of ${checks.length}`}
+          description={`${selected.check_id} • Page ${selected.page}`}
+          className="flex max-h-[92vh] flex-col"
+        >
+          <div className="flex min-h-0 flex-col gap-3">
+            {/* Zoom + navigation toolbar */}
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <div className="flex items-center gap-1">
+                <IconButton
+                  aria-label="Zoom out"
+                  size="icon-sm"
                   disabled={imageZoom <= 0.5}
+                  onClick={() => {
+                    const next = Math.max(0.5, imageZoom - 0.25);
+                    setImageZoom(next);
+                    if (next <= 1) setPanOffset({ x: 0, y: 0 });
+                  }}
                 >
                   <ZoomOut size={16} />
-                </button>
-                <span className="text-xs font-medium text-gray-500 min-w-[2.5rem] text-center">{(imageZoom * 100).toFixed(0)}%</span>
-                <button 
-                  onClick={() => setImageZoom(Math.min(3, imageZoom + 0.25))} 
-                  className="p-1.5 hover:bg-gray-100 rounded" 
+                </IconButton>
+                <span className="nums min-w-[2.5rem] text-center text-xs font-medium text-ink-faint">{(imageZoom * 100).toFixed(0)}%</span>
+                <IconButton
+                  aria-label="Zoom in"
+                  size="icon-sm"
                   disabled={imageZoom >= 3}
+                  onClick={() => setImageZoom(Math.min(3, imageZoom + 0.25))}
                 >
                   <ZoomIn size={16} />
-                </button>
-                <div className="w-px h-5 bg-gray-200 mx-1" />
-                <button
-                  onClick={() => { 
-                    setSelectedIdx(Math.max(0, selectedIdx - 1)); 
-                    setImageZoom(1); 
-                    setPanOffset({ x: 0, y: 0 });
-                  }}
+                </IconButton>
+              </div>
+              <div className="flex items-center gap-1">
+                <IconButton
+                  aria-label="Previous cheque"
+                  size="icon-sm"
                   disabled={selectedIdx === 0}
-                  className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-30"
-                  title="Previous"
+                  onClick={() => { setSelectedIdx(Math.max(0, selectedIdx - 1)); resetView(); }}
                 >
                   <ChevronLeft size={20} />
-                </button>
-                <span className="text-sm text-gray-500">{selectedIdx + 1}/{checks.length}</span>
-                <button
-                  onClick={() => { 
-                    setSelectedIdx(Math.min(checks.length - 1, selectedIdx + 1)); 
-                    setImageZoom(1); 
-                    setPanOffset({ x: 0, y: 0 });
-                  }}
+                </IconButton>
+                <span className="nums text-sm text-ink-faint">{selectedIdx + 1}/{checks.length}</span>
+                <IconButton
+                  aria-label="Next cheque"
+                  size="icon-sm"
                   disabled={selectedIdx === checks.length - 1}
-                  className="p-1.5 rounded hover:bg-gray-100 disabled:opacity-30"
-                  title="Next"
+                  onClick={() => { setSelectedIdx(Math.min(checks.length - 1, selectedIdx + 1)); resetView(); }}
                 >
                   <ChevronRight size={20} />
-                </button>
-                <button onClick={() => { setSelectedIdx(null); setImageZoom(1); setPanOffset({ x: 0, y: 0 }); }} className="p-1.5 rounded hover:bg-gray-100 ml-2">
-                  <X size={20} />
-                </button>
+                </IconButton>
               </div>
             </div>
 
-            {/* Dialog body: image left, data right */}
-            <div className="flex flex-1 overflow-hidden min-h-0">
-              <div 
-                className="w-1/2 flex items-center justify-center bg-gray-50 border-r overflow-hidden p-4 relative"
+            {/* Body: image left, data right */}
+            <div className="flex min-h-0 flex-col gap-3 md:flex-row">
+              {/* Pan + zoom. The transform and the grab cursor are the only
+                  inline styles — both are dynamic maths. */}
+              <GlassPanel
+                tone="sunken"
+                radius="card"
+                padding="md"
+                className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden"
                 style={{ cursor: imageZoom > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default' }}
                 onMouseDown={(e) => {
                   if (imageZoom > 1) {
@@ -767,10 +661,7 @@ export default function ProcessingPage() {
                 }}
                 onMouseMove={(e) => {
                   if (isPanning && imageZoom > 1) {
-                    setPanOffset({
-                      x: e.clientX - panStart.x,
-                      y: e.clientY - panStart.y
-                    });
+                    setPanOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
                   }
                 }}
                 onMouseUp={() => setIsPanning(false)}
@@ -780,21 +671,21 @@ export default function ProcessingPage() {
                   ref={imageRef}
                   src={`/api/check-image/${jobId}/${selected.check_id}`}
                   alt={selected.check_id}
-                  className="rounded shadow-lg transition-transform select-none"
+                  className="select-none rounded-input shadow-glass transition-transform duration-settle ease-settle"
                   draggable={false}
                   style={{
                     transform: `scale(${imageZoom}) translate(${panOffset.x / imageZoom}px, ${panOffset.y / imageZoom}px)`,
                     transformOrigin: 'center center',
                     maxWidth: '100%',
-                    maxHeight: '70vh',
+                    maxHeight: '62vh',
                     objectFit: 'contain',
                   }}
                 />
-              </div>
+              </GlassPanel>
 
-              <div className="w-1/2 p-6 overflow-y-auto">
-                <h4 className="text-sm font-semibold text-gray-500 uppercase mb-4">Extracted Data</h4>
-                {selected!.extraction ? (
+              <div className="scroll-region min-h-0 max-h-[62vh] flex-1">
+                <h4 className="text-eyebrow mb-4 text-ink-faint">Extracted Data</h4>
+                {selected.extraction ? (
                   <div className="space-y-3">
                     {[
                       { label: 'Payee', field: 'payee' },
@@ -805,62 +696,54 @@ export default function ProcessingPage() {
                       { label: 'Memo', field: 'memo' },
                       { label: 'Amount Written', field: 'amountWritten' },
                     ].map(({ label, field }) => {
-                      const val = extVal(selected!.extraction, field);
-                      const conf = extConf(selected!.extraction, field);
+                      const val = extVal(selected.extraction, field);
+                      const conf = extConf(selected.extraction, field);
                       if (!val) return null;
                       return (
-                        <div key={field} className="flex items-start justify-between p-3 bg-gray-50 rounded-lg">
-                          <div>
-                            <p className="text-xs text-gray-500">{label}</p>
-                            <p className="font-medium mt-0.5">{val}</p>
+                        <GlassPanel key={field} radius="input" padding="sm" className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-xs text-ink-faint">{label}</p>
+                            <p className={cn('mt-0.5 font-medium text-ink-strong', field === 'amount' && 'nums')}>{val}</p>
                           </div>
                           {conf > 0 && (
-                            <span
-                              className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                                conf >= 0.9
-                                  ? 'bg-green-100 text-green-700'
-                                  : conf >= 0.7
-                                  ? 'bg-yellow-100 text-yellow-700'
-                                  : 'bg-red-100 text-red-700'
-                              }`}
-                            >
+                            <Badge tone={confTone(conf)} size="sm" className="nums">
                               {Math.round(conf * 100)}%
-                            </span>
+                            </Badge>
                           )}
-                        </div>
+                        </GlassPanel>
                       );
                     })}
 
                     {/* MICR section */}
-                    {selected!.extraction.micr && typeof selected!.extraction.micr === 'object' && (
-                      <div className="mt-4 p-3 bg-blue-50 rounded-lg">
-                        <p className="text-xs text-blue-600 font-semibold uppercase mb-2">MICR Data</p>
-                        <div className="space-y-1 text-sm">
+                    {selected.extraction.micr && typeof selected.extraction.micr === 'object' && (
+                      <div className="mt-4 rounded-input border border-info-border bg-info-bg p-3">
+                        <p className="text-eyebrow mb-2 text-info-text">MICR Data</p>
+                        <div className="nums space-y-1 text-sm text-ink-strong">
                           {selected.extraction.micr.routing?.value && (
-                            <p><span className="text-gray-500">Routing:</span> {selected.extraction.micr.routing.value}</p>
+                            <p><span className="text-ink-faint">Routing:</span> {selected.extraction.micr.routing.value}</p>
                           )}
                           {selected.extraction.micr.account?.value && (
-                            <p><span className="text-gray-500">Account:</span> {selected.extraction.micr.account.value}</p>
+                            <p><span className="text-ink-faint">Account:</span> {selected.extraction.micr.account.value}</p>
                           )}
                           {selected.extraction.micr.serial?.value && (
-                            <p><span className="text-gray-500">Serial:</span> {selected.extraction.micr.serial.value}</p>
+                            <p><span className="text-ink-faint">Serial:</span> {selected.extraction.micr.serial.value}</p>
                           )}
                         </div>
                       </div>
                     )}
                   </div>
                 ) : (
-                  <p className="text-gray-400 text-sm">No extraction data available yet</p>
+                  <p className="text-sm text-ink-faint">No extraction data available yet</p>
                 )}
 
-                <div className="mt-6 pt-4 border-t text-xs text-gray-400">
-                  {selected.width > 0 && <p>Dimensions: {selected.width} x {selected.height}px</p>}
+                <div className="mt-6 border-t border-glass-hairline pt-4 text-xs text-ink-faint">
+                  {selected.width > 0 && <p className="nums">Dimensions: {selected.width} x {selected.height}px</p>}
                   <p className="mt-1">Use arrow keys to navigate between cheques</p>
                 </div>
               </div>
             </div>
           </div>
-        </div>
+        </Dialog>
       )}
     </div>
   );

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Check, X } from 'lucide-react';
+import { Button, StatusPill } from '@/components/ui';
 
 interface Props {
   checkId: string;
@@ -12,75 +13,58 @@ interface Props {
 export default function ApprovalActions({ checkId, currentStatus }: Props) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleApprove = async () => {
-    if (!confirm('Approve this check?')) return;
+  const act = async (action: 'approve' | 'reject') => {
+    if (!confirm(action === 'approve' ? 'Approve this check?' : 'Reject this check?')) return;
 
     setLoading(true);
+    setError(null);
     try {
       const response = await fetch(`/api/checks/${checkId}/approve`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'approve' }),
+        body: JSON.stringify({ action }),
       });
 
-      if (!response.ok) throw new Error('Approval failed');
+      if (!response.ok) throw new Error(`${action === 'approve' ? 'Approval' : 'Rejection'} failed`);
 
-      router.push('/export');
-    } catch (error) {
-      alert('Failed to approve check');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleReject = async () => {
-    if (!confirm('Reject this check?')) return;
-
-    setLoading(true);
-    try {
-      const response = await fetch(`/api/checks/${checkId}/approve`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'reject' }),
-      });
-
-      if (!response.ok) throw new Error('Rejection failed');
-
-      router.push('/dashboard');
-    } catch (error) {
-      alert('Failed to reject check');
+      router.push(action === 'approve' ? '/export' : '/dashboard');
+    } catch (e: any) {
+      setError(e?.message || `Failed to ${action} check`);
     } finally {
       setLoading(false);
     }
   };
 
   if (currentStatus === 'approved' || currentStatus === 'exported') {
-    return (
-      <div className="bg-green-100 text-green-800 px-4 py-2 rounded-lg font-medium">
-        ✓ Approved
-      </div>
-    );
+    return <StatusPill status="approved" size="lg" icon={<Check size={14} />} label="Approved" />;
   }
 
   return (
-    <div className="flex gap-3">
-      <button
-        onClick={handleReject}
-        disabled={loading}
-        className="px-6 py-2 border border-red-300 text-red-700 rounded-lg hover:bg-red-50 disabled:opacity-50 flex items-center gap-2"
-      >
-        <X size={18} />
-        Reject
-      </button>
-      <button
-        onClick={handleApprove}
-        disabled={loading}
-        className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50 flex items-center gap-2"
-      >
-        <Check size={18} />
-        Approve
-      </button>
+    <div className="flex flex-col items-end gap-2">
+      <div className="flex gap-3">
+        <Button
+          variant="destructive"
+          size="sm"
+          icon={<X size={18} />}
+          disabled={loading}
+          onClick={() => act('reject')}
+        >
+          Reject
+        </Button>
+        <Button
+          size="sm"
+          icon={<Check size={18} />}
+          loading={loading}
+          onClick={() => act('approve')}
+        >
+          Approve
+        </Button>
+      </div>
+      {error && (
+        <p role="alert" className="text-xs font-medium text-error-text">{error}</p>
+      )}
     </div>
   );
 }

@@ -2,32 +2,61 @@
 
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import Link from 'next/link';
 import {
-  ArrowLeft, Building2, Users, FileCheck, Briefcase, DollarSign,
-  RefreshCw, Clock, Mail, Shield, ChevronRight, Globe
+  ArrowLeft, Users, FileCheck, Briefcase, DollarSign,
+  RefreshCw, Clock, Mail, Globe
 } from 'lucide-react';
 import {
-  AreaChart, Area, BarChart, Bar, PieChart, Pie, Cell,
-  XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
+  BarChart, Bar, PieChart, Pie, Cell,
+  XAxis, YAxis, CartesianGrid, Tooltip
 } from 'recharts';
+import {
+  Badge,
+  GlassCard,
+  GlassCardTitle,
+  GlassPanel,
+  IconButton,
+  KpiTile,
+  Table,
+  Tabs,
+  Tbody,
+  Td,
+  Th,
+  Thead,
+  Tr,
+} from '@/components/ui';
+import {
+  AXIS_TICK_SM,
+  CHART_COLORS,
+  ChartEmpty,
+  ChartFrame,
+  GRID_PROPS,
+  NO_TWEEN,
+  pieLabel,
+  pieLabelLine,
+  statusColor,
+  TOOLTIP_PROPS,
+} from '@/lib/charts';
 
-const planColors: Record<string, string> = {
-  free: 'bg-gray-100 text-gray-500',
-  starter: 'bg-blue-50 text-blue-600',
-  professional: 'bg-indigo-50 text-indigo-600',
-  pro: 'bg-indigo-50 text-indigo-600',
-  enterprise: 'bg-purple-50 text-purple-600',
-};
+/** Plan is a tier, not a state. Free reads neutral, everything paid reads brand. */
+const planTone = (plan: string): 'neutral' | 'brand' => (plan === 'free' ? 'neutral' : 'brand');
 
-const statusColors: Record<string, string> = {
-  pending_review: '#f59e0b',
-  approved: '#22c55e',
-  exported: '#3b82f6',
-  rejected: '#ef4444',
-  duplicate: '#f97316',
-  error: '#dc2626',
-};
+const jobTone = (status: string) =>
+  status === 'complete' ? 'success' : status === 'error' ? 'error' : 'warning';
+
+const checkTone = (status: string) =>
+  status === 'approved' ? 'success'
+    : status === 'exported' ? 'brand'
+    : status === 'rejected' ? 'error'
+    : 'warning';
+
+/**
+ * The QB entries table is a dense read-only log, not a working grid: it ran
+ * py-2.5 (~40px rows) before the redesign where the other tables ran py-3
+ * (~44px). Declared once here so the two densities never drift apart and the
+ * shared `tdVariants` stays untouched.
+ */
+const DENSE_LOG = '[&_td]:py-2.5';
 
 export default function TenantDetailPage() {
   const params = useParams();
@@ -47,268 +76,245 @@ export default function TenantDetailPage() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <RefreshCw size={24} className="animate-spin text-blue-500" />
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <RefreshCw size={24} className="animate-spin text-brand" />
       </div>
     );
   }
 
-  if (!data?.tenant) return <div className="p-8 text-gray-400">Tenant not found</div>;
+  if (!data?.tenant) return <div className="p-8 text-ink-body">Tenant not found</div>;
 
   const { tenant, profiles, jobs, checks, integrations, qbEntries, checkStatuses, activityByDay } = data;
-  const TT = { background: '#fff', border: '1px solid #e5e7eb', borderRadius: 8, fontSize: 12, color: '#111' };
-  const AX = { fill: '#9ca3af', fontSize: 10 };
 
   const statusPieData = Object.entries(checkStatuses || {}).map(([name, value]) => ({
-    name: name.replace(/_/g, ' '), value, color: statusColors[name] || '#6b7280',
+    name: name.replace(/_/g, ' '), value, color: statusColor(name),
   }));
 
   const tabs = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'users', label: `Users (${profiles?.length || 0})` },
-    { id: 'jobs', label: `Jobs (${jobs?.length || 0})` },
-    { id: 'checks', label: `Checks (${checks?.length || 0})` },
-    { id: 'qb', label: `QB Data (${qbEntries?.length || 0})` },
+    { value: 'overview', label: 'Overview' },
+    { value: 'users', label: 'Users', count: profiles?.length || 0 },
+    { value: 'jobs', label: 'Jobs', count: jobs?.length || 0 },
+    { value: 'checks', label: 'Checks', count: checks?.length || 0 },
+    { value: 'qb', label: 'QB Data', count: qbEntries?.length || 0 },
   ];
 
   return (
-    <div className="p-6 sm:p-8 max-w-[1400px] mx-auto space-y-6">
+    <div className="mx-auto max-w-[1400px] space-y-6 p-6 sm:p-8">
       <div className="flex items-start gap-4">
-        <button onClick={() => router.push('/admin/tenants')} className="mt-1 p-2 hover:bg-gray-100 rounded-lg transition-colors">
-          <ArrowLeft size={18} className="text-gray-400" />
-        </button>
+        <IconButton
+          size="icon-sm"
+          aria-label="Back to accounts"
+          onClick={() => router.push('/admin/tenants')}
+          className="mt-1"
+        >
+          <ArrowLeft size={16} />
+        </IconButton>
         <div className="flex-1">
-          <div className="flex items-center gap-3 mb-1">
-            <h1 className="text-2xl font-black text-gray-900 tracking-tight">{tenant.name}</h1>
-            <span className={`px-2.5 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${planColors[tenant.plan] || planColors.free}`}>{tenant.plan}</span>
+          <div className="mb-1 flex items-center gap-3">
+            <h1 className="font-heading text-2xl font-semibold tracking-display text-ink-strong">{tenant.name}</h1>
+            <Badge tone={planTone(tenant.plan)} size="sm" className="uppercase">{tenant.plan}</Badge>
           </div>
-          <div className="flex items-center gap-4 text-xs text-gray-400">
+          <div className="flex flex-wrap items-center gap-4 text-xs text-ink-faint">
             <span className="flex items-center gap-1"><Globe size={11} /> {tenant.slug}</span>
             <span className="flex items-center gap-1"><Clock size={11} /> Joined {new Date(tenant.created_at).toLocaleDateString()}</span>
-            <span className="flex items-center gap-1"><DollarSign size={11} /> ${tenant.mrr}/mo</span>
+            <span className="nums flex items-center gap-1"><DollarSign size={11} /> ${tenant.mrr}/mo</span>
           </div>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <div className="bg-white border border-gray-100 rounded-lg shadow-sm p-4">
-          <div className="flex items-center gap-2 mb-2"><Users size={14} className="text-blue-600" /><span className="text-[10px] text-gray-400 uppercase font-bold">Users</span></div>
-          <div className="text-xl font-black text-gray-900">{profiles?.length || 0}</div>
-        </div>
-        <div className="bg-white border border-gray-100 rounded-lg shadow-sm p-4">
-          <div className="flex items-center gap-2 mb-2"><Briefcase size={14} className="text-indigo-600" /><span className="text-[10px] text-gray-400 uppercase font-bold">Jobs</span></div>
-          <div className="text-xl font-black text-gray-900">{jobs?.length || 0}</div>
-        </div>
-        <div className="bg-white border border-gray-100 rounded-lg shadow-sm p-4">
-          <div className="flex items-center gap-2 mb-2"><FileCheck size={14} className="text-violet-600" /><span className="text-[10px] text-gray-400 uppercase font-bold">Checks</span></div>
-          <div className="text-xl font-black text-gray-900">{checks?.length || 0}</div>
-        </div>
-        <div className="bg-white border border-gray-100 rounded-lg shadow-sm p-4">
-          <div className="flex items-center gap-2 mb-2"><Globe size={14} className="text-sky-600" /><span className="text-[10px] text-gray-400 uppercase font-bold">Integrations</span></div>
-          <div className="text-xl font-black text-gray-900">{integrations?.length || 0}</div>
-        </div>
-        <div className="bg-white border border-gray-100 rounded-lg shadow-sm p-4">
-          <div className="flex items-center gap-2 mb-2"><DollarSign size={14} className="text-emerald-600" /><span className="text-[10px] text-gray-400 uppercase font-bold">MRR</span></div>
-          <div className="text-xl font-black text-emerald-600">${tenant.mrr}</div>
-        </div>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <KpiTile tone="brand" icon={<Users size={16} />} label="Users" value={profiles?.length || 0} />
+        <KpiTile tone="brand" icon={<Briefcase size={16} />} label="Jobs" value={jobs?.length || 0} />
+        <KpiTile tone="brand" icon={<FileCheck size={16} />} label="Checks" value={checks?.length || 0} />
+        <KpiTile tone="brand" icon={<Globe size={16} />} label="Integrations" value={integrations?.length || 0} />
+        <KpiTile tone="success" icon={<DollarSign size={16} />} label="MRR" value={`$${tenant.mrr}`} />
       </div>
 
-      <div className="flex gap-1 bg-white rounded-lg p-1 border border-gray-100 shadow-sm">
-        {tabs.map((tab) => (
-          <button key={tab.id} onClick={() => setActiveTab(tab.id as any)}
-            className={`px-4 py-2 rounded-md text-xs font-medium transition-colors ${activeTab === tab.id ? 'bg-blue-50 text-blue-700' : 'text-gray-400 hover:text-gray-600'}`}>
-            {tab.label}
-          </button>
-        ))}
-      </div>
+      <Tabs
+        aria-label="Account detail sections"
+        items={tabs}
+        value={activeTab}
+        onValueChange={(v) => setActiveTab(v as typeof activeTab)}
+      />
 
       {activeTab === 'overview' && (
-        <div className="grid lg:grid-cols-2 gap-4">
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-            <h3 className="text-sm font-semibold text-gray-700 mb-4">Activity (30 days)</h3>
-            <div className="h-[220px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={activityByDay}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f3f4f6" />
-                  <XAxis dataKey="date" tick={AX} tickFormatter={(v) => v.slice(8)} axisLine={false} tickLine={false} />
-                  <YAxis tick={AX} axisLine={false} tickLine={false} allowDecimals={false} />
-                  <Tooltip contentStyle={TT} />
-                  <Bar dataKey="jobs" fill="#6366f1" radius={[2, 2, 0, 0]} name="Jobs" />
-                  <Bar dataKey="checks" fill="#3b82f6" radius={[2, 2, 0, 0]} name="Checks" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-          <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-            <h3 className="text-sm font-semibold text-gray-700 mb-4">Check Status Breakdown</h3>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <GlassCard padding="md">
+            <GlassCardTitle className="mb-4 text-sm">Activity (30 days)</GlassCardTitle>
+            <ChartFrame height={220}>
+              <BarChart data={activityByDay}>
+                <CartesianGrid {...GRID_PROPS} />
+                <XAxis dataKey="date" tick={AXIS_TICK_SM} tickFormatter={(v) => v.slice(8)} axisLine={false} tickLine={false} />
+                <YAxis tick={AXIS_TICK_SM} axisLine={false} tickLine={false} allowDecimals={false} />
+                <Tooltip {...TOOLTIP_PROPS} />
+                <Bar {...NO_TWEEN} dataKey="jobs" fill={CHART_COLORS.brand} radius={[3, 3, 0, 0]} name="Jobs" />
+                <Bar {...NO_TWEEN} dataKey="checks" fill={CHART_COLORS.emerald} radius={[3, 3, 0, 0]} name="Checks" />
+              </BarChart>
+            </ChartFrame>
+          </GlassCard>
+
+          <GlassCard padding="md">
+            <GlassCardTitle className="mb-4 text-sm">Check Status Breakdown</GlassCardTitle>
             {statusPieData.length > 0 ? (
-              <div className="h-[220px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie data={statusPieData} cx="50%" cy="50%" innerRadius={45} outerRadius={75} paddingAngle={3} dataKey="value"
-                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
-                      {statusPieData.map((entry: any, i: number) => (<Cell key={i} fill={entry.color} />))}
-                    </Pie>
-                    <Tooltip contentStyle={TT} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-            ) : (<div className="h-[220px] flex items-center justify-center text-xs text-gray-300">No checks yet</div>)}
-          </div>
+              <ChartFrame height={220}>
+                <PieChart>
+                  <Pie {...NO_TWEEN}
+                    data={statusPieData}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={45}
+                    outerRadius={75}
+                    paddingAngle={3}
+                    dataKey="value"
+                    stroke="rgba(255,255,255,0.7)"
+                labelLine={pieLabelLine}
+                label={pieLabel}
+                  >
+                    {statusPieData.map((entry: any, i: number) => (<Cell key={i} fill={entry.color} />))}
+                  </Pie>
+                  <Tooltip {...TOOLTIP_PROPS} />
+                </PieChart>
+              </ChartFrame>
+            ) : (
+              <ChartEmpty height={220}>No checks yet</ChartEmpty>
+            )}
+          </GlassCard>
+
           {integrations && integrations.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 lg:col-span-2">
-              <h3 className="text-sm font-semibold text-gray-700 mb-3">Integrations</h3>
+            <GlassCard padding="md" className="lg:col-span-2">
+              <GlassCardTitle className="mb-3 text-sm">Integrations</GlassCardTitle>
               <div className="space-y-2">
                 {integrations.map((int: any) => (
-                  <div key={int.id} className="flex items-center gap-3 bg-gray-50 rounded-lg p-3">
-                    <div className="w-8 h-8 rounded-lg bg-green-50 flex items-center justify-center text-green-600 text-xs font-bold">QB</div>
+                  <GlassPanel key={int.id} tone="plain" radius="input" padding="sm" className="flex items-center gap-3">
+                    <div className="flex h-8 w-8 items-center justify-center rounded-input bg-success-bg text-xs font-bold text-success-text">QB</div>
                     <div className="flex-1">
-                      <div className="text-sm font-medium text-gray-900">{int.company_name || int.provider}</div>
-                      <div className="text-[10px] text-gray-400">Realm: {int.realm_id} · Status: {int.status}</div>
+                      <div className="text-sm font-medium text-ink-strong">{int.company_name || int.provider}</div>
+                      <div className="text-xs text-ink-faint">Realm: {int.realm_id} &middot; Status: {int.status}</div>
                     </div>
-                    <div className="text-[10px] text-gray-400">{new Date(int.created_at).toLocaleDateString()}</div>
-                  </div>
+                    <div className="text-xs text-ink-faint">{new Date(int.created_at).toLocaleDateString()}</div>
+                  </GlassPanel>
                 ))}
               </div>
-            </div>
+            </GlassCard>
           )}
         </div>
       )}
 
       {activeTab === 'users' && (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="divide-y divide-gray-50">
+        <GlassCard padding="none" className="overflow-hidden">
+          <div className="glass-divider">
             {profiles?.map((u: any) => (
-              <div key={u.id} className="flex items-center gap-3 px-5 py-4 hover:bg-gray-50 transition-colors">
-                <div className="w-10 h-10 rounded-full bg-blue-50 flex items-center justify-center text-blue-600 text-xs font-bold">
+              <div key={u.id} className="flex items-center gap-3 px-5 py-4 transition-colors duration-quick ease-settle hover:bg-brand/[0.045]">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-brand-tint text-xs font-bold text-brand-deep">
                   {(u.full_name || u.email).slice(0, 2).toUpperCase()}
                 </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium text-gray-900">{u.full_name || 'No name'}</div>
-                  <div className="text-xs text-gray-400 flex items-center gap-1"><Mail size={10} /> {u.email}</div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium text-ink-strong">{u.full_name || 'No name'}</div>
+                  <div className="flex items-center gap-1 text-xs text-ink-faint"><Mail size={10} /> {u.email}</div>
                 </div>
-                <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${u.role === 'admin' ? 'bg-amber-50 text-amber-600' : 'bg-gray-100 text-gray-500'}`}>{u.role}</span>
-                <div className="text-[10px] text-gray-400 flex items-center gap-1"><Clock size={10} /> {new Date(u.created_at).toLocaleDateString()}</div>
+                <Badge tone={u.role === 'admin' ? 'warning' : 'neutral'} size="sm" className="uppercase">{u.role}</Badge>
+                <div className="flex items-center gap-1 text-xs text-ink-faint"><Clock size={10} /> {new Date(u.created_at).toLocaleDateString()}</div>
               </div>
             ))}
-            {(!profiles || profiles.length === 0) && (<div className="py-8 text-center text-xs text-gray-300">No users</div>)}
+            {(!profiles || profiles.length === 0) && (<div className="py-8 text-center text-sm text-ink-faint">No users</div>)}
           </div>
-        </div>
+        </GlassCard>
       )}
 
       {activeTab === 'jobs' && (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50/50">
-                  <th className="text-center py-3 px-2 text-[10px] font-bold text-gray-400 uppercase w-10">#</th>
-                  <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-400 uppercase">File</th>
-                  <th className="text-center py-3 px-4 text-[10px] font-bold text-gray-400 uppercase">Status</th>
-                  <th className="text-center py-3 px-4 text-[10px] font-bold text-gray-400 uppercase">Checks</th>
-                  <th className="text-right py-3 px-5 text-[10px] font-bold text-gray-400 uppercase">Created</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {jobs?.map((j: any, i: number) => (
-                  <tr key={j.id} className="hover:bg-gray-50">
-                    <td className="py-3 px-2 text-center text-[10px] text-gray-300 font-mono">{i + 1}</td>
-                    <td className="py-3 px-4 text-xs text-gray-700">{j.pdf_name}</td>
-                    <td className="py-3 px-4 text-center">
-                      <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${
-                        j.status === 'complete' ? 'bg-emerald-50 text-emerald-600' :
-                        j.status === 'error' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'
-                      }`}>{j.status}</span>
-                    </td>
-                    <td className="py-3 px-4 text-center text-gray-500">{j.total_checks || 0}</td>
-                    <td className="py-3 px-5 text-right text-[11px] text-gray-400">{new Date(j.created_at).toLocaleString()}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {(!jobs || jobs.length === 0) && (<div className="py-8 text-center text-xs text-gray-300">No jobs</div>)}
-        </div>
+        <GlassCard padding="none" className="overflow-hidden">
+          <Table>
+            <Thead>
+              <Tr>
+                <Th className="w-10 px-2 text-center">#</Th>
+                <Th>File</Th>
+                <Th>Status</Th>
+                <Th numeric>Checks</Th>
+                <Th numeric>Created</Th>
+              </Tr>
+            </Thead>
+            <Tbody>
+              {jobs?.map((j: any, i: number) => (
+                <Tr key={j.id} interactive>
+                  <Td muted className="px-2 text-center font-mono text-xs">{i + 1}</Td>
+                  <Td className="text-sm">{j.pdf_name}</Td>
+                  <Td><Badge tone={jobTone(j.status)} size="sm" className="uppercase">{j.status}</Badge></Td>
+                  <Td numeric>{j.total_checks || 0}</Td>
+                  <Td numeric muted className="text-xs">{new Date(j.created_at).toLocaleString()}</Td>
+                </Tr>
+              ))}
+            </Tbody>
+          </Table>
+          {(!jobs || jobs.length === 0) && (<div className="py-8 text-center text-sm text-ink-faint">No jobs</div>)}
+        </GlassCard>
       )}
 
       {activeTab === 'checks' && (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50/50">
-                  <th className="text-center py-3 px-2 text-[10px] font-bold text-gray-400 uppercase w-10">#</th>
-                  <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-400 uppercase">Check #</th>
-                  <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-400 uppercase">Payee</th>
-                  <th className="text-right py-3 px-4 text-[10px] font-bold text-gray-400 uppercase">Amount</th>
-                  <th className="text-center py-3 px-4 text-[10px] font-bold text-gray-400 uppercase">Date</th>
-                  <th className="text-center py-3 px-4 text-[10px] font-bold text-gray-400 uppercase">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {checks?.map((c: any, i: number) => (
-                  <tr key={c.id} className="hover:bg-gray-50">
-                    <td className="py-3 px-2 text-center text-[10px] text-gray-300 font-mono">{i + 1}</td>
-                    <td className="py-3 px-4 text-xs text-gray-500 font-mono">{c.check_number || '—'}</td>
-                    <td className="py-3 px-4 text-xs text-gray-700">{c.payee || '—'}</td>
-                    <td className="py-3 px-4 text-right text-xs text-gray-700 font-mono">{c.amount ? `$${Number(c.amount).toFixed(2)}` : '—'}</td>
-                    <td className="py-3 px-4 text-center text-[11px] text-gray-400">{c.check_date || '—'}</td>
-                    <td className="py-3 px-4 text-center">
-                      <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${
-                        c.status === 'approved' ? 'bg-emerald-50 text-emerald-600' :
-                        c.status === 'exported' ? 'bg-blue-50 text-blue-600' :
-                        c.status === 'rejected' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'
-                      }`}>{c.status?.replace(/_/g, ' ')}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {(!checks || checks.length === 0) && (<div className="py-8 text-center text-xs text-gray-300">No checks</div>)}
-        </div>
+        <GlassCard padding="none" className="overflow-hidden">
+          <Table>
+            <Thead>
+              <Tr>
+                <Th className="w-10 px-2 text-center">#</Th>
+                <Th>Check #</Th>
+                <Th>Payee</Th>
+                <Th numeric>Amount</Th>
+                <Th numeric>Date</Th>
+                <Th>Status</Th>
+              </Tr>
+            </Thead>
+            <Tbody>
+              {checks?.map((c: any, i: number) => (
+                <Tr key={c.id} interactive>
+                  <Td muted className="px-2 text-center font-mono text-xs">{i + 1}</Td>
+                  <Td className="nums font-mono text-sm">{c.check_number || '—'}</Td>
+                  <Td className="text-sm">{c.payee || '—'}</Td>
+                  <Td numeric className="nums-money text-sm">{c.amount ? `$${Number(c.amount).toFixed(2)}` : '—'}</Td>
+                  <Td numeric muted className="text-xs">{c.check_date || '—'}</Td>
+                  <Td><Badge tone={checkTone(c.status)} size="sm" className="uppercase">{c.status?.replace(/_/g, ' ')}</Badge></Td>
+                </Tr>
+              ))}
+            </Tbody>
+          </Table>
+          {(!checks || checks.length === 0) && (<div className="py-8 text-center text-sm text-ink-faint">No checks</div>)}
+        </GlassCard>
       )}
 
       {activeTab === 'qb' && (
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-          <div className="px-5 py-3 border-b border-gray-100 bg-gray-50/50 flex items-center justify-between">
-            <span className="text-[10px] text-gray-400 font-bold uppercase">QuickBooks Synced Entries (Read-Only)</span>
-            <span className="text-[10px] text-gray-300">{qbEntries?.length || 0} entries</span>
+        <GlassCard padding="none" className="overflow-hidden">
+          <div className="flex items-center justify-between border-b border-glass-hairline px-5 py-3">
+            <span className="text-eyebrow text-ink-faint">QuickBooks Synced Entries (Read-Only)</span>
+            <span className="nums text-xs text-ink-faint">{qbEntries?.length || 0} entries</span>
           </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50/30">
-                  <th className="text-center py-3 px-2 text-[10px] font-bold text-gray-400 uppercase w-10">#</th>
-                  <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-400 uppercase">Check #</th>
-                  <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-400 uppercase">Payee</th>
-                  <th className="text-right py-3 px-3 text-[10px] font-bold text-gray-400 uppercase">Amount</th>
-                  <th className="text-center py-3 px-3 text-[10px] font-bold text-gray-400 uppercase">Date</th>
-                  <th className="text-left py-3 px-3 text-[10px] font-bold text-gray-400 uppercase">Account</th>
-                  <th className="text-left py-3 px-3 text-[10px] font-bold text-gray-400 uppercase">Type</th>
-                  <th className="text-left py-3 px-4 text-[10px] font-bold text-gray-400 uppercase">Memo</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {qbEntries?.map((e: any, i: number) => (
-                  <tr key={e.id} className="hover:bg-gray-50">
-                    <td className="py-2.5 px-2 text-center text-[10px] text-gray-300 font-mono">{i + 1}</td>
-                    <td className="py-2.5 px-4 text-xs text-gray-700 font-mono">{e.check_number || '—'}</td>
-                    <td className="py-2.5 px-4 text-xs text-gray-700">{e.payee || '—'}</td>
-                    <td className="py-2.5 px-3 text-right text-xs text-gray-700 font-mono">{e.amount ? `$${Number(e.amount).toFixed(2)}` : '—'}</td>
-                    <td className="py-2.5 px-3 text-center text-[11px] text-gray-400">{e.date || '—'}</td>
-                    <td className="py-2.5 px-3 text-xs text-gray-500 truncate max-w-[120px]">{e.account || '—'}</td>
-                    <td className="py-2.5 px-3">
-                      <span className="px-1.5 py-0.5 rounded text-[8px] font-bold uppercase bg-sky-50 text-sky-600">{e.qb_source?.replace(/_/g, ' ')}</span>
-                    </td>
-                    <td className="py-2.5 px-4 text-[11px] text-gray-400 truncate max-w-[160px]">{e.memo || '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          {(!qbEntries || qbEntries.length === 0) && (<div className="py-8 text-center text-xs text-gray-300">No QuickBooks data synced for this account</div>)}
-        </div>
+          <Table className={DENSE_LOG}>
+            <Thead>
+              <Tr>
+                <Th className="w-10 px-2 text-center">#</Th>
+                <Th>Check #</Th>
+                <Th>Payee</Th>
+                <Th numeric>Amount</Th>
+                <Th numeric>Date</Th>
+                <Th>Account</Th>
+                <Th>Type</Th>
+                <Th>Memo</Th>
+              </Tr>
+            </Thead>
+            <Tbody>
+              {qbEntries?.map((e: any, i: number) => (
+                <Tr key={e.id} interactive>
+                  <Td muted className="px-2 text-center font-mono text-xs">{i + 1}</Td>
+                  <Td className="nums font-mono text-sm">{e.check_number || '—'}</Td>
+                  <Td className="text-sm">{e.payee || '—'}</Td>
+                  <Td numeric className="nums-money text-sm">{e.amount ? `$${Number(e.amount).toFixed(2)}` : '—'}</Td>
+                  <Td numeric muted className="text-xs">{e.date || '—'}</Td>
+                  <Td muted className="max-w-[120px] truncate text-sm">{e.account || '—'}</Td>
+                  <Td><Badge tone="outline" size="sm" className="uppercase">{e.qb_source?.replace(/_/g, ' ')}</Badge></Td>
+                  <Td muted className="max-w-[160px] truncate text-xs">{e.memo || '—'}</Td>
+                </Tr>
+              ))}
+            </Tbody>
+          </Table>
+          {(!qbEntries || qbEntries.length === 0) && (<div className="py-8 text-center text-sm text-ink-faint">No QuickBooks data synced for this account</div>)}
+        </GlassCard>
       )}
     </div>
   );

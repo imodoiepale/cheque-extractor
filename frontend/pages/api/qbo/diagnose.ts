@@ -1,5 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createAuthenticatedClient } from '@/lib/supabase/api';
+import { getQbToken } from '@/lib/qb-token';
 
 const QBO_BASE = 'https://quickbooks.api.intuit.com';
 
@@ -29,147 +30,61 @@ export default async function handler(
   try {
     const supabase = createAuthenticatedClient(req);
 
-    // Step 1: Read active QB connection (qb_connections first — same source as pull-checks.ts & extension)
-    let integration: any = null;
-    let connectionSource = 'none';
-
-    // 1a. Try qb_connections (multi-company, active connection — canonical source)
-    try {
-      const { data: activeConn } = await supabase
-        .from('qb_connections')
-        .select('access_token, refresh_token, realm_id, token_expires_at, company_name, connected_at, is_active')
-        .eq('is_active', true)
-        .order('connected_at', { ascending: false })
-        .limit(1)
-        .single();
-
-      if (activeConn?.access_token && activeConn?.realm_id) {
-        // Read client credentials from integrations table (secrets stored there)
-        const { data: creds } = await supabase
-          .from('integrations')
-          .select('qb_client_id, qb_client_secret')
-          .eq('provider', 'quickbooks')
-          .maybeSingle();
-
-        integration = {
-          access_token: activeConn.access_token,
-          refresh_token: activeConn.refresh_token,
-          realm_id: activeConn.realm_id,
-          expires_at: activeConn.token_expires_at,
-          company_name: activeConn.company_name,
-          updated_at: activeConn.connected_at,
-          qb_client_id: creds?.qb_client_id,
-          qb_client_secret: creds?.qb_client_secret,
-        };
-        connectionSource = 'qb_connections';
-      }
-    } catch (_) {
-      // Fall through to integrations fallback
-    }
-
-    // 1b. Fallback: legacy integrations table (single-company)
-    if (!integration) {
-      const { data: legacyInt, error: dbError } = await supabase
-        .from('integrations')
-        .select('access_token, refresh_token, realm_id, expires_at, qb_client_id, qb_client_secret, company_name, updated_at')
-        .eq('provider', 'quickbooks')
-        .single();
-
-      if (legacyInt?.access_token && legacyInt?.realm_id) {
-        integration = legacyInt;
-        connectionSource = 'integrations';
-      }
-
-      if (dbError && !integration) {
-        diagnostics.steps.push({
-          step: '1_read_connection',
-          success: false,
-          error: dbError.message,
-          source: 'integrations (fallback)',
-        });
-      }
-    }
+    // Steps 1 and 2 are now one call into the single resolver
+    // (lib/qb-token.ts): it reads qb_connections first, falls back to the
+    // legacy integrations row, trims the credentials, refreshes when stale,
+    // writes the new token to both stores and records connection health.
+    //
+    // Deliberate difference kept: this is a DIAGNOSTIC, so every outcome is
+    // REPORTED as a step with HTTP 200 rather than thrown or returned as an
+    // error status. That is the whole point of the endpoint.
+    const token = await getQbToken(supabase);
 
     diagnostics.steps.push({
       step: '1_read_connection',
-      success: !!integration,
-      source: connectionSource,
-      data: integration ? {
-        hasAccessToken: !!integration.access_token,
-        hasRefreshToken: !!integration.refresh_token,
-        realmId: integration.realm_id,
-        companyName: integration.company_name,
-        expiresAt: integration.expires_at,
-        tokenExpired: new Date(integration.expires_at) <= new Date(),
-        updatedAt: integration.updated_at,
-        hasClientId: !!integration.qb_client_id,
-        hasClientSecret: !!integration.qb_client_secret,
-      } : null,
+      success: token.connection !== null,
+      source: token.connection?.source ?? 'none',
+      data: token.connection
+        ? {
+            hasAccessToken: !!token.connection.accessToken,
+            hasRefreshToken: !!token.connection.refreshToken,
+            realmId: token.connection.realmId,
+            companyName: token.connection.companyName,
+            expiresAt: token.connection.expiresAt,
+            tokenExpired: !token.ok || token.refreshed,
+            hasClientId: !!token.connection.clientId,
+            hasClientSecret: !!token.connection.clientSecret,
+          }
+        : null,
     });
 
-    if (!integration?.access_token || !integration?.realm_id) {
-      diagnostics.conclusion = 'FAIL: No valid QB connection found. Check qb_connections (active) and integrations tables.';
+    if (!token.ok && token.reason === 'not_connected') {
+      diagnostics.conclusion =
+        'FAIL: No valid QB connection found. Check qb_connections (active) and integrations tables.';
       return res.status(200).json(diagnostics);
     }
 
-    // Step 2: Refresh token if expired
-    let accessToken = integration.access_token;
-    const tokenExpired = new Date(integration.expires_at) <= new Date();
-
-    if (tokenExpired) {
-      const clientId = integration.qb_client_id || process.env.QUICKBOOKS_CLIENT_ID;
-      const clientSecret = integration.qb_client_secret || process.env.QUICKBOOKS_CLIENT_SECRET;
-
-      if (!clientId || !clientSecret) {
-        diagnostics.steps.push({ step: '2_refresh_token', success: false, error: 'Missing client credentials for refresh' });
-        diagnostics.conclusion = 'FAIL: Token expired and no credentials to refresh';
-        return res.status(200).json(diagnostics);
-      }
-
-      try {
-        const tokenRes = await fetch('https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer', {
-          method: 'POST',
-          headers: {
-            'Accept': 'application/json',
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'Authorization': `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString('base64')}`,
-          },
-          body: new URLSearchParams({
-            grant_type: 'refresh_token',
-            refresh_token: integration.refresh_token,
-          }),
-        });
-
-        if (!tokenRes.ok) {
-          const errText = await tokenRes.text();
-          diagnostics.steps.push({ step: '2_refresh_token', success: false, error: `Refresh failed (${tokenRes.status}): ${errText}` });
-          diagnostics.conclusion = 'FAIL: Token expired and refresh failed. Reconnect to QuickBooks.';
-          return res.status(200).json(diagnostics);
-        }
-
-        const newTokens = await tokenRes.json();
-        accessToken = newTokens.access_token;
-
-        await supabase
-          .from('integrations')
-          .update({
-            access_token: newTokens.access_token,
-            refresh_token: newTokens.refresh_token,
-            expires_at: new Date(Date.now() + newTokens.expires_in * 1000).toISOString(),
-          })
-          .eq('provider', 'quickbooks');
-
-        diagnostics.steps.push({ step: '2_refresh_token', success: true, message: 'Token refreshed successfully' });
-      } catch (refreshErr: any) {
-        diagnostics.steps.push({ step: '2_refresh_token', success: false, error: refreshErr.message });
-        diagnostics.conclusion = 'FAIL: Token refresh threw an exception';
-        return res.status(200).json(diagnostics);
-      }
-    } else {
-      diagnostics.steps.push({ step: '2_refresh_token', success: true, message: 'Token still valid, no refresh needed' });
+    if (!token.ok) {
+      diagnostics.steps.push({
+        step: '2_refresh_token',
+        success: false,
+        error: `${token.detail} [${token.reason}, health=${token.health}]`,
+      });
+      diagnostics.conclusion =
+        token.reason === 'missing_credentials'
+          ? 'FAIL: Token expired and no credentials to refresh'
+          : 'FAIL: Token expired and refresh failed. Reconnect to QuickBooks.';
+      return res.status(200).json(diagnostics);
     }
 
-    const realmId = integration.realm_id;
+    diagnostics.steps.push({
+      step: '2_refresh_token',
+      success: true,
+      message: token.refreshed ? 'Token refreshed successfully' : 'Token still valid, no refresh needed',
+    });
+
+    const accessToken = token.accessToken;
+    const realmId = token.connection.realmId;
 
     // Step 3: Verify company info (confirm realmId)
     try {

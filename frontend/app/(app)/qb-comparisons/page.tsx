@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Settings, Loader2, AlertCircle, RefreshCw, Upload, Trash2, CheckCircle2, AlertTriangle, Wrench } from 'lucide-react';
+import { Settings, Loader2, AlertCircle, RefreshCw, Upload, Trash2, AlertTriangle, Wrench } from 'lucide-react';
+import { Badge, Button, Dialog, GlassCard, Toast } from '@/components/ui';
 import { applyFixesToQB, computeCorrections } from './utils/fixDiscrepancy';
 import { QBCompanySwitcher } from '@/components/QBCompanySwitcher';
 import Link from 'next/link';
@@ -25,6 +26,13 @@ import {
 } from './utils/comparisonUtils';
 import { exportToCSV, exportToExcel } from './utils/exportUtils';
 import { createClient } from '@/lib/supabase/client';
+
+/** The three outcomes of vouching a cheque that QuickBooks does not have. */
+const VOUCH_TARGETS = [
+  { kind: 'Deposit' as const, glyph: 'D', title: 'Create as Deposit', hint: 'Best for received / incoming cheques' },
+  { kind: 'Purchase' as const, glyph: 'P', title: 'Create as Purchase / Cheque Written', hint: 'Best for outgoing / written cheques' },
+  { kind: 'local' as const, glyph: 'K', title: 'Vouch in Kyriq only', hint: "Mark as resolved — don't touch QB" },
+];
 
 export default function QBComparisonsPage() {
   const { loading, extractions, qbEntries, qbSources, error, refreshData } = useComparisonData();
@@ -704,173 +712,154 @@ export default function QBComparisonsPage() {
 
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-red-600 mb-2">Error Loading Data</h1>
-          <p className="text-gray-600 mb-4">{error}</p>
-          <button
-            onClick={() => window.location.reload()}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-          >
+      <div className="flex min-h-[60vh] items-center justify-center p-6">
+        <GlassCard padding="lg" className="max-w-md text-center" reveal>
+          <h1 className="font-heading text-2xl font-semibold text-error-text">
+            Error Loading Data
+          </h1>
+          <p className="mt-2 text-sm text-ink-body">{error}</p>
+          <Button className="mt-5" onClick={() => window.location.reload()}>
             Retry
-          </button>
-        </div>
+          </Button>
+        </GlassCard>
       </div>
     );
   }
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
-      {/* Approve/action toast notification */}
+    /* One scroll container on this page: below md the document scrolls and the
+       grid is height-capped; from md up the page is pinned to the viewport and
+       the ONLY scrollbar is the table's own (see ComparisonTable). */
+    <div data-tone="brand" className="flex flex-col pb-4 md:h-screen md:overflow-hidden md:pb-0">
       {toast && (
-        <div className={`fixed top-4 right-4 z-[9999] flex items-center gap-3 px-5 py-3 rounded-xl shadow-lg text-sm font-medium transition-all ${
-          toast.type === 'success' ? 'bg-emerald-600 text-white' :
-          toast.type === 'warning' ? 'bg-amber-500 text-white' :
-          'bg-red-600 text-white'
-        }`}>
-          {toast.type === 'success' ? <CheckCircle2 size={18} /> : <AlertTriangle size={18} />}
-          {toast.message}
+        <div className="fixed right-4 top-4 z-[9999] w-[min(28rem,calc(100vw-2rem))]">
+          <Toast
+            tone={toast.type === 'success' ? 'success' : toast.type === 'warning' ? 'warning' : 'error'}
+            title={toast.message}
+          />
         </div>
       )}
-      {/* QB Connection Status Banner - Clickable to go to Settings */}
-      {!loading && qbEntries.length === 0 && (
-        <Link href="/settings">
-          <div className="bg-gradient-to-r from-red-600 to-red-700 px-4 py-3 text-white cursor-pointer hover:from-red-700 hover:to-red-800 transition-all">
-            <div className="flex items-center justify-between max-w-7xl mx-auto">
-              <div className="flex items-center gap-3">
-                <AlertCircle size={20} />
-                <div>
-                  <p className="font-semibold text-sm">No QuickBooks Data Found - Click to Configure</p>
-                  <p className="text-xs text-white/90">
-                    {qbConnected 
-                      ? syncing 
-                        ? 'Syncing from QuickBooks Online...' 
-                        : 'Connected to QuickBooks but no data synced yet. Click to sync.'
-                      : 'Not connected to QuickBooks Online. Click to connect.'}
-                  </p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                {qbConnected ? (
-                  <button
-                    onClick={(e) => {
-                      e.preventDefault();
-                      handleAutoSync();
-                    }}
-                    disabled={syncing}
-                    className="px-4 py-2 bg-white text-red-600 rounded-lg hover:bg-red-50 text-sm font-medium transition disabled:opacity-50 flex items-center gap-2"
-                  >
-                    {syncing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                    {syncing ? 'Syncing...' : 'Sync from QuickBooks'}
-                  </button>
-                ) : (
-                  <button className="px-4 py-2 bg-white text-red-600 rounded-lg hover:bg-red-50 text-sm font-medium transition">
-                    Connect QuickBooks
-                  </button>
-                )}
-                <button
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setShowUploadModal(true);
-                  }}
-                  className="px-4 py-2 bg-white/20 text-white border border-white/30 rounded-lg hover:bg-white/30 text-sm font-medium transition flex items-center gap-2"
-                >
-                  <Upload size={14} />
-                  Upload .QBO File
-                </button>
-              </div>
-            </div>
-          </div>
-        </Link>
-      )}
-      
-      <div className="bg-gradient-to-r from-slate-800 to-slate-900 border-b border-slate-700 px-4 py-3 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold text-white">QuickBooks Comparisons</h1>
-          <p className="text-xs text-slate-300 mt-0.5">
-            Intelligent matching between QuickBooks data and cheque extractions
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          {/* Company switcher — dark-mode variant */}
-          <QBCompanySwitcher className="[&>*]:!bg-slate-700 [&>*]:!border-slate-600 [&>*]:!text-slate-200" />
-          {/* QB Data Source Toggle */}
-          <div className="flex items-center gap-1 bg-slate-700 rounded-lg p-1">
-            <button
-              onClick={() => setQbDataSource('online')}
-              className={`px-3 py-1 rounded text-xs font-medium transition ${
-                qbDataSource === 'online'
-                  ? 'bg-blue-500 text-white'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              QB Online
-            </button>
-            <button
-              onClick={() => setQbDataSource('uploaded')}
-              className={`px-3 py-1 rounded text-xs font-medium transition ${
-                qbDataSource === 'uploaded'
-                  ? 'bg-blue-500 text-white'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              Uploaded
-            </button>
-            <button
-              onClick={() => setQbDataSource('both')}
-              className={`px-3 py-1 rounded text-xs font-medium transition ${
-                qbDataSource === 'both'
-                  ? 'bg-blue-500 text-white'
-                  : 'text-slate-300 hover:text-white'
-              }`}
-            >
-              Both
-            </button>
-          </div>
-          
-          {/* Delete All QB Data Button */}
-          {qbEntries.length > 0 && (
-            <button
-              onClick={() => setShowDeleteAllModal(true)}
-              disabled={deletingAllQB}
-              className="px-3 py-1.5 bg-red-500/20 text-red-300 border border-red-500/30 rounded-lg hover:bg-red-500/30 text-xs font-medium transition disabled:opacity-50 flex items-center gap-1.5"
-            >
-              {deletingAllQB ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-              Delete All QB Data
-            </button>
-          )}
 
-          {/* QB Connection Status Badge */}
-          <div className="flex items-center gap-2">
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium ${
-              qbConnected 
-                ? 'bg-green-500/20 text-green-300 border border-green-500/30' 
-                : qbConfigured
-                  ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
-                  : 'bg-slate-700 text-slate-300 border border-slate-600'
-            }`}>
-              <div className={`w-2 h-2 rounded-full ${
-                qbConnected ? 'bg-green-400 animate-pulse' : qbConfigured ? 'bg-amber-400' : 'bg-slate-400'
-              }`}></div>
-              <span>
-                {qbConnected ? 'QB Connected' : qbConfigured ? 'QB Configured' : 'QB Not Setup'}
-              </span>
-            </div>
-            {qbEntries.length > 0 && (
-              <div className="px-3 py-1.5 bg-blue-500/20 text-blue-300 border border-blue-500/30 rounded-lg text-xs font-medium">
-                {qbEntries.length} QB {qbEntries.length === 1 ? 'Entry' : 'Entries'}
+      {/* QB connection banner — the one place on this page allowed to shout,
+          so it is a solid state surface rather than glass. */}
+      {!loading && qbEntries.length === 0 && (
+        <div className="mx-4 mt-3 rounded-card border border-error-border bg-error-bg px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <Link href="/settings" className="flex min-w-0 items-center gap-3">
+              <AlertCircle size={20} className="shrink-0 text-error-text" aria-hidden />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-error-text">
+                  No QuickBooks data found — click to configure
+                </p>
+                <p className="text-xs text-ink-body">
+                  {qbConnected
+                    ? syncing
+                      ? 'Syncing from QuickBooks Online…'
+                      : 'Connected to QuickBooks but no data synced yet. Click to sync.'
+                    : 'Not connected to QuickBooks Online. Click to connect.'}
+                </p>
               </div>
-            )}
+            </Link>
+            <div className="flex items-center gap-2">
+              {qbConnected && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleAutoSync}
+                  loading={syncing}
+                  icon={<RefreshCw size={14} />}
+                >
+                  {syncing ? 'Syncing…' : 'Sync from QuickBooks'}
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setShowUploadModal(true)}
+                icon={<Upload size={14} />}
+              >
+                Upload .QBO File
+              </Button>
+            </div>
           </div>
-          <button
-            onClick={() => setShowColumnSettings(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-700 text-white rounded-lg hover:bg-slate-600 transition text-xs font-medium"
-          >
-            <Settings size={14} />
-            Columns
-          </button>
         </div>
-      </div>
+      )}
+
+      {/* Page chrome. Light glass, not the old navy slab: the dark shell is
+          what makes these surfaces read as elevated. */}
+      <GlassCard tier="chrome" padding="sm" className="mx-4 mt-3 rounded-card border">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="font-heading text-xl font-semibold text-ink-strong">
+              QuickBooks Comparisons
+            </h1>
+            <p className="text-xs text-ink-body">
+              Intelligent matching between QuickBooks data and cheque extractions
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <QBCompanySwitcher />
+
+            {/* QB data source — a segmented control on a recessed track. */}
+            <div className="glass-track inline-flex items-center rounded-pill p-1">
+              {(['online', 'uploaded', 'both'] as const).map((src) => (
+                <button
+                  key={src}
+                  type="button"
+                  aria-pressed={qbDataSource === src}
+                  onClick={() => setQbDataSource(src)}
+                  className={`press rounded-pill px-3 py-1 text-xs font-medium capitalize ${
+                    qbDataSource === src
+                      ? 'bg-brand text-white shadow-brand-glow'
+                      : 'text-ink-body hover:text-ink-strong'
+                  }`}
+                >
+                  {src === 'online' ? 'QB Online' : src}
+                </button>
+              ))}
+            </div>
+
+            {qbEntries.length > 0 && (
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setShowDeleteAllModal(true)}
+                loading={deletingAllQB}
+                icon={<Trash2 size={12} />}
+                className="text-error-text"
+              >
+                Delete All QB Data
+              </Button>
+            )}
+
+            <Badge tone={qbConnected ? 'success' : qbConfigured ? 'warning' : 'neutral'}>
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  qbConnected ? 'animate-pulse bg-success' : qbConfigured ? 'bg-warning' : 'bg-ink-faint'
+                }`}
+                aria-hidden
+              />
+              {qbConnected ? 'QB Connected' : qbConfigured ? 'QB Configured' : 'QB Not Setup'}
+            </Badge>
+
+            {qbEntries.length > 0 && (
+              <Badge tone="brand" className="nums">
+                {qbEntries.length} QB {qbEntries.length === 1 ? 'Entry' : 'Entries'}
+              </Badge>
+            )}
+
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setShowColumnSettings(true)}
+              icon={<Settings size={14} />}
+            >
+              Columns
+            </Button>
+          </div>
+        </div>
+      </GlassCard>
 
       <StatisticsPanel
         total={statistics.total}
@@ -887,68 +876,67 @@ export default function QBComparisonsPage() {
         ).length;
         if (fixableCount === 0) return null;
         return (
-          <div className="mx-4 mt-2 flex items-center gap-3 px-4 py-2.5 bg-amber-50 border border-amber-200 rounded-lg">
-            <AlertTriangle size={16} className="text-amber-600 flex-shrink-0" />
-            <div className="flex-1 text-sm text-amber-900">
-              <strong>{fixableCount}</strong> discrepanc{fixableCount === 1 ? 'y has' : 'ies have'} differences that can be pushed to QuickBooks
+          <div className="mx-4 mt-3 flex flex-wrap items-center gap-3 rounded-card border border-warning-border bg-warning-bg px-4 py-2.5">
+            <AlertTriangle size={16} className="flex-shrink-0 text-warning-text" aria-hidden />
+            <div className="flex-1 text-sm text-warning-text">
+              <strong className="nums">{fixableCount}</strong> discrepanc{fixableCount === 1 ? 'y has' : 'ies have'} differences that can be pushed to QuickBooks
               (amount, date, or check#).
             </div>
             {fixingAll && fixAllProgress && (
-              <span className="text-xs font-medium text-amber-700">
+              <span className="nums text-xs font-medium text-warning-text">
                 {fixAllProgress.done}/{fixAllProgress.total}…
               </span>
             )}
-            <button
+            <Button
+              size="sm"
               onClick={() => setShowFixAllConfirm(true)}
-              disabled={fixingAll}
-              className="flex items-center gap-2 px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-semibold transition disabled:opacity-50"
+              loading={fixingAll}
+              icon={<Wrench size={14} />}
             >
-              {fixingAll ? <Loader2 size={14} className="animate-spin" /> : <Wrench size={14} />}
               {fixingAll ? 'Fixing…' : `Fix All (${fixableCount})`}
-            </button>
+            </Button>
           </div>
         );
       })()}
 
-      {/* Fix All confirmation modal */}
-      {showFixAllConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]" onClick={() => !fixingAll && setShowFixAllConfirm(false)}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden" onClick={(e) => e.stopPropagation()}>
-            <div className="bg-gradient-to-r from-amber-500 to-amber-600 px-6 py-4">
-              <h2 className="text-white font-bold text-lg flex items-center gap-2">
-                <Wrench size={20} /> Fix All Discrepancies in QuickBooks?
-              </h2>
-            </div>
-            <div className="p-6 space-y-3">
-              <p className="text-sm text-gray-700">
-                This will push the cheque extraction values (amount, date, check #) to QuickBooks
-                for every mismatched row that has actual differences. Rows with no diffs will be skipped.
-              </p>
-              <p className="text-xs text-gray-500">
-                Note: BillPayment amounts cannot be changed via the QuickBooks API. Those rows will be reported as failed
-                — adjust the linked Bill in QuickBooks instead.
-              </p>
-            </div>
-            <div className="bg-gray-50 px-6 py-3 flex justify-end gap-2">
-              <button
-                onClick={() => setShowFixAllConfirm(false)}
-                disabled={fixingAll}
-                className="px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-lg text-sm font-semibold hover:bg-gray-100 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleFixAllDiscrepancies}
-                disabled={fixingAll}
-                className="flex items-center gap-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-semibold transition disabled:opacity-50"
-              >
-                {fixingAll ? <Loader2 size={14} className="animate-spin" /> : <Wrench size={14} />}
-                {fixingAll ? `Fixing ${fixAllProgress?.done || 0}/${fixAllProgress?.total || 0}…` : 'Fix All'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Fix All confirmation */}
+      <Dialog
+        open={showFixAllConfirm}
+        onClose={() => !fixingAll && setShowFixAllConfirm(false)}
+        size="md"
+        title="Fix All Discrepancies in QuickBooks?"
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => setShowFixAllConfirm(false)}
+              disabled={fixingAll}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              onClick={handleFixAllDiscrepancies}
+              loading={fixingAll}
+              icon={<Wrench size={14} />}
+            >
+              {fixingAll
+                ? `Fixing ${fixAllProgress?.done || 0}/${fixAllProgress?.total || 0}…`
+                : 'Fix All'}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-ink-body">
+          This will push the cheque extraction values (amount, date, check #) to QuickBooks for
+          every mismatched row that has actual differences. Rows with no diffs will be skipped.
+        </p>
+        <p className="mt-2 text-xs text-ink-faint">
+          Note: BillPayment amounts cannot be changed via the QuickBooks API. Those rows will be
+          reported as failed — adjust the linked Bill in QuickBooks instead.
+        </p>
+      </Dialog>
 
       <ComparisonControlsBar
         searchQuery={searchQuery}
@@ -983,28 +971,28 @@ export default function QBComparisonsPage() {
         setDateFormat={setDateFormat}
       />
 
-      <div className="flex-1 flex flex-col overflow-hidden">
-        <div className="flex-1 bg-white mx-4 my-4 rounded-xl shadow-lg border border-gray-200 overflow-hidden flex flex-col">
-          <ComparisonTable
-            data={comparisonData}
-            sortField={sortField}
-            sortDirection={sortDirection}
-            visibleColumns={visibleColumns}
-            dateFormat={dateFormat}
-            onSort={handleSort}
-            onRowClick={setSelectedRow}
-            currentPage={currentPage}
-            itemsPerPage={itemsPerPage}
-            onVouch={handleVouch}
-            onUnvouch={handleUnvouch}
-            vouchingId={vouchingId}
-            onDeleteQBEntry={handleDeleteQBEntry}
-            deletingQBEntry={deletingQBEntry}
-          />
-          
-          <Pagination
-            currentPage={currentPage}
-            totalPages={totalPages}
+      {/* The grid. Its glass shell is the surface; the pagination bar rides
+          inside it so there is no second stacked card. */}
+      <div className="flex min-h-0 flex-1 flex-col p-4">
+        <ComparisonTable
+          data={comparisonData}
+          sortField={sortField}
+          sortDirection={sortDirection}
+          visibleColumns={visibleColumns}
+          dateFormat={dateFormat}
+          onSort={handleSort}
+          onRowClick={setSelectedRow}
+          currentPage={currentPage}
+          itemsPerPage={itemsPerPage}
+          onVouch={handleVouch}
+          onUnvouch={handleUnvouch}
+          vouchingId={vouchingId}
+          onDeleteQBEntry={handleDeleteQBEntry}
+          deletingQBEntry={deletingQBEntry}
+          footer={
+            <Pagination
+              currentPage={currentPage}
+              totalPages={totalPages}
               totalItems={comparisonData.length}
               itemsPerPage={itemsPerPage}
               onPageChange={setCurrentPage}
@@ -1013,18 +1001,19 @@ export default function QBComparisonsPage() {
                 setCurrentPage(1);
               }}
             />
-        </div>
+          }
+        />
       </div>
 
-      <DetailModal 
-        row={selectedRow} 
-        onClose={() => setSelectedRow(null)} 
+      <DetailModal
+        row={selectedRow}
+        onClose={() => setSelectedRow(null)}
         onSave={(checkId, updates) => handleSaveCheck(checkId, updates, selectedRow?.extractionData?.job_id)}
         onApprove={(checkId: string) => handleApproveCheck(checkId, selectedRow?.extractionData?.job_id, selectedRow?.qbData?.id, selectedRow?.extractionData)}
         onReject={(checkId: string) => handleRejectCheck(checkId, selectedRow?.extractionData?.job_id)}
         onFixed={() => { refreshData(); }}
       />
-      
+
       <ColumnSettings
         isOpen={showColumnSettings}
         onClose={() => setShowColumnSettings(false)}
@@ -1051,69 +1040,51 @@ export default function QBComparisonsPage() {
         cancelText="Cancel"
       />
 
-      {/* Vouch → Create in QB dialog */}
-      {vouchDialog && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999]">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden">
-            <div className="bg-gradient-to-r from-slate-800 to-slate-900 px-6 py-4">
-              <h2 className="text-white font-bold text-lg">Add to QuickBooks?</h2>
-              <p className="text-slate-300 text-sm mt-1">
-                Check #{vouchDialog.row.checkNumber} · {vouchDialog.row.amount} is missing in QB.
-              </p>
-            </div>
-            <div className="p-6 space-y-3">
-              <p className="text-sm text-gray-600 mb-4">
-                Would you like to create this check in QuickBooks before vouching, or just mark it as resolved in Kyriq?
-              </p>
-              <button
-                onClick={() => handleVouchConfirm('Deposit')}
-                disabled={vouchingToQB}
-                className="w-full flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl hover:bg-blue-100 transition disabled:opacity-50 text-left"
-              >
-                <div className="w-9 h-9 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-sm flex-shrink-0">D</div>
-                <div>
-                  <div className="font-semibold text-sm text-gray-800">Create as Deposit</div>
-                  <div className="text-xs text-gray-500">Best for received / incoming checks</div>
-                </div>
-              </button>
-              <button
-                onClick={() => handleVouchConfirm('Purchase')}
-                disabled={vouchingToQB}
-                className="w-full flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl hover:bg-emerald-100 transition disabled:opacity-50 text-left"
-              >
-                <div className="w-9 h-9 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-700 font-bold text-sm flex-shrink-0">P</div>
-                <div>
-                  <div className="font-semibold text-sm text-gray-800">Create as Purchase / Check Written</div>
-                  <div className="text-xs text-gray-500">Best for outgoing / written checks</div>
-                </div>
-              </button>
-              <button
-                onClick={() => handleVouchConfirm('local')}
-                disabled={vouchingToQB}
-                className="w-full flex items-center gap-3 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl hover:bg-gray-100 transition disabled:opacity-50 text-left"
-              >
-                <div className="w-9 h-9 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 font-bold text-sm flex-shrink-0">K</div>
-                <div>
-                  <div className="font-semibold text-sm text-gray-800">Vouch in Kyriq only</div>
-                  <div className="text-xs text-gray-500">Mark as resolved — don't touch QB</div>
-                </div>
-              </button>
-              <button
-                onClick={() => setVouchDialog(null)}
-                className="w-full mt-2 text-sm text-gray-400 hover:text-gray-600 transition py-2"
-              >
-                Cancel
-              </button>
-            </div>
-            {vouchingToQB && (
-              <div className="px-6 pb-4 flex items-center gap-2 text-sm text-blue-600">
-                <Loader2 size={14} className="animate-spin" />
-                Creating in QuickBooks...
-              </div>
-            )}
-          </div>
+      {/* Vouch → create in QB */}
+      <Dialog
+        open={Boolean(vouchDialog)}
+        onClose={() => setVouchDialog(null)}
+        size="md"
+        title="Add to QuickBooks?"
+        description={
+          vouchDialog
+            ? `Check #${vouchDialog.row.checkNumber} · ${vouchDialog.row.amount} is missing in QB.`
+            : undefined
+        }
+      >
+        <p className="mb-4 text-sm text-ink-body">
+          Would you like to create this check in QuickBooks before vouching, or just mark it as
+          resolved in Kyriq?
+        </p>
+        <div className="space-y-2">
+          {VOUCH_TARGETS.map((target) => (
+            <button
+              key={target.kind}
+              type="button"
+              onClick={() => handleVouchConfirm(target.kind)}
+              disabled={vouchingToQB}
+              className="press flex w-full items-center gap-3 rounded-input border border-glass-hairline bg-white/60 px-4 py-3 text-left hover:bg-white/90 disabled:opacity-disabled"
+            >
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-brand/[0.12] text-sm font-bold text-brand-deep">
+                {target.glyph}
+              </span>
+              <span>
+                <span className="block text-sm font-semibold text-ink-strong">{target.title}</span>
+                <span className="block text-xs text-ink-faint">{target.hint}</span>
+              </span>
+            </button>
+          ))}
+          <Button block variant="ghost" size="sm" onClick={() => setVouchDialog(null)}>
+            Cancel
+          </Button>
         </div>
-      )}
+        {vouchingToQB && (
+          <p className="mt-3 flex items-center gap-2 text-sm text-brand-deep">
+            <Loader2 size={14} className="animate-spin" aria-hidden />
+            Creating in QuickBooks…
+          </p>
+        )}
+      </Dialog>
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
+import { requireProcessingAllowed } from '@/lib/usage-gate'
 
 const PYTHON_API = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090'
 
@@ -8,10 +9,21 @@ export const config = {
     },
 }
 
+/**
+ * POST /api/upload-analyze?confirm_reupload=true
+ *
+ * Upload + cheque detection. Gated as well as extraction, so a firm past its
+ * trial cannot queue work it will never be able to process. The bearer token is
+ * forwarded so the backend can resolve the tenant and record the upload
+ * fingerprint (migration 028) that backs the duplicate warning.
+ */
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' })
     }
+
+    const gate = await requireProcessingAllowed(req, res)
+    if (!gate) return
 
     try {
         const chunks: Buffer[] = []
@@ -20,14 +32,25 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
         const body = Buffer.concat(chunks)
 
-        // Forward to Python API - upload-analyze endpoint (upload + detect cheques, no extraction)
-        const response = await fetch(`${PYTHON_API}/api/upload-analyze`, {
-            method: 'POST',
-            headers: {
-                'content-type': req.headers['content-type'] || 'application/octet-stream',
-            },
-            body,
-        })
+        const confirmReupload =
+            req.query.confirm_reupload === 'true' || req.query.confirm_reupload === '1'
+
+        const headers: Record<string, string> = {
+            'content-type': req.headers['content-type'] || 'application/octet-stream',
+        }
+        if (gate.accessToken) headers.Authorization = `Bearer ${gate.accessToken}`
+
+        // batch_id attaches this PDF to a reconciliation run (migration 032).
+        // Shape-checked here and re-validated against the tenant by the
+        // backend, which is the only side that knows whose batch it is.
+        const batchId = String(req.query.batch_id || '')
+        const batchParam =
+            /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(batchId)
+                ? `&batch_id=${batchId}`
+                : ''
+
+        const url = `${PYTHON_API}/api/upload-analyze?confirm_reupload=${confirmReupload}${batchParam}`
+        const response = await fetch(url, { method: 'POST', headers, body })
 
         const data = await response.json()
 

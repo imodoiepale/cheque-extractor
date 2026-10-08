@@ -84,17 +84,56 @@ elif OPENAI_API_KEY and not OPENAI_AVAILABLE:
 #  AUTOMATIC VISION DETECTOR (OpenCV)
 # ═════════════════════════════════════════════════════════════════════
 
-def determine_predominant_format(pages, sample_count=3):
-    """
-    Analyze the first few pages of a PDF to determine the predominant
-    detection format used throughout the document.
-    Returns 'A' (contour/bordered), 'B' (line-grid), or None (unknown).
-    """
-    votes = {"A": 0, "B": 0}
-    sample = pages[:min(sample_count, len(pages))]
+# The bottom strip of a region, where a cheque's MICR line sits. A region has to
+# clear BOTH of these to be treated as a cheque front at all: enough ink, and
+# that ink spread down the strip rather than concentrated in a rule or two.
+MICR_MIN = 0.12
+MICR_STRONG = 0.25
+MICR_ROW_MIN = 0.40
 
-    for page in sample:
-        img = np.array(page)
+# A page needs at least one region this confident to count as a cheque page.
+REGION_CONFIDENCE_PAGE_MIN = 0.60
+# Once a page qualifies, individual regions below this are dropped.
+REGION_CONFIDENCE_BOX_MIN = 0.40
+
+
+def determine_predominant_format(pages, sample_count=8):
+    """
+    Analyze a sample of pages to determine the predominant detection format
+    used throughout the document.
+    Returns 'A' (contour/bordered), 'B' (line-grid), or None (unknown).
+
+    Two things this gets right that the original did not:
+
+    1. The sample is spread evenly across the document rather than taken from
+       the front. A bank statement opens with pages of text and only reaches the
+       cheque images later, so sampling the first three pages set the hint from
+       pages that contained no cheques at all.
+
+    2. Only pages that actually look like cheque pages get a vote. A ruled
+       transaction table reads as a line-grid, so on a 40-page statement holding
+       6 cheques a plain majority vote would be decided by the 34 pages with no
+       cheques on them. A page votes only if one of the detectors found a region
+       that clears the cheque-confidence bar.
+
+    Returning None is a safe answer, not a failure: the caller then auto-detects
+    per page.
+    """
+    if not pages:
+        return None
+
+    n = len(pages)
+    k = max(1, min(sample_count, n))
+    # Evenly spaced indices across the whole document, endpoints included.
+    if k == 1:
+        indices = [0]
+    else:
+        indices = sorted({round(i * (n - 1) / (k - 1)) for i in range(k)})
+
+    votes = {"A": 0, "B": 0}
+
+    for idx in indices:
+        img = np.array(pages[idx])
         gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
         h, w = gray.shape
         _, bw = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY_INV)
@@ -102,20 +141,107 @@ def determine_predominant_format(pages, sample_count=3):
         contour_boxes = _deduplicate_boxes(_detect_by_contours(bw, h, w))
         grid_boxes = _detect_by_line_grid(bw, gray, h, w)
 
-        avg_cw = 0
-        if contour_boxes:
-            avg_cw = np.mean([b[2] - b[0] for b in contour_boxes]) / w
+        # Keep only regions that look like cheques, so statement pages abstain
+        # rather than voting for the format their ruled tables resemble.
+        conf_contour = [b for b in contour_boxes
+                        if _region_confidence(b, gray, h, w) >= REGION_CONFIDENCE_PAGE_MIN]
+        conf_grid = [b for b in grid_boxes
+                     if _region_confidence(b, gray, h, w) >= REGION_CONFIDENCE_PAGE_MIN]
 
-        if len(contour_boxes) >= 2 and avg_cw > 0.25:
+        if not conf_contour and not conf_grid:
+            continue
+
+        avg_cw = np.mean([b[2] - b[0] for b in conf_contour]) / w if conf_contour else 0
+
+        if len(conf_contour) >= 2 and avg_cw > 0.25:
             votes["A"] += 1
-        elif len(grid_boxes) >= 4:
+        elif len(conf_grid) >= 4:
+            votes["B"] += 1
+        elif conf_contour:
+            votes["A"] += 1
+        elif conf_grid:
             votes["B"] += 1
 
     if votes["A"] > votes["B"]:
         return "A"
-    elif votes["B"] > votes["A"]:
+    if votes["B"] > votes["A"]:
         return "B"
     return None
+
+
+def _region_confidence(box, gray, h, w):
+    """
+    How much a detected region looks like an actual cheque front, 0.0 to 1.0.
+
+    Ruled tables on a bank statement produce boxes that pass the geometry and ink
+    filters, so geometry alone cannot tell a cheque from a block of statement
+    rows — measured on the fixtures in `check_detection_check.py`, geometry and
+    ink score a statement block as highly as a cheque.
+
+    What does separate them is the MICR strip along the bottom edge. A cheque
+    front always has one; a statement row never does. So it is treated as close
+    to necessary rather than as one bonus among several, and the remaining
+    signals only rank the regions that already have it.
+
+    ponytail: the MICR thresholds below are tuned on synthetic fixtures, not on
+    real scans. Validate against the 428-cheque batch and the bank statements
+    Michael is using before trusting the numbers; the shape of the heuristic
+    should hold even if the constants move.
+    """
+    x1, y1, x2, y2 = box
+    roi = gray[y1:y2, x1:x2]
+    if roi.size == 0:
+        return 0.0
+
+    bh, bw2 = roi.shape
+    _, roi_bw = cv2.threshold(roi, 200, 255, cv2.THRESH_BINARY_INV)
+    ink = np.sum(roi_bw > 0) / max(roi_bw.size, 1)
+
+    # ── The MICR strip, the decisive signal ───────────────────────
+    # Ink alone is not enough: a horizontal table rule along the bottom of a
+    # statement row puts just as much ink in the strip as a MICR line does.
+    # What differs is the structure. MICR is a band of characters that fills most
+    # of the strip's height, so most of its rows carry ink; a rule inks two or
+    # three rows and leaves the rest blank. Measured on the fixtures: a cheque's
+    # strip inks 67% of its rows, a ruled statement row 19%.
+    bottom = roi_bw[-max(int(bh * 0.18), 8):, :]
+    bottom_ink = np.sum(bottom > 0) / max(bottom.size, 1)
+    bottom_rows = np.sum(bottom, axis=1) / 255
+    bottom_row_frac = np.sum(bottom_rows > bw2 * 0.05) / max(bottom.shape[0], 1)
+
+    if bottom_row_frac < MICR_ROW_MIN or bottom_ink < MICR_MIN:
+        # No MICR band. Whatever else this region looks like, it is not a cheque
+        # front, so it can never clear the page gate on geometry alone.
+        return 0.0
+
+    micr = 0.45 if bottom_ink >= MICR_STRONG else 0.25
+
+    score = micr
+
+    # ── Geometry: a cheque is a wide, substantial block ───────────
+    if (x2 - x1) / max(w, 1) >= 0.30:
+        score += 0.10
+    if 0.05 <= (y2 - y1) / max(h, 1) <= 0.25:
+        score += 0.10
+    ar = (x2 - x1) / max(y2 - y1, 1)
+    if 1.6 <= ar <= 4.0:
+        score += 0.10
+    elif 1.2 <= ar <= 7.0:
+        score += 0.04
+
+    # ── Ink: sparse fields, not an empty cell and not dense prose ─
+    if 0.04 <= ink <= 0.35:
+        score += 0.10
+    elif ink > 0.45:
+        score -= 0.10
+
+    # ── Field structure: a handful of text bands, not a wall of rows
+    h_proj = np.sum(roi_bw, axis=1) / 255
+    row_frac = np.sum(h_proj > bw2 * 0.05) / max(bh, 1)
+    if 0.08 <= row_frac <= 0.45:
+        score += 0.15
+
+    return max(0.0, min(1.0, score))
 
 
 def detect_checks_on_page(pil_page, format_hint=None):
@@ -170,6 +296,10 @@ def detect_checks_on_page(pil_page, format_hint=None):
 
     merged = _deduplicate_boxes(merged)
 
+    # Drop endorsement sides. This filter already existed and was never called,
+    # so every check back was being extracted as if it were a front.
+    merged = _filter_check_backs(merged, gray)
+
     # ── Final validation ──────────────────────────────────────────
     good = []
     for (x1, y1, x2, y2) in merged:
@@ -187,12 +317,24 @@ def detect_checks_on_page(pil_page, format_hint=None):
 
     good.sort(key=lambda r: (r[1], r[0]))
 
-    # Page-level validation: skip pages with no real checks
-    # Allow even 1 check per page — many documents have 1-3 cheques per page
-    if len(good) < 1:
+    if not good:
         return []
 
-    return good
+    # ── Confidence gate ───────────────────────────────────────────
+    # Two paths above emit boxes when neither detector was confident: format A
+    # falls back to grid cells when contour detection finds none, and auto-detect
+    # keeps both detectors' output as a last resort. On a statement page of ruled
+    # tables those are false cheques, and since billing counts detected cheques,
+    # a false cheque is a billing error as well as a UX one.
+    scored = [(b, _region_confidence(b, gray, h, w)) for b in good]
+    best = max(c for _, c in scored)
+
+    # A page has to carry at least one convincing region to count as a cheque
+    # page at all; one weak box is not enough.
+    if best < REGION_CONFIDENCE_PAGE_MIN:
+        return []
+
+    return [b for b, c in scored if c >= REGION_CONFIDENCE_BOX_MIN]
 
 
 def _box_overlaps_any(box, others, threshold=0.20):

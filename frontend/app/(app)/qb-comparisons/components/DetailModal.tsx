@@ -1,5 +1,21 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, AlertCircle, FileCheck, DollarSign, Edit2, Save, XCircle, CheckCircle2, Ban, Loader2, Wrench } from 'lucide-react';
+import { AlertCircle, FileCheck, DollarSign, Edit2, Save, XCircle, CheckCircle2, Ban, Wrench } from 'lucide-react';
+import {
+  Button,
+  Dialog,
+  GlassPanel,
+  Input,
+  StatusPill,
+  Table,
+  TableScroll,
+  TableShell,
+  Tbody,
+  Td,
+  Textarea,
+  Th,
+  Tr,
+  type StatusKey,
+} from '@/components/ui';
 import {
   ComparisonRow,
   formatCurrency,
@@ -18,6 +34,50 @@ interface DetailModalProps {
   onReject?: (checkId: string) => Promise<void>;
   onFixed?: () => void;
 }
+
+/** Same vocabulary the grid uses, so a word is never two colours. */
+const MATCH_STATUS: Record<ComparisonRow['matchStatus'], { status: StatusKey; label: string }> = {
+  matched: { status: 'matched', label: 'Matched' },
+  mismatch: { status: 'review', label: 'Mismatch' },
+  'missing-in-qb': { status: 'processing', label: 'Missing in QB' },
+  'missing-in-extraction': { status: 'failed', label: 'Missing in Checks' },
+};
+
+/** Inline comparison tables sit inside the blurred modal, so: label only. */
+const SECTION_LABEL = 'mb-2 text-eyebrow text-ink-faint';
+
+/** One banner recipe for the three action outcomes. */
+const BANNER: Record<'success' | 'error' | 'info', string> = {
+  success: 'border-success-border bg-success-bg text-success-text',
+  error: 'border-error-border bg-error-bg text-error-text',
+  info: 'border-info-border bg-info-bg text-info-text',
+};
+
+/**
+ * Sticky header for a table nested INSIDE the blurred modal. Deliberately a
+ * plain <thead>, not the `Thead` primitive: `Thead` carries `.glass-chrome`,
+ * and a blurred header inside a blurred modal is two stacked backdrop filters
+ * (rule 2). The <th> cells are still the one shared `Th` recipe.
+ */
+const InsetThead: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <thead className="sticky top-0 z-10 bg-surface/95">{children}</thead>
+);
+
+/** Label + value, or label + editor in edit mode. Module scope on purpose. */
+const FieldRow: React.FC<{
+  label: string;
+  value: React.ReactNode;
+  editor?: React.ReactNode;
+  editing?: boolean;
+}> = ({ label, value, editor, editing }) => (
+  <div>
+    <span className="text-xs font-medium text-ink-faint">{label}</span>
+    {editing && editor ? editor : <p className="mt-1 text-sm font-semibold text-ink-strong">{value}</p>}
+  </div>
+);
+
+const Match = () => <span className="font-semibold text-success-text">✓ Match</span>;
+const Different = () => <span className="font-semibold text-warning-text">⚠ Different</span>;
 
 export const DetailModal: React.FC<DetailModalProps> = ({ row, onClose, onSave, onApprove, onReject, onFixed }) => {
   const [isEditing, setIsEditing] = useState(false);
@@ -80,6 +140,11 @@ export const DetailModal: React.FC<DetailModalProps> = ({ row, onClose, onSave, 
   }, [row?.id, row?.date, row?.qbData?.date]);
   // #endregion
 
+  // Must sit ABOVE the early return: when `row` goes from set to null this
+  // component returns before the hook, so React sees fewer hooks than the
+  // previous render and throws. The `row ?` guard already makes it safe here.
+  const corrections = useMemo(() => row ? computeCorrections(row) : {}, [row]);
+
   if (!row) return null;
 
   const handleApprove = async () => {
@@ -99,7 +164,6 @@ export const DetailModal: React.FC<DetailModalProps> = ({ row, onClose, onSave, 
     }
   };
 
-  const corrections = useMemo(() => row ? computeCorrections(row) : {}, [row]);
   const correctionCount = Object.keys(corrections).length;
 
   const handleFixInQB = async () => {
@@ -145,7 +209,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({ row, onClose, onSave, 
 
   const handleSave = async () => {
     if (!onSave || !row.extractionData) return;
-    
+
     setIsSaving(true);
     try {
       await onSave(row.extractionData.check_id, editedData);
@@ -170,515 +234,494 @@ export const DetailModal: React.FC<DetailModalProps> = ({ row, onClose, onSave, 
     setIsEditing(false);
   };
 
-  const getStatusBadge = (status: string) => {
-    const statusConfig = {
-      matched: { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-200' },
-      mismatch: { bg: 'bg-amber-50', text: 'text-amber-700', border: 'border-amber-200' },
-      'missing-in-qb': { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-200' },
-      'missing-in-extraction': { bg: 'bg-red-50', text: 'text-red-700', border: 'border-red-200' },
-    };
-
-    const config = statusConfig[status as keyof typeof statusConfig] || statusConfig.matched;
-
-    return (
-      <span className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border ${config.bg} ${config.text} ${config.border}`}>
-        {status.replace(/-/g, ' ')}
-      </span>
-    );
+  const ext = row.extractionData;
+  const extField = (field: 'checkNumber' | 'checkDate' | 'amount' | 'payee' | 'bankName' | 'memo') => {
+    const v = ext?.extraction?.[field];
+    if (!v) return '';
+    return typeof v === 'object' ? v.value : v;
   };
 
+
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
-      onClick={onClose}
-    >
-      <div
-        className="bg-white rounded-2xl shadow-2xl w-[90vw] max-w-5xl max-h-[90vh] overflow-auto flex flex-col"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="sticky top-0 bg-gradient-to-r from-blue-600 to-blue-700 text-white px-6 py-4 flex items-center justify-between rounded-t-2xl">
-          <div>
-            <h3 className="text-xl font-bold">
-              Check #{row.checkNumber || 'N/A'}
-            </h3>
-            <p className="text-sm text-blue-100 mt-1">{isEditing ? 'Edit Mode - Correct Extraction Data' : 'Detailed Comparison View'}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            {!isEditing ? (
-              <button
-                onClick={() => setIsEditing(true)}
-                className="flex items-center gap-2 px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg transition text-sm font-medium"
-              >
-                <Edit2 size={16} />
-                Edit
-              </button>
-            ) : (
-              <>
-                <button
-                  onClick={handleSave}
-                  disabled={isSaving}
-                  className="flex items-center gap-2 px-4 py-2 bg-green-500 hover:bg-green-600 rounded-lg transition text-sm font-medium disabled:opacity-50"
-                >
-                  <Save size={16} />
-                  {isSaving ? 'Saving...' : 'Save'}
-                </button>
-                <button
-                  onClick={handleCancel}
-                  disabled={isSaving}
-                  className="flex items-center gap-2 px-4 py-2 bg-white/20 hover:bg-white/30 rounded-lg transition text-sm font-medium disabled:opacity-50"
-                >
-                  <XCircle size={16} />
-                  Cancel
-                </button>
-              </>
-            )}
-            <button
-              onClick={onClose}
-              className="p-2 hover:bg-white/20 rounded-lg transition"
-            >
-              <X size={20} />
-            </button>
-          </div>
-        </div>
-
-        <div className="p-6 space-y-6 flex-1 overflow-auto">
-          {/* Check Image at Top */}
-          {(row.extractionData?.image_file || row.extractionData?.image_url || row.extractionData?.storage_url) && (
-            <div>
-              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Check Image</h4>
-              <div className="bg-gray-50 rounded-lg p-3 border border-gray-200">
-                <img
-                  src={(() => {
-                    // Priority 1: storage_url (Supabase Storage direct URL)
-                    if (row.extractionData.storage_url) return row.extractionData.storage_url;
-                    
-                    // Priority 2: image_url (full URL)
-                    if (row.extractionData.image_url) return row.extractionData.image_url;
-                    
-                    // Priority 3: image_file if it's a full URL
-                    if (row.extractionData.image_file?.startsWith('http')) return row.extractionData.image_file;
-                    
-                    // Priority 4: Backend API endpoint (works even if local files are cleaned up)
-                    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090';
-                    return `${backendUrl}/api/checks/${row.extractionData.job_id}/${row.extractionData.check_id}/image`;
-                  })()}
-                  alt="Check"
-                  className="w-full h-auto rounded-lg shadow-md max-h-96 object-contain"
-                  onError={(e) => {
-                    console.error('Image failed to load:', {
-                      storage_url: row.extractionData?.storage_url,
-                      image_url: row.extractionData?.image_url,
-                      image_file: row.extractionData?.image_file,
-                      check_id: row.extractionData?.check_id,
-                      job_id: row.extractionData?.job_id,
-                      backend_url: process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090',
-                      constructed_url: `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090'}/api/checks/${row.extractionData?.job_id}/${row.extractionData?.check_id}/image`
-                    });
-                    const target = e.currentTarget;
-                    target.parentElement!.innerHTML = '<div class="text-center text-gray-400 py-8">Image not available</div>';
-                  }}
-                />
-              </div>
-            </div>
-          )}
-
-          <div>
-            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Match Status</h4>
-            <div className="flex items-center gap-4">
-              {getStatusBadge(row.matchStatus)}
-              {row.confidence !== undefined && (
-                <span className="text-sm text-gray-600">
-                  Confidence: <span className={`font-bold ${
-                    row.confidence >= 80 ? 'text-emerald-600' :
-                    row.confidence >= 60 ? 'text-amber-600' :
-                    'text-red-600'
-                  }`}>{row.confidence}%</span>
-                </span>
-              )}
-            </div>
-          </div>
-
-          {row.discrepancies && row.discrepancies.length > 0 && (
-            <div>
-              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Discrepancies</h4>
-              <div className="space-y-2">
-                {row.discrepancies.map((disc, idx) => (
-                  <div key={idx} className="flex items-start gap-3 text-sm text-amber-800 bg-amber-50 px-4 py-3 rounded-lg border border-amber-200">
-                    <AlertCircle size={16} className="mt-0.5 flex-shrink-0" />
-                    <span>{disc}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Comparison Table */}
-          <div>
-            <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Data Comparison</h4>
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse border border-gray-300 text-xs">
-                <thead>
-                  <tr className="bg-gradient-to-r from-slate-700 to-slate-800 text-white">
-                    <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase border-r border-slate-600">Field</th>
-                    <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase border-r border-slate-600">Check Extraction</th>
-                    <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase border-r border-slate-600">QuickBooks</th>
-                    <th className="px-3 py-2 text-center text-[10px] font-semibold uppercase">Difference</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200">
-                  <tr className="hover:bg-gray-50">
-                    <td className="px-3 py-2 font-semibold text-gray-700">Check Number</td>
-                    <td className="px-3 py-2 text-gray-900">{row.extractionData?.checkNumber || row.checkNumber || '—'}</td>
-                    <td className="px-3 py-2 text-gray-900">{row.qbData?.checkNumber || '—'}</td>
-                    <td className="px-3 py-2 text-center">
-                      {row.extractionData && row.qbData &&
-                      (normalizeCheckNum(row.checkNumber) || row.checkNumber?.trim()) ===
-                        (normalizeCheckNum(row.qbData.checkNumber) || row.qbData.checkNumber?.trim()) ? (
-                        <span className="text-emerald-600 font-semibold">✓ Match</span>
-                      ) : (
-                        <span className="text-amber-600 font-semibold">⚠ Different</span>
-                      )}
-                    </td>
-                  </tr>
-                  <tr className="hover:bg-gray-50">
-                    <td className="px-3 py-2 font-semibold text-gray-700">Date</td>
-                    <td className="px-3 py-2 text-gray-600">{row.extractionData && row.date ? formatDate(row.date) : '—'}</td>
-                    <td className="px-3 py-2 text-gray-600">{row.qbData?.date ? formatDate(row.qbData.date) : '—'}</td>
-                    <td className="px-3 py-2 text-center">
-                      {row.extractionData && row.qbData && areDatesSameCalendarDay(row.date, row.qbData.date) ? (
-                        <span className="text-emerald-600 font-semibold">✓ Match</span>
-                      ) : (
-                        <span className="text-amber-600 font-semibold">⚠ Different</span>
-                      )}
-                    </td>
-                  </tr>
-                  <tr className="hover:bg-gray-50">
-                    <td className="px-3 py-2 font-semibold text-gray-700">Amount</td>
-                    <td className="px-3 py-2 font-bold text-emerald-700">{row.extractionData && row.amount ? formatCurrency(row.amount) : '—'}</td>
-                    <td className="px-3 py-2 font-bold text-emerald-700">{row.qbData?.amount ? formatCurrency(row.qbData.amount) : '—'}</td>
-                    <td className="px-3 py-2 text-center">
-                      {row.extractionData && row.qbData ? (
-                        Math.abs(parseAmount(row.amount) - parseAmount(row.qbData.amount)) < 0.01 ? (
-                          <span className="text-emerald-600 font-semibold">✓ Match</span>
-                        ) : (
-                          <span className="text-red-600 font-semibold">
-                            Δ {formatCurrency(Math.abs(parseAmount(row.amount) - parseAmount(row.qbData.amount)))}
-                          </span>
-                        )
-                      ) : '—'}
-                    </td>
-                  </tr>
-                  <tr className="hover:bg-gray-50">
-                    <td className="px-3 py-2 font-semibold text-gray-700">Payee</td>
-                    <td className="px-3 py-2 text-gray-900">{row.extractionData ? row.payee || '—' : '—'}</td>
-                    <td className="px-3 py-2 text-gray-900">{row.qbData?.payee || '—'}</td>
-                    <td className="px-3 py-2 text-center">
-                      {row.extractionData && row.qbData && row.payee?.toLowerCase() === row.qbData.payee?.toLowerCase() ? (
-                        <span className="text-emerald-600 font-semibold">✓ Match</span>
-                      ) : (
-                        <span className="text-amber-600 font-semibold">⚠ Different</span>
-                      )}
-                    </td>
-                  </tr>
-                  <tr className="hover:bg-gray-50">
-                    <td className="px-3 py-2 font-semibold text-gray-700">Bank/Account</td>
-                    <td className="px-3 py-2 text-gray-600">{row.extractionData ? row.bankAccount || '—' : '—'}</td>
-                    <td className="px-3 py-2 text-gray-600">{row.qbData?.account || '—'}</td>
-                    <td className="px-3 py-2 text-center">—</td>
-                  </tr>
-                  <tr className="hover:bg-gray-50">
-                    <td className="px-3 py-2 font-semibold text-gray-700">Memo</td>
-                    <td className="px-3 py-2 text-gray-500 text-xs">{row.extractionData ? row.memo || '—' : '—'}</td>
-                    <td className="px-3 py-2 text-gray-500 text-xs">{row.qbData?.memo || '—'}</td>
-                    <td className="px-3 py-2 text-center">—</td>
-                  </tr>
-                  {row.qbData?.qbSource && (
-                    <tr className="hover:bg-gray-50 bg-blue-50">
-                      <td className="px-3 py-2 font-semibold text-gray-700">QB Source</td>
-                      <td className="px-3 py-2 text-gray-400">—</td>
-                      <td className="px-3 py-2 text-blue-700 font-semibold">{row.qbData.qbSource}</td>
-                      <td className="px-3 py-2 text-center">—</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          {/* Extraction Methods Comparison Table */}
-          {row.extractionData && (
-            <div>
-              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3">Extraction Methods Comparison</h4>
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse border border-gray-300 text-xs">
-                  <thead>
-                    <tr className="bg-gradient-to-r from-blue-600 to-blue-700 text-white">
-                      <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase border-r border-blue-500">Field</th>
-                      <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase border-r border-blue-500">OCR Extraction</th>
-                      <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase border-r border-blue-500">AI Vision</th>
-                      <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase">Manual Entry</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-200">
-                    <tr className="hover:bg-gray-50">
-                      <td className="px-3 py-2 font-semibold text-gray-700">Check Number</td>
-                      <td className="px-3 py-2 text-gray-900">{row.extractionData.extraction?.checkNumber ? (typeof row.extractionData.extraction.checkNumber === 'object' ? row.extractionData.extraction.checkNumber.value : row.extractionData.extraction.checkNumber) : '—'}</td>
-                      <td className="px-3 py-2 text-gray-900">{row.extractionData.checkNumber || '—'}</td>
-                      <td className="px-3 py-2 text-gray-600">—</td>
-                    </tr>
-                    <tr className="hover:bg-gray-50">
-                      <td className="px-3 py-2 font-semibold text-gray-700">Date</td>
-                      <td className="px-3 py-2 text-gray-600">{row.extractionData.extraction?.checkDate ? (typeof row.extractionData.extraction.checkDate === 'object' ? formatDate(row.extractionData.extraction.checkDate.value) : formatDate(row.extractionData.extraction.checkDate)) : '—'}</td>
-                      <td className="px-3 py-2 text-gray-600">{row.date ? formatDate(row.date) : '—'}</td>
-                      <td className="px-3 py-2 text-gray-600">—</td>
-                    </tr>
-                    <tr className="hover:bg-gray-50">
-                      <td className="px-3 py-2 font-semibold text-gray-700">Amount</td>
-                      <td className="px-3 py-2 font-bold text-emerald-700">{row.extractionData.extraction?.amount ? (typeof row.extractionData.extraction.amount === 'object' ? formatCurrency(row.extractionData.extraction.amount.value) : formatCurrency(row.extractionData.extraction.amount)) : '—'}</td>
-                      <td className="px-3 py-2 font-bold text-emerald-700">{row.amount ? formatCurrency(row.amount) : '—'}</td>
-                      <td className="px-3 py-2 text-gray-600">—</td>
-                    </tr>
-                    <tr className="hover:bg-gray-50">
-                      <td className="px-3 py-2 font-semibold text-gray-700">Payee</td>
-                      <td className="px-3 py-2 text-gray-900">{row.extractionData.extraction?.payee ? (typeof row.extractionData.extraction.payee === 'object' ? row.extractionData.extraction.payee.value : row.extractionData.extraction.payee) : '—'}</td>
-                      <td className="px-3 py-2 text-gray-900">{row.payee || '—'}</td>
-                      <td className="px-3 py-2 text-gray-600">—</td>
-                    </tr>
-                    <tr className="hover:bg-gray-50">
-                      <td className="px-3 py-2 font-semibold text-gray-700">Bank</td>
-                      <td className="px-3 py-2 text-gray-600">{row.extractionData.extraction?.bankName ? (typeof row.extractionData.extraction.bankName === 'object' ? row.extractionData.extraction.bankName.value : row.extractionData.extraction.bankName) : '—'}</td>
-                      <td className="px-3 py-2 text-gray-600">{row.bankAccount || '—'}</td>
-                      <td className="px-3 py-2 text-gray-600">—</td>
-                    </tr>
-                    <tr className="hover:bg-gray-50">
-                      <td className="px-3 py-2 font-semibold text-gray-700">Memo</td>
-                      <td className="px-3 py-2 text-gray-500 text-xs">{row.extractionData.extraction?.memo ? (typeof row.extractionData.extraction.memo === 'object' ? row.extractionData.extraction.memo.value : row.extractionData.extraction.memo) : '—'}</td>
-                      <td className="px-3 py-2 text-gray-500 text-xs">{row.memo || '—'}</td>
-                      <td className="px-3 py-2 text-gray-500 text-xs">—</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {/* Side-by-side comparison */}
-          <div className="grid grid-cols-2 gap-6">
-            <div>
-              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                <FileCheck size={14} />
-                Extraction Source
-              </h4>
-              {row.extractionData ? (
-                <div className="space-y-3 bg-blue-50/50 rounded-xl p-4 border border-blue-100">
-                  <div>
-                    <span className="text-xs text-gray-500 font-medium">Source:</span>
-                    <p className="text-sm font-semibold text-gray-900 mt-1">{row.extractionData.pdf_name}</p>
-                  </div>
-                  <div>
-                    <span className="text-xs text-gray-500 font-medium">Page:</span>
-                    <p className="text-sm font-semibold text-gray-900 mt-1">{row.extractionData.page}</p>
-                  </div>
-                  <div>
-                    <span className="text-xs text-gray-500 font-medium">Check Number:</span>
-                    {isEditing ? (
-                      <input
-                        type="text"
-                        value={editedData.checkNumber}
-                        onChange={(e) => setEditedData({ ...editedData, checkNumber: e.target.value })}
-                        className="w-full mt-1 px-3 py-1.5 text-sm border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
-                      />
-                    ) : (
-                      <p className="text-sm font-semibold text-gray-900 mt-1">{row.checkNumber || '—'}</p>
-                    )}
-                  </div>
-                  <div>
-                    <span className="text-xs text-gray-500 font-medium">Date:</span>
-                    {isEditing ? (
-                      <input
-                        type="date"
-                        value={editedData.date}
-                        onChange={(e) => setEditedData({ ...editedData, date: e.target.value })}
-                        className="w-full mt-1 px-3 py-1.5 text-sm border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
-                      />
-                    ) : (
-                      <p className="text-sm font-semibold text-gray-900 mt-1">{row.date ? formatDate(row.date) : '—'}</p>
-                    )}
-                  </div>
-                  <div>
-                    <span className="text-xs text-gray-500 font-medium">Amount:</span>
-                    {isEditing ? (
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={editedData.amount}
-                        onChange={(e) => setEditedData({ ...editedData, amount: e.target.value })}
-                        className="w-full mt-1 px-3 py-1.5 text-sm border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 font-bold"
-                      />
-                    ) : (
-                      <p className="text-sm font-bold text-emerald-700 mt-1">{row.amount ? formatCurrency(row.amount) : '—'}</p>
-                    )}
-                  </div>
-                  <div>
-                    <span className="text-xs text-gray-500 font-medium">Payee:</span>
-                    {isEditing ? (
-                      <input
-                        type="text"
-                        value={editedData.payee}
-                        onChange={(e) => setEditedData({ ...editedData, payee: e.target.value })}
-                        className="w-full mt-1 px-3 py-1.5 text-sm border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
-                      />
-                    ) : (
-                      <p className="text-sm font-semibold text-gray-900 mt-1">{row.payee || '—'}</p>
-                    )}
-                  </div>
-                  <div>
-                    <span className="text-xs text-gray-500 font-medium">Bank:</span>
-                    {isEditing ? (
-                      <input
-                        type="text"
-                        value={editedData.bankAccount}
-                        onChange={(e) => setEditedData({ ...editedData, bankAccount: e.target.value })}
-                        className="w-full mt-1 px-3 py-1.5 text-sm border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900"
-                      />
-                    ) : (
-                      <p className="text-sm font-semibold text-gray-900 mt-1">{row.bankAccount || '—'}</p>
-                    )}
-                  </div>
-                  <div>
-                    <span className="text-xs text-gray-500 font-medium">Memo:</span>
-                    {isEditing ? (
-                      <textarea
-                        value={editedData.memo}
-                        onChange={(e) => setEditedData({ ...editedData, memo: e.target.value })}
-                        rows={2}
-                        className="w-full mt-1 px-3 py-1.5 text-sm border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-900 resize-none"
-                      />
-                    ) : (
-                      <p className="text-sm text-gray-700 mt-1">{row.memo || '—'}</p>
-                    )}
-                  </div>
-                </div>
-              ) : (
-                <div className="text-sm text-gray-400 bg-gray-50 rounded-xl p-4 border border-gray-200">
-                  No extraction data available
-                </div>
-              )}
-            </div>
-
-            <div>
-              <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-3 flex items-center gap-2">
-                <DollarSign size={14} />
-                QuickBooks Data
-              </h4>
-              {row.qbData ? (
-                <div className="space-y-3 bg-green-50/50 rounded-xl p-4 border border-green-100">
-                  <div>
-                    <span className="text-xs text-gray-500 font-medium">QB Source:</span>
-                    <p className="text-sm font-semibold text-gray-900 mt-1">{row.qbData.qbSource || 'Default'}</p>
-                  </div>
-                  <div>
-                    <span className="text-xs text-gray-500 font-medium">Check Number:</span>
-                    <p className="text-sm font-semibold text-gray-900 mt-1">{row.qbData.checkNumber || '—'}</p>
-                  </div>
-                  <div>
-                    <span className="text-xs text-gray-500 font-medium">Date:</span>
-                    <p className="text-sm font-semibold text-gray-900 mt-1">{row.qbData.date ? formatDate(row.qbData.date) : '—'}</p>
-                  </div>
-                  <div>
-                    <span className="text-xs text-gray-500 font-medium">Amount:</span>
-                    <p className="text-sm font-bold text-emerald-700 mt-1">{row.qbData.amount ? formatCurrency(row.qbData.amount) : '—'}</p>
-                  </div>
-                  <div>
-                    <span className="text-xs text-gray-500 font-medium">Payee:</span>
-                    <p className="text-sm font-semibold text-gray-900 mt-1">{row.qbData.payee || '—'}</p>
-                  </div>
-                  <div>
-                    <span className="text-xs text-gray-500 font-medium">Account:</span>
-                    <p className="text-sm font-semibold text-gray-900 mt-1">{row.qbData.account || '—'}</p>
-                  </div>
-                  <div>
-                    <span className="text-xs text-gray-500 font-medium">Memo:</span>
-                    <p className="text-sm text-gray-700 mt-1">{row.qbData.memo || '—'}</p>
-                  </div>
-                </div>
-              ) : (
-                <div className="text-sm text-gray-400 bg-gray-50 rounded-xl p-4 border border-gray-200">
-                  No QuickBooks data available
-                </div>
-              )}
-            </div>
-          </div>
-
-        </div>
-
-        {/* Action bar */}
-        {row.extractionData && (onApprove || onReject) && (
-          <div className="sticky bottom-0 bg-white border-t border-gray-200 px-6 py-4 rounded-b-2xl">
+    <Dialog
+      open
+      onClose={onClose}
+      size="full"
+      title={`Check #${row.checkNumber || 'N/A'}`}
+      description={isEditing ? 'Edit mode — correct the extraction data' : 'Detailed comparison view'}
+      className="max-h-[92vh] overflow-hidden"
+      footer={
+        row.extractionData && (onApprove || onReject) ? (
+          <div className="flex w-full flex-col gap-3">
             {approveError && (
-              <div className="mb-3 flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-4 py-2">
-                <span className="mt-0.5">⚠</span>
+              <div className={`flex items-start gap-2 rounded-input border px-3 py-2 text-sm ${BANNER.error}`} role="alert">
+                <span aria-hidden>⚠</span>
                 <span>{approveError}</span>
               </div>
             )}
             {approveSuccess && (
-              <div className="mb-3 flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-4 py-2">
+              <div className={`flex items-center gap-2 rounded-input border px-3 py-2 text-sm ${BANNER.success}`} role="status">
                 <CheckCircle2 size={15} />
                 <span>Approved! Closing…</span>
               </div>
             )}
             {fixMessage && (
-              <div className={`mb-3 flex items-start gap-2 text-sm border rounded-lg px-4 py-2 ${
-                fixMessage.type === 'success' ? 'text-emerald-700 bg-emerald-50 border-emerald-200' :
-                fixMessage.type === 'error'   ? 'text-red-700 bg-red-50 border-red-200' :
-                                                'text-blue-700 bg-blue-50 border-blue-200'
-              }`}>
-                <span>{fixMessage.type === 'success' ? '✓' : fixMessage.type === 'error' ? '⚠' : 'ℹ'}</span>
+              <div className={`flex items-start gap-2 rounded-input border px-3 py-2 text-sm ${BANNER[fixMessage.type]}`} role="status">
+                <span aria-hidden>
+                  {fixMessage.type === 'success' ? '✓' : fixMessage.type === 'error' ? '⚠' : 'ℹ'}
+                </span>
                 <span>{fixMessage.text}</span>
               </div>
             )}
-            <div className="flex items-center gap-3 flex-wrap">
-              <span className="text-xs text-gray-500 font-medium mr-auto">Actions for Check #{row.checkNumber || row.extractionData.check_id}</span>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="mr-auto text-xs font-medium text-ink-faint">
+                Actions for Check #{row.checkNumber || row.extractionData.check_id}
+              </span>
               {row.matchStatus === 'mismatch' && row.qbData && (
-                <button
+                <Button
+                  size="sm"
+                  variant="secondary"
                   onClick={handleFixInQB}
-                  disabled={isApproving || isRejecting || isFixing || approveSuccess || correctionCount === 0}
+                  loading={isFixing}
+                  icon={<Wrench size={16} />}
+                  disabled={isApproving || isRejecting || approveSuccess || correctionCount === 0}
                   title={correctionCount === 0
                     ? 'No differences to push'
                     : `Push ${correctionCount} field${correctionCount === 1 ? '' : 's'} to QuickBooks: ${Object.keys(corrections).join(', ')}`}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-sm font-semibold transition disabled:opacity-50"
                 >
-                  {isFixing ? <Loader2 size={16} className="animate-spin" /> : <Wrench size={16} />}
                   {isFixing ? 'Fixing…' : `Fix in QB${correctionCount > 0 ? ` (${correctionCount})` : ''}`}
-                </button>
+                </Button>
               )}
               {onApprove && (
-                <button
+                <Button
+                  size="sm"
                   onClick={handleApprove}
-                  disabled={isApproving || isRejecting || approveSuccess}
+                  loading={isApproving}
+                  icon={<CheckCircle2 size={16} />}
+                  disabled={isRejecting || approveSuccess}
                   title={row.qbData ? 'Approve and stamp Cleared note in QuickBooks' : 'Approve in Kyriq only — no QB transaction linked'}
-                  className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-semibold transition disabled:opacity-50 text-white ${
-                    approveSuccess ? 'bg-emerald-400 cursor-default' : 'bg-emerald-600 hover:bg-emerald-700'
-                  }`}
                 >
-                  {isApproving ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
-                  {isApproving ? 'Approving…' : approveSuccess ? '✓ Approved' : (row.qbData ? 'Approve & Clear' : 'Approve')}
-                </button>
+                  {isApproving
+                    ? 'Approving…'
+                    : approveSuccess
+                      ? '✓ Approved'
+                      : row.qbData
+                        ? 'Approve & Clear'
+                        : 'Approve'}
+                </Button>
               )}
               {onReject && (
-                <button
+                <Button
+                  size="sm"
+                  variant="destructive"
                   onClick={handleReject}
-                  disabled={isApproving || isRejecting || approveSuccess}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-red-600 hover:bg-red-700 text-white rounded-xl text-sm font-semibold transition disabled:opacity-50"
+                  loading={isRejecting}
+                  icon={<Ban size={16} />}
+                  disabled={isApproving || approveSuccess}
                 >
-                  {isRejecting ? <Loader2 size={16} className="animate-spin" /> : <Ban size={16} />}
                   {isRejecting ? 'Rejecting…' : 'Reject'}
-                </button>
+                </Button>
               )}
             </div>
           </div>
+        ) : null
+      }
+    >
+      <div className="scroll-region max-h-[68vh] space-y-5 pr-1">
+        {/* Edit / save controls. In the body rather than the header so the
+            Dialog primitive's one header recipe is not special-cased. */}
+        <div className="flex flex-wrap items-center gap-3">
+          <StatusPill status={MATCH_STATUS[row.matchStatus].status} label={MATCH_STATUS[row.matchStatus].label} />
+          {row.confidence !== undefined && (
+            <span className="text-sm text-ink-body">
+              Confidence:{' '}
+              <span
+                className={`nums font-semibold ${
+                  row.confidence >= 80
+                    ? 'text-success-text'
+                    : row.confidence >= 60
+                      ? 'text-warning-text'
+                      : 'text-error-text'
+                }`}
+              >
+                {row.confidence}%
+              </span>
+            </span>
+          )}
+          <span className="ml-auto flex items-center gap-2">
+            {!isEditing ? (
+              <Button size="sm" variant="secondary" onClick={() => setIsEditing(true)} icon={<Edit2 size={16} />}>
+                Edit
+              </Button>
+            ) : (
+              <>
+                <Button size="sm" onClick={handleSave} loading={isSaving} icon={<Save size={16} />}>
+                  {isSaving ? 'Saving…' : 'Save'}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={handleCancel} disabled={isSaving} icon={<XCircle size={16} />}>
+                  Cancel
+                </Button>
+              </>
+            )}
+          </span>
+        </div>
+
+        {/* Check image */}
+        {(ext?.image_file || ext?.image_url || ext?.storage_url) && (
+          <div>
+            <p className={SECTION_LABEL}>Check Image</p>
+            <GlassPanel radius="card" padding="sm">
+              <img
+                src={(() => {
+                  // Priority 1: storage_url (Supabase Storage direct URL)
+                  if (ext.storage_url) return ext.storage_url;
+
+                  // Priority 2: image_url (full URL)
+                  if (ext.image_url) return ext.image_url;
+
+                  // Priority 3: image_file if it's a full URL
+                  if (ext.image_file?.startsWith('http')) return ext.image_file;
+
+                  // Priority 4: Backend API endpoint (works even if local files are cleaned up)
+                  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090';
+                  return `${backendUrl}/api/checks/${ext.job_id}/${ext.check_id}/image`;
+                })()}
+                alt="Check"
+                className="max-h-96 w-full rounded-input object-contain shadow-contact"
+                onError={(e) => {
+                  console.error('Image failed to load:', {
+                    storage_url: ext?.storage_url,
+                    image_url: ext?.image_url,
+                    image_file: ext?.image_file,
+                    check_id: ext?.check_id,
+                    job_id: ext?.job_id,
+                  });
+                  const target = e.currentTarget;
+                  target.parentElement!.innerHTML =
+                    '<div class="py-8 text-center text-sm text-ink-faint">Image not available</div>';
+                }}
+              />
+            </GlassPanel>
+          </div>
         )}
+
+        {row.discrepancies && row.discrepancies.length > 0 && (
+          <div>
+            <p className={SECTION_LABEL}>Discrepancies</p>
+            <div className="space-y-2">
+              {row.discrepancies.map((disc, idx) => (
+                <div
+                  key={idx}
+                  className={`flex items-start gap-3 rounded-input border px-4 py-2.5 text-sm ${BANNER.error}`}
+                >
+                  <AlertCircle size={16} className="mt-0.5 flex-shrink-0" aria-hidden />
+                  <span>{disc}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Data comparison */}
+        <div>
+          <p className={SECTION_LABEL}>Data Comparison</p>
+          <TableShell tier="inset">
+            <TableScroll>
+              <Table className="text-xs [&_td]:py-1.5">
+                <InsetThead>
+                  <tr>
+                    <Th>Field</Th>
+                    <Th>Check Extraction</Th>
+                    <Th>QuickBooks</Th>
+                    <Th className="text-center">Difference</Th>
+                  </tr>
+                </InsetThead>
+                <Tbody>
+                  <Tr>
+                    <Td className="font-semibold text-ink-body">Check Number</Td>
+                    <Td className="nums">{ext?.checkNumber || row.checkNumber || '—'}</Td>
+                    <Td className="nums">{row.qbData?.checkNumber || '—'}</Td>
+                    <Td className="text-center">
+                      {ext && row.qbData &&
+                      (normalizeCheckNum(row.checkNumber) || row.checkNumber?.trim()) ===
+                        (normalizeCheckNum(row.qbData.checkNumber) || row.qbData.checkNumber?.trim())
+                        ? <Match />
+                        : <Different />}
+                    </Td>
+                  </Tr>
+                  <Tr>
+                    <Td className="font-semibold text-ink-body">Date</Td>
+                    <Td muted className="nums">{ext && row.date ? formatDate(row.date) : '—'}</Td>
+                    <Td muted className="nums">{row.qbData?.date ? formatDate(row.qbData.date) : '—'}</Td>
+                    <Td className="text-center">
+                      {ext && row.qbData && areDatesSameCalendarDay(row.date, row.qbData.date)
+                        ? <Match />
+                        : <Different />}
+                    </Td>
+                  </Tr>
+                  <Tr>
+                    <Td className="font-semibold text-ink-body">Amount</Td>
+                    <Td className="nums-money font-semibold text-success-text">
+                      {ext && row.amount ? formatCurrency(row.amount) : '—'}
+                    </Td>
+                    <Td className="nums-money font-semibold text-success-text">
+                      {row.qbData?.amount ? formatCurrency(row.qbData.amount) : '—'}
+                    </Td>
+                    <Td className="text-center">
+                      {ext && row.qbData ? (
+                        Math.abs(parseAmount(row.amount) - parseAmount(row.qbData.amount)) < 0.01 ? (
+                          <Match />
+                        ) : (
+                          <span className="nums font-semibold text-error-text">
+                            Δ {formatCurrency(Math.abs(parseAmount(row.amount) - parseAmount(row.qbData.amount)))}
+                          </span>
+                        )
+                      ) : '—'}
+                    </Td>
+                  </Tr>
+                  <Tr>
+                    <Td className="font-semibold text-ink-body">Payee</Td>
+                    <Td>{ext ? row.payee || '—' : '—'}</Td>
+                    <Td>{row.qbData?.payee || '—'}</Td>
+                    <Td className="text-center">
+                      {ext && row.qbData && row.payee?.toLowerCase() === row.qbData.payee?.toLowerCase()
+                        ? <Match />
+                        : <Different />}
+                    </Td>
+                  </Tr>
+                  <Tr>
+                    <Td className="font-semibold text-ink-body">Bank/Account</Td>
+                    <Td muted>{ext ? row.bankAccount || '—' : '—'}</Td>
+                    <Td muted>{row.qbData?.account || '—'}</Td>
+                    <Td className="text-center">—</Td>
+                  </Tr>
+                  <Tr>
+                    <Td className="font-semibold text-ink-body">Memo</Td>
+                    <Td muted>{ext ? row.memo || '—' : '—'}</Td>
+                    <Td muted>{row.qbData?.memo || '—'}</Td>
+                    <Td className="text-center">—</Td>
+                  </Tr>
+                  {row.qbData?.qbSource && (
+                    <Tr state="none">
+                      <Td className="font-semibold text-ink-body">QB Source</Td>
+                      <Td muted>—</Td>
+                      <Td className="font-semibold text-brand-deep">{row.qbData.qbSource}</Td>
+                      <Td className="text-center">—</Td>
+                    </Tr>
+                  )}
+                </Tbody>
+              </Table>
+            </TableScroll>
+          </TableShell>
+        </div>
+
+        {/* Extraction methods comparison */}
+        {ext && (
+          <div>
+            <p className={SECTION_LABEL}>Extraction Methods Comparison</p>
+            <TableShell tier="inset">
+              <TableScroll>
+                <Table className="text-xs [&_td]:py-1.5">
+                  <InsetThead>
+                    <tr>
+                      <Th>Field</Th>
+                      <Th>OCR Extraction</Th>
+                      <Th>AI Vision</Th>
+                      <Th>Manual Entry</Th>
+                    </tr>
+                  </InsetThead>
+                  <Tbody>
+                    <Tr>
+                      <Td className="font-semibold text-ink-body">Check Number</Td>
+                      <Td className="nums">{extField('checkNumber') || '—'}</Td>
+                      <Td className="nums">{ext.checkNumber || '—'}</Td>
+                      <Td muted>—</Td>
+                    </Tr>
+                    <Tr>
+                      <Td className="font-semibold text-ink-body">Date</Td>
+                      <Td muted className="nums">
+                        {extField('checkDate') ? formatDate(extField('checkDate')) : '—'}
+                      </Td>
+                      <Td muted className="nums">{row.date ? formatDate(row.date) : '—'}</Td>
+                      <Td muted>—</Td>
+                    </Tr>
+                    <Tr>
+                      <Td className="font-semibold text-ink-body">Amount</Td>
+                      <Td className="nums-money font-semibold text-success-text">
+                        {extField('amount') ? formatCurrency(extField('amount')) : '—'}
+                      </Td>
+                      <Td className="nums-money font-semibold text-success-text">
+                        {row.amount ? formatCurrency(row.amount) : '—'}
+                      </Td>
+                      <Td muted>—</Td>
+                    </Tr>
+                    <Tr>
+                      <Td className="font-semibold text-ink-body">Payee</Td>
+                      <Td>{extField('payee') || '—'}</Td>
+                      <Td>{row.payee || '—'}</Td>
+                      <Td muted>—</Td>
+                    </Tr>
+                    <Tr>
+                      <Td className="font-semibold text-ink-body">Bank</Td>
+                      <Td muted>{extField('bankName') || '—'}</Td>
+                      <Td muted>{row.bankAccount || '—'}</Td>
+                      <Td muted>—</Td>
+                    </Tr>
+                    <Tr>
+                      <Td className="font-semibold text-ink-body">Memo</Td>
+                      <Td muted>{extField('memo') || '—'}</Td>
+                      <Td muted>{row.memo || '—'}</Td>
+                      <Td muted>—</Td>
+                    </Tr>
+                  </Tbody>
+                </Table>
+              </TableScroll>
+            </TableShell>
+          </div>
+        )}
+
+        {/* Side-by-side sources */}
+        <div className="grid gap-5 md:grid-cols-2">
+          <div>
+            <p className={`${SECTION_LABEL} flex items-center gap-2`}>
+              <FileCheck size={14} aria-hidden />
+              Extraction Source
+            </p>
+            {ext ? (
+              <GlassPanel radius="card" className="space-y-3">
+                <FieldRow editing={isEditing} label="Source:" value={ext.pdf_name} />
+                <FieldRow editing={isEditing} label="Page:" value={ext.page} />
+                <FieldRow
+                  editing={isEditing}
+                  label="Check Number:"
+                  value={row.checkNumber || '—'}
+                  editor={
+                    <Input
+                      inputSize="sm"
+                      aria-label="Check number"
+                      className="mt-1"
+                      value={editedData.checkNumber}
+                      onChange={(e) => setEditedData({ ...editedData, checkNumber: e.target.value })}
+                    />
+                  }
+                />
+                <FieldRow
+                  editing={isEditing}
+                  label="Date:"
+                  value={row.date ? formatDate(row.date) : '—'}
+                  editor={
+                    <Input
+                      inputSize="sm"
+                      type="date"
+                      aria-label="Check date"
+                      className="mt-1"
+                      value={editedData.date}
+                      onChange={(e) => setEditedData({ ...editedData, date: e.target.value })}
+                    />
+                  }
+                />
+                <FieldRow
+                  editing={isEditing}
+                  label="Amount:"
+                  value={
+                    <span className="nums text-success-text">
+                      {row.amount ? formatCurrency(row.amount) : '—'}
+                    </span>
+                  }
+                  editor={
+                    <Input
+                      inputSize="sm"
+                      type="number"
+                      step="0.01"
+                      aria-label="Amount"
+                      className="nums mt-1"
+                      value={editedData.amount}
+                      onChange={(e) => setEditedData({ ...editedData, amount: e.target.value })}
+                    />
+                  }
+                />
+                <FieldRow
+                  editing={isEditing}
+                  label="Payee:"
+                  value={row.payee || '—'}
+                  editor={
+                    <Input
+                      inputSize="sm"
+                      aria-label="Payee"
+                      className="mt-1"
+                      value={editedData.payee}
+                      onChange={(e) => setEditedData({ ...editedData, payee: e.target.value })}
+                    />
+                  }
+                />
+                <FieldRow
+                  editing={isEditing}
+                  label="Bank:"
+                  value={row.bankAccount || '—'}
+                  editor={
+                    <Input
+                      inputSize="sm"
+                      aria-label="Bank"
+                      className="mt-1"
+                      value={editedData.bankAccount}
+                      onChange={(e) => setEditedData({ ...editedData, bankAccount: e.target.value })}
+                    />
+                  }
+                />
+                <FieldRow
+                  editing={isEditing}
+                  label="Memo:"
+                  value={row.memo || '—'}
+                  editor={
+                    <Textarea
+                      inputSize="sm"
+                      rows={2}
+                      aria-label="Memo"
+                      className="mt-1 resize-none"
+                      value={editedData.memo}
+                      onChange={(e) => setEditedData({ ...editedData, memo: e.target.value })}
+                    />
+                  }
+                />
+              </GlassPanel>
+            ) : (
+              <GlassPanel tone="plain" radius="card" className="text-sm text-ink-faint">
+                No extraction data available
+              </GlassPanel>
+            )}
+          </div>
+
+          <div>
+            <p className={`${SECTION_LABEL} flex items-center gap-2`}>
+              <DollarSign size={14} aria-hidden />
+              QuickBooks Data
+            </p>
+            {row.qbData ? (
+              <GlassPanel radius="card" className="space-y-3">
+                <FieldRow editing={isEditing} label="QB Source:" value={row.qbData.qbSource || 'Default'} />
+                <FieldRow editing={isEditing} label="Check Number:" value={row.qbData.checkNumber || '—'} />
+                <FieldRow editing={isEditing} label="Date:" value={row.qbData.date ? formatDate(row.qbData.date) : '—'} />
+                <FieldRow
+                  editing={isEditing}
+                  label="Amount:"
+                  value={
+                    <span className="nums text-success-text">
+                      {row.qbData.amount ? formatCurrency(row.qbData.amount) : '—'}
+                    </span>
+                  }
+                />
+                <FieldRow editing={isEditing} label="Payee:" value={row.qbData.payee || '—'} />
+                <FieldRow editing={isEditing} label="Account:" value={row.qbData.account || '—'} />
+                <FieldRow editing={isEditing} label="Memo:" value={row.qbData.memo || '—'} />
+              </GlassPanel>
+            ) : (
+              <GlassPanel tone="plain" radius="card" className="text-sm text-ink-faint">
+                No QuickBooks data available
+              </GlassPanel>
+            )}
+          </div>
+        </div>
       </div>
-    </div>
+    </Dialog>
   );
 };

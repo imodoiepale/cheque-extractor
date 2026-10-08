@@ -1,7 +1,56 @@
 import React, { useMemo } from 'react';
-import { ChevronUp, ChevronDown, Eye, CheckCircle, XCircle, Loader2, Trash2 } from 'lucide-react';
+import { ChevronUp, ChevronDown, Eye, CheckCircle, Loader2, Trash2 } from 'lucide-react';
+import {
+  Badge,
+  StatusPill,
+  Table,
+  TableEmpty,
+  TableScroll,
+  TableShell,
+  Tbody,
+  Td,
+  Th,
+  Thead,
+  Tr,
+  type StatusKey,
+} from '@/components/ui';
 import { ComparisonRow, SortField, SortDirection, formatCurrency, formatDate, parseAmount, DateFormat } from '../utils/comparisonUtils';
 import { VisibleColumns } from '../hooks/useComparisonState';
+
+/**
+ * The comparison grid. This table IS the product, so the rules it is held to
+ * are stricter than anywhere else in the app:
+ *
+ * 1. Glass is on the SHELL and the STICKY HEADER only — never on a row. Rows
+ *    are plain `<Tr>`, which carries background-colour transitions and no
+ *    backdrop-filter, so the number of composited blur layers on this page is
+ *    a constant and does NOT grow with the row count.
+ * 2. Density does not regress. `DENSE_GRID` below restores the pre-redesign
+ *    22px row height in exactly ONE place, because the shared `tdVariants`
+ *    py-3/text-sm recipe is tuned for the app's other, sparser tables and
+ *    would roughly halve the rows on screen here. Everything else (the single
+ *    <th> recipe, the hairlines, the tokens) comes from the primitive.
+ * 3. No Excel look: no per-cell vertical rules, no zebra striping, no
+ *    navy-on-white header blocks. Section boundaries are three hairlines, not
+ *    fifteen; state is a tinted row plus one pill.
+ */
+
+/* The ONE place this grid's row metrics are declared. Pinned to the
+   pre-redesign 22px so no accountant loses a row of the 200-record view; the
+   type is 11px rather than the old 10px, which fits inside the same 22px and
+   is the only thing here that got bigger. */
+const DENSE_GRID = [
+  'text-[11px]',
+  '[&_tbody_tr]:h-[22px]',
+  '[&_td]:px-1.5 [&_td]:py-0.5',
+  '[&_th]:px-1.5 [&_th]:py-1.5',
+].join(' ');
+
+/** Vertical hairline that opens a column group. Three per row, not fifteen. */
+const GROUP_EDGE = 'border-l border-glass-hairline';
+
+/** Section header cell: the grouped top row, tinted rather than painted navy. */
+const SECTION = 'text-center text-eyebrow text-ink-body bg-brand/[0.06]';
 
 interface ComparisonTableProps {
   data: ComparisonRow[];
@@ -18,26 +67,46 @@ interface ComparisonTableProps {
   vouchingId: string | null;
   onDeleteQBEntry?: (entryId: string) => void;
   deletingQBEntry?: string | null;
+  /** Rendered inside the table's glass shell, below the scroll region, so the
+   *  pagination bar does not become a second stacked surface. */
+  footer?: React.ReactNode;
 }
 
 const SortIcon: React.FC<{ field: SortField; sortField: SortField; sortDirection: SortDirection }> = ({
   field,
   sortField,
   sortDirection,
-}) => {
-  return (
-    <div className="flex flex-col ml-1">
-      <ChevronUp className={`h-2.5 w-2.5 ${sortField === field && sortDirection === 'asc' ? 'text-white' : 'text-white/40'}`} />
-      <ChevronDown className={`h-2.5 w-2.5 -mt-0.5 ${sortField === field && sortDirection === 'desc' ? 'text-white' : 'text-white/40'}`} />
-    </div>
-  );
+}) => (
+  <span className="ml-1 inline-flex flex-col leading-none" aria-hidden>
+    <ChevronUp
+      className={`h-2.5 w-2.5 ${sortField === field && sortDirection === 'asc' ? 'text-brand-deep' : 'text-ink-faint/40'}`}
+    />
+    <ChevronDown
+      className={`-mt-0.5 h-2.5 w-2.5 ${sortField === field && sortDirection === 'desc' ? 'text-brand-deep' : 'text-ink-faint/40'}`}
+    />
+  </span>
+);
+
+/**
+ * Match status reuses the shared status vocabulary rather than inventing
+ * colours: `StatusPill` maps each key to one tone once, app-wide, so
+ * "Mismatch" can never be amber here and red somewhere else. The label is
+ * always spelled out — status is never colour alone.
+ */
+const MATCH_STATUS: Record<
+  ComparisonRow['matchStatus'],
+  { status: StatusKey; label: string; row: 'success' | 'warning' | 'error' | 'none'; accent: string }
+> = {
+  matched: { status: 'matched', label: 'Matched', row: 'success', accent: 'var(--success)' },
+  mismatch: { status: 'review', label: 'Mismatch', row: 'warning', accent: 'var(--warning)' },
+  'missing-in-qb': { status: 'processing', label: 'Missing in QB', row: 'none', accent: 'var(--brand)' },
+  'missing-in-extraction': { status: 'failed', label: 'Missing in Checks', row: 'error', accent: 'var(--error)' },
 };
 
 export const ComparisonTable: React.FC<ComparisonTableProps> = ({
   data,
   sortField,
   sortDirection,
-  visibleColumns,
   dateFormat,
   onSort,
   onRowClick,
@@ -48,412 +117,341 @@ export const ComparisonTable: React.FC<ComparisonTableProps> = ({
   vouchingId,
   onDeleteQBEntry,
   deletingQBEntry,
+  footer,
 }) => {
   const paginatedData = useMemo(() => {
     const startIndex = (currentPage - 1) * itemsPerPage;
-    const endIndex = startIndex + itemsPerPage;
-    return data.slice(startIndex, endIndex);
+    return data.slice(startIndex, startIndex + itemsPerPage);
   }, [data, currentPage, itemsPerPage]);
 
   const totals = useMemo(() => {
-    const checksTotal = data.reduce((sum, row) => {
-      if (row.extractionData) {
-        const amount = parseAmount(row.amount);
-        return sum + amount;
-      }
-      return sum;
-    }, 0);
-
-    const qbTotal = data.reduce((sum, row) => {
-      if (row.qbData) {
-        const amount = parseAmount(row.qbData.amount);
-        return sum + amount;
-      }
-      return sum;
-    }, 0);
-
-    return {
-      count: data.length,
-      checksTotal,
-      qbTotal,
-      difference: checksTotal - qbTotal,
-    };
+    const checksTotal = data.reduce(
+      (sum, row) => (row.extractionData ? sum + parseAmount(row.amount) : sum),
+      0
+    );
+    const qbTotal = data.reduce(
+      (sum, row) => (row.qbData ? sum + parseAmount(row.qbData.amount) : sum),
+      0
+    );
+    return { count: data.length, checksTotal, qbTotal, difference: checksTotal - qbTotal };
   }, [data]);
 
-  const shadeA = { section: '#1a3a6e', column: '#2855a0', hover: '#3265b0' };
-  const shadeB = { section: '#2a5498', column: '#3a70b8', hover: '#4880c5' };
-
-  const getMatchStatusColor = (row: ComparisonRow) => {
-    // Red highlight for rows with issues (when they have actual problems)
-    if (row.hasIssue && (row.isDuplicate || row.matchStatus === 'mismatch')) {
-      return 'bg-red-50 border-l-4 border-red-500';
-    }
-    if (row.matchStatus === 'matched') return 'bg-green-50 border-l-4 border-green-500';
-    if (row.matchStatus === 'mismatch') return 'bg-amber-50 border-l-4 border-amber-500';
-    if (row.matchStatus === 'missing-in-qb') return 'bg-blue-50';
-    if (row.matchStatus === 'missing-in-extraction') return 'bg-red-50';
-    return 'bg-white';
-  };
-
-  const getMatchStatusText = (row: ComparisonRow) => {
-    if (row.matchStatus === 'matched') return '✓ Matched';
-    if (row.matchStatus === 'mismatch') return '⚠ Mismatch';
-    if (row.matchStatus === 'missing-in-qb') return '← Missing in QB';
-    if (row.matchStatus === 'missing-in-extraction') return 'Missing in Checks →';
-    return '';
-  };
-
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
-      <div className="flex-1 overflow-auto">
-        <table className="w-full border-collapse border border-gray-300" style={{ fontSize: '10px' }}>
-          <thead className="sticky top-0 z-20">
-            <tr className="text-white" style={{ height: '26px', backgroundColor: '#0a1a30' }}>
-              <th 
-                className="px-1 py-0.5 text-center font-semibold text-[9px] uppercase tracking-wider"
-                style={{ backgroundColor: shadeA.section, borderRight: '2px solid #0d1f3c' }}
-                rowSpan={2}
-              >
+    /* One blurred shell. The scroll region inside it is the page's only table
+       scrollbar; the page itself does not scroll on top of it. */
+    <TableShell className="flex min-h-0 flex-1 flex-col">
+      {/* min-h-0 is load-bearing: a flex item defaults to min-height:auto,
+          so without it the scroll region refuses to shrink below its content
+          and the pagination bar gets clipped off the bottom of the page. */}
+      <TableScroll className="min-h-0 max-h-[60vh] flex-1 md:max-h-none">
+        <Table className={DENSE_GRID}>
+          {/* The only glass inside the table: sticky, blurred, one layer. */}
+          <Thead>
+            <tr>
+              <Th rowSpan={2} className={`${SECTION} align-middle`}>
                 #
-              </th>
-              <th 
-                className="px-1 py-0.5 text-center font-semibold text-[9px] uppercase tracking-wider"
-                style={{ backgroundColor: shadeA.section, borderRight: '2px solid #0d1f3c' }}
-                colSpan={5}
-              >
-                Check Extraction Data
-              </th>
-              <th 
-                className="px-1 py-0.5 text-center font-semibold text-[9px] uppercase tracking-wider"
-                style={{ backgroundColor: shadeB.section, borderRight: '2px solid #0d1f3c' }}
-                colSpan={6}
-              >
-                QuickBooks Data
-              </th>
-              <th 
-                className="px-1 py-0.5 text-center font-semibold text-[9px] uppercase tracking-wider"
-                style={{ backgroundColor: shadeA.section, borderRight: '2px solid #0d1f3c' }}
-                colSpan={3}
-              >
+              </Th>
+              <Th colSpan={5} className={`${SECTION} ${GROUP_EDGE}`}>
+                Check Extraction
+              </Th>
+              <Th colSpan={6} className={`${SECTION} ${GROUP_EDGE}`}>
+                QuickBooks
+              </Th>
+              <Th colSpan={3} className={`${SECTION} ${GROUP_EDGE}`}>
                 Comparison
-              </th>
-              <th 
-                className="px-1 py-0.5 text-center font-semibold text-[9px]"
-                style={{ backgroundColor: shadeA.section }}
-                rowSpan={2}
-              >
+              </Th>
+              <Th rowSpan={2} className={`${SECTION} ${GROUP_EDGE} align-middle`}>
                 View
-              </th>
+              </Th>
             </tr>
-            <tr className="text-white" style={{ height: '24px' }}>
-              {/* Index column already has rowSpan=2 */}
-              {/* Check Extraction Columns */}
-              <th
-                onClick={() => onSort('checkNumber')}
-                className="px-1 py-0.5 text-left text-[9px] font-medium uppercase cursor-pointer"
-                style={{ backgroundColor: shadeA.column, borderRight: '1px solid rgba(255,255,255,0.15)' }}
-              >
-                <div className="flex items-center">
-                  Check #
-                  <SortIcon field="checkNumber" sortField={sortField} sortDirection={sortDirection} />
-                </div>
-              </th>
-              <th
-                onClick={() => onSort('date')}
-                className="px-1 py-0.5 text-left text-[9px] font-medium uppercase cursor-pointer"
-                style={{ backgroundColor: shadeA.column, borderRight: '1px solid rgba(255,255,255,0.15)' }}
-              >
-                <div className="flex items-center">
-                  Date
-                  <SortIcon field="date" sortField={sortField} sortDirection={sortDirection} />
-                </div>
-              </th>
-              <th
-                onClick={() => onSort('amount')}
-                className="px-1 py-0.5 text-right text-[9px] font-medium uppercase cursor-pointer"
-                style={{ backgroundColor: shadeA.column, borderRight: '1px solid rgba(255,255,255,0.15)' }}
-              >
-                <div className="flex items-center justify-end">
-                  Amount
-                  <SortIcon field="amount" sortField={sortField} sortDirection={sortDirection} />
-                </div>
-              </th>
-              <th
-                onClick={() => onSort('payee')}
-                className="px-1 py-0.5 text-left text-[9px] font-medium uppercase cursor-pointer"
-                style={{ backgroundColor: shadeA.column, borderRight: '1px solid rgba(255,255,255,0.15)' }}
-              >
-                <div className="flex items-center">
-                  Payee
-                  <SortIcon field="payee" sortField={sortField} sortDirection={sortDirection} />
-                </div>
-              </th>
-              <th
-                className="px-1 py-0.5 text-left text-[9px] font-medium uppercase"
-                style={{ backgroundColor: shadeA.column, borderRight: '2px solid #0d1f3c' }}
-              >
-                Bank
-              </th>
-
-              {/* QuickBooks Columns */}
-              <th
-                className="px-1 py-0.5 text-left text-[9px] font-medium uppercase"
-                style={{ backgroundColor: shadeB.column, borderRight: '1px solid rgba(255,255,255,0.15)' }}
-              >
+            <tr>
+              {/* Check extraction */}
+              <Th sortable onClick={() => onSort('checkNumber')} className={GROUP_EDGE}>
                 Check #
-              </th>
-              <th
-                className="px-1 py-0.5 text-left text-[9px] font-medium uppercase"
-                style={{ backgroundColor: shadeB.column, borderRight: '1px solid rgba(255,255,255,0.15)' }}
-              >
+                <SortIcon field="checkNumber" sortField={sortField} sortDirection={sortDirection} />
+              </Th>
+              <Th sortable onClick={() => onSort('date')}>
                 Date
-              </th>
-              <th
-                className="px-1 py-0.5 text-right text-[9px] font-medium uppercase"
-                style={{ backgroundColor: shadeB.column, borderRight: '1px solid rgba(255,255,255,0.15)' }}
-              >
+                <SortIcon field="date" sortField={sortField} sortDirection={sortDirection} />
+              </Th>
+              <Th numeric sortable onClick={() => onSort('amount')}>
                 Amount
-              </th>
-              <th
-                className="px-1 py-0.5 text-left text-[9px] font-medium uppercase"
-                style={{ backgroundColor: shadeB.column, borderRight: '1px solid rgba(255,255,255,0.15)' }}
-              >
+                <SortIcon field="amount" sortField={sortField} sortDirection={sortDirection} />
+              </Th>
+              <Th sortable onClick={() => onSort('payee')}>
                 Payee
-              </th>
-              <th
-                className="px-1 py-0.5 text-left text-[9px] font-medium uppercase"
-                style={{ backgroundColor: shadeB.column, borderRight: '1px solid rgba(255,255,255,0.15)' }}
-              >
-                Account
-              </th>
-              <th
-                className="px-1 py-0.5 text-left text-[9px] font-medium uppercase"
-                style={{ backgroundColor: shadeB.column, borderRight: '2px solid #0d1f3c' }}
-              >
-                Source
-              </th>
+                <SortIcon field="payee" sortField={sortField} sortDirection={sortDirection} />
+              </Th>
+              <Th>Bank</Th>
 
-              {/* Comparison Columns */}
-              <th
-                onClick={() => onSort('matchStatus')}
-                className="px-1 py-0.5 text-center text-[9px] font-medium uppercase cursor-pointer"
-                style={{ backgroundColor: shadeA.column, borderRight: '1px solid rgba(255,255,255,0.15)' }}
-              >
-                <div className="flex items-center justify-center">
-                  Status
-                  <SortIcon field="matchStatus" sortField={sortField} sortDirection={sortDirection} />
-                </div>
-              </th>
-              <th
-                className="px-1 py-0.5 text-center text-[9px] font-medium uppercase"
-                style={{ backgroundColor: shadeA.column, borderRight: '1px solid rgba(255,255,255,0.15)' }}
-              >
-                Conf %
-              </th>
-              <th
-                className="px-1 py-0.5 text-left text-[9px] font-medium uppercase"
-                style={{ backgroundColor: '#8b2020', borderRight: '2px solid #0d1f3c' }}
-              >
-                Issue
-              </th>
+              {/* QuickBooks */}
+              <Th className={GROUP_EDGE}>Check #</Th>
+              <Th>Date</Th>
+              <Th numeric>Amount</Th>
+              <Th>Payee</Th>
+              <Th>Account</Th>
+              <Th>Source</Th>
+
+              {/* Comparison */}
+              <Th sortable onClick={() => onSort('matchStatus')} className={`${GROUP_EDGE} text-center`}>
+                Status
+                <SortIcon field="matchStatus" sortField={sortField} sortDirection={sortDirection} />
+              </Th>
+              <Th numeric>Conf %</Th>
+              <Th>Issue</Th>
             </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-200 bg-white">
-            {paginatedData.length === 0 ? (
-              <tr>
-                <td colSpan={15} className="px-2 py-8 text-center text-gray-400 text-xs">
-                  No matching records found
-                </td>
-              </tr>
-            ) : (
-              paginatedData.map((row, idx) => (
-                <tr
-                  key={row.id}
-                  className={`hover:bg-gray-100 transition cursor-pointer ${getMatchStatusColor(row)}`}
-                  onClick={() => onRowClick(row)}
-                  style={{ height: '22px' }}
-                >
-                  {/* Index */}
-                  <td className="px-1 py-0.5 text-center font-semibold text-gray-500 border-r-2 border-gray-300 bg-gray-50">
-                    {(currentPage - 1) * itemsPerPage + idx + 1}
-                  </td>
-                  {/* Check Extraction Data */}
-                  <td className="px-1 py-0.5 font-semibold text-gray-900 border-r border-gray-200">
-                    {row.extractionData || row.source === 'matched' ? row.checkNumber || '—' : '—'}
-                  </td>
-                  <td className="px-1 py-0.5 text-gray-600 border-r border-gray-200">
-                    {(row.extractionData || row.source === 'matched') && row.date ? formatDate(row.date, dateFormat) : '—'}
-                  </td>
-                  <td className="px-1 py-0.5 text-right font-semibold text-emerald-700 border-r border-gray-200">
-                    {(row.extractionData || row.source === 'matched') && row.amount ? formatCurrency(row.amount) : '—'}
-                  </td>
-                  <td className="px-1 py-0.5 text-gray-900 border-r border-gray-200 max-w-[120px] truncate">
-                    {row.extractionData || row.source === 'matched' ? row.payee || '—' : '—'}
-                  </td>
-                  <td className="px-1 py-0.5 text-gray-600 border-r-2 border-gray-300 max-w-[100px] truncate">
-                    {row.extractionData || row.source === 'matched' ? row.bankAccount || '—' : '—'}
-                  </td>
+          </Thead>
 
-                  {/* QuickBooks Data */}
-                  <td className="px-1 py-0.5 font-semibold text-gray-900 border-r border-gray-200">
-                    {row.qbData || row.source === 'matched' ? (row.qbData?.checkNumber || row.checkNumber || '—') : '—'}
-                  </td>
-                  <td className="px-1 py-0.5 text-gray-600 border-r border-gray-200">
-                    {(row.qbData || row.source === 'matched') && (row.qbData?.date || row.date) ? formatDate(row.qbData?.date || row.date, dateFormat) : '—'}
-                  </td>
-                  <td className="px-1 py-0.5 text-right font-semibold text-emerald-700 border-r border-gray-200">
-                    {(row.qbData || row.source === 'matched') && (row.qbData?.amount || row.amount) ? formatCurrency(row.qbData?.amount || row.amount) : '—'}
-                  </td>
-                  <td className="px-1 py-0.5 text-gray-900 border-r border-gray-200 max-w-[120px] truncate">
-                    {row.qbData || row.source === 'matched' ? (row.qbData?.payee || row.payee || '—') : '—'}
-                  </td>
-                  <td className="px-1 py-0.5 text-gray-600 border-r border-gray-200 max-w-[100px] truncate">
-                    {row.qbData || row.source === 'matched' ? (row.qbData?.account || row.bankAccount || '—') : '—'}
-                  </td>
-                  <td className="px-1 py-0.5 text-center border-r-2 border-gray-300">
-                    {row.qbData ? (
-                      <div className="flex items-center justify-center gap-1">
-                        <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
-                          row.qbData.qbSource === 'qbo_file_upload' 
-                            ? 'bg-blue-100 text-blue-700' 
-                            : row.qbData.qbSource?.includes('cheque') 
-                              ? 'bg-green-100 text-green-700'
-                              : 'bg-purple-100 text-purple-700'
-                        }`}>
-                          {row.qbData.qbSource === 'qbo_file_upload' ? 'File' : 
-                           row.qbData.qbSource?.includes('cheque') ? 'QB API' : 
-                           row.qbData.qbSource || 'Unknown'}
+          <Tbody>
+            {paginatedData.length === 0 ? (
+              <TableEmpty
+                colSpan={16}
+                title="No matching records"
+                description="Adjust the filters, or sync QuickBooks data to compare against."
+              />
+            ) : (
+              paginatedData.map((row, idx) => {
+                const match = MATCH_STATUS[row.matchStatus];
+                const hasRealIssue = row.hasIssue && (row.isDuplicate || row.matchStatus === 'mismatch');
+                const state = hasRealIssue ? 'error' : match.row;
+                const hasExtraction = Boolean(row.extractionData) || row.source === 'matched';
+                const hasQb = Boolean(row.qbData) || row.source === 'matched';
+
+                return (
+                  <Tr
+                    key={row.id}
+                    interactive
+                    state={state}
+                    onClick={() => onRowClick(row)}
+                  >
+                    {/* State accent is an inset shadow on the index cell, not a
+                        border-width change: geometry must never move. */}
+                    <Td
+                      numeric
+                      className="text-center font-semibold text-ink-faint"
+                      style={{ boxShadow: `inset 3px 0 0 0 hsl(${match.accent})` }}
+                    >
+                      {(currentPage - 1) * itemsPerPage + idx + 1}
+                    </Td>
+
+                    {/* Check extraction */}
+                    <Td className={`${GROUP_EDGE} nums font-semibold`}>
+                      {hasExtraction ? row.checkNumber || '—' : '—'}
+                    </Td>
+                    <Td muted className="nums">
+                      {hasExtraction && row.date ? formatDate(row.date, dateFormat) : '—'}
+                    </Td>
+                    <Td className="nums-money font-semibold text-success-text">
+                      {hasExtraction && row.amount ? formatCurrency(row.amount) : '—'}
+                    </Td>
+                    <Td className="max-w-[120px] truncate">
+                      {hasExtraction ? row.payee || '—' : '—'}
+                    </Td>
+                    <Td muted className="max-w-[100px] truncate">
+                      {hasExtraction ? row.bankAccount || '—' : '—'}
+                    </Td>
+
+                    {/* QuickBooks */}
+                    <Td className={`${GROUP_EDGE} nums font-semibold`}>
+                      {hasQb ? row.qbData?.checkNumber || row.checkNumber || '—' : '—'}
+                    </Td>
+                    <Td muted className="nums">
+                      {hasQb && (row.qbData?.date || row.date)
+                        ? formatDate(row.qbData?.date || row.date, dateFormat)
+                        : '—'}
+                    </Td>
+                    <Td className="nums-money font-semibold text-success-text">
+                      {hasQb && (row.qbData?.amount || row.amount)
+                        ? formatCurrency(row.qbData?.amount || row.amount)
+                        : '—'}
+                    </Td>
+                    <Td className="max-w-[120px] truncate">
+                      {hasQb ? row.qbData?.payee || row.payee || '—' : '—'}
+                    </Td>
+                    <Td muted className="max-w-[100px] truncate">
+                      {hasQb ? row.qbData?.account || row.bankAccount || '—' : '—'}
+                    </Td>
+                    <Td className="text-center">
+                      {row.qbData ? (
+                        <span className="inline-flex items-center gap-1">
+                          <Badge
+                            size="sm"
+                            tone={
+                              row.qbData.qbSource === 'qbo_file_upload'
+                                ? 'brand'
+                                : row.qbData.qbSource?.includes('cheque')
+                                  ? 'success'
+                                  : 'neutral'
+                            }
+                          >
+                            {row.qbData.qbSource === 'qbo_file_upload'
+                              ? 'File'
+                              : row.qbData.qbSource?.includes('cheque')
+                                ? 'QB API'
+                                : row.qbData.qbSource || 'Unknown'}
+                          </Badge>
+                          {onDeleteQBEntry && row.qbData.id && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteQBEntry(row.qbData!.id);
+                              }}
+                              disabled={deletingQBEntry === row.qbData.id}
+                              className="press rounded-full p-0.5 text-error-text hover:bg-error-bg disabled:opacity-disabled"
+                              title="Delete this QB entry"
+                            >
+                              {deletingQBEntry === row.qbData.id ? (
+                                <Loader2 size={10} className="animate-spin" />
+                              ) : (
+                                <Trash2 size={10} />
+                              )}
+                            </button>
+                          )}
                         </span>
-                        {onDeleteQBEntry && row.qbData.id && (
+                      ) : (
+                        '—'
+                      )}
+                    </Td>
+
+                    {/* Comparison */}
+                    <Td className={`${GROUP_EDGE} text-center`}>
+                      <StatusPill size="sm" status={match.status} label={match.label} />
+                    </Td>
+                    <Td numeric className="font-semibold">
+                      {row.confidence !== undefined ? (
+                        <span
+                          className={
+                            row.confidence >= 80
+                              ? 'text-success-text'
+                              : row.confidence >= 60
+                                ? 'text-warning-text'
+                                : 'text-error-text'
+                          }
+                        >
+                          {row.confidence}%
+                        </span>
+                      ) : (
+                        '—'
+                      )}
+                    </Td>
+
+                    {/* Issue — vouch / unvouch live here and both stay. */}
+                    <Td className="max-w-[180px]">
+                      {row.vouched ? (
+                        <span className="flex items-center gap-1">
+                          <span className="flex items-center gap-0.5 font-semibold text-success-text">
+                            <CheckCircle size={10} />
+                            Vouched
+                          </span>
                           <button
+                            type="button"
                             onClick={(e) => {
                               e.stopPropagation();
-                              onDeleteQBEntry(row.qbData!.id);
+                              onUnvouch(row);
                             }}
-                            disabled={deletingQBEntry === row.qbData.id}
-                            className="p-0.5 hover:bg-red-100 rounded transition disabled:opacity-50"
-                            title="Delete this QB entry"
+                            disabled={vouchingId === row.id}
+                            className="text-[10px] font-medium text-error-text underline hover:no-underline disabled:opacity-disabled"
+                            title="Remove vouch"
                           >
-                            {deletingQBEntry === row.qbData.id ? (
-                              <Loader2 size={10} className="text-red-600 animate-spin" />
+                            {vouchingId === row.id ? (
+                              <Loader2 size={8} className="animate-spin" />
                             ) : (
-                              <Trash2 size={10} className="text-red-600" />
+                              'Unvouch'
                             )}
                           </button>
-                        )}
-                      </div>
-                    ) : '—'}
-                  </td>
-
-                  {/* Comparison */}
-                  <td className={`px-1 py-0.5 text-center text-[9px] font-semibold border-r border-gray-200 ${row.matchStatus === 'matched' ? 'text-emerald-700' : row.matchStatus === 'mismatch' ? 'text-amber-700' : row.matchStatus === 'missing-in-qb' ? 'text-blue-700' : 'text-red-700'}`}>
-                    {getMatchStatusText(row)}
-                  </td>
-                  <td className="px-1 py-0.5 text-center font-semibold border-r border-gray-200">
-                    {row.confidence !== undefined ? (
-                      <span className={row.confidence >= 80 ? 'text-emerald-600' : row.confidence >= 60 ? 'text-amber-600' : 'text-red-600'}>
-                        {row.confidence}%
-                      </span>
-                    ) : '—'}
-                  </td>
-
-                  {/* Issue Column */}
-                  <td className={`px-1 py-0.5 text-left border-r-2 border-gray-300 max-w-[180px] ${row.hasIssue && !row.vouched ? 'bg-red-50' : row.vouched ? 'bg-green-50' : ''}`}>
-                    {row.vouched ? (
-                      <div className="flex items-center gap-1">
-                        <span className="text-[9px] text-green-700 font-semibold flex items-center gap-0.5">
-                          <CheckCircle size={10} className="text-green-600" />
-                          Vouched
                         </span>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onUnvouch(row);
-                          }}
-                          disabled={vouchingId === row.id}
-                          className="text-[8px] text-red-600 hover:text-red-800 underline disabled:opacity-50"
-                          title="Remove vouch"
-                        >
-                          {vouchingId === row.id ? <Loader2 size={8} className="animate-spin" /> : 'Unvouch'}
-                        </button>
-                      </div>
-                    ) : row.issues && row.issues.length > 0 ? (
-                      <div className="flex flex-col gap-0.5">
-                        <div className="flex items-start justify-between gap-1">
-                          <div className="flex-1 min-w-0">
+                      ) : row.issues && row.issues.length > 0 ? (
+                        <span className="flex items-start justify-between gap-1">
+                          <span className="min-w-0 flex-1">
                             {row.issues.slice(0, 2).map((issue, i) => (
-                              <div key={i} className="text-[9px] text-red-700 leading-tight truncate" title={issue}>
-                                {row.isDuplicate && i === 0 ? '⚠️ ' : '• '}{issue}
-                              </div>
+                              <span
+                                key={i}
+                                className="block truncate leading-tight text-error-text"
+                                title={issue}
+                              >
+                                {row.isDuplicate && i === 0 ? '⚠ ' : '• '}
+                                {issue}
+                              </span>
                             ))}
                             {row.issues.length > 2 && (
-                              <span className="text-[8px] text-red-500">+{row.issues.length - 2} more</span>
+                              <span className="block text-[10px] text-error-text/80">
+                                +{row.issues.length - 2} more
+                              </span>
                             )}
-                          </div>
+                          </span>
                           <button
+                            type="button"
                             onClick={(e) => {
                               e.stopPropagation();
                               onVouch(row);
                             }}
                             disabled={vouchingId === row.id}
-                            className="flex-shrink-0 px-1.5 py-0.5 text-[8px] bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50 font-medium"
+                            className="press shrink-0 rounded-full bg-success px-1.5 py-0.5 text-[10px] font-semibold text-success-foreground hover:bg-success-dark disabled:opacity-disabled"
                             title="Mark this issue as acceptable/resolved"
                           >
-                            {vouchingId === row.id ? <Loader2 size={8} className="animate-spin" /> : 'Vouch'}
+                            {vouchingId === row.id ? (
+                              <Loader2 size={8} className="animate-spin" />
+                            ) : (
+                              'Vouch'
+                            )}
                           </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <span className="text-[9px] text-green-600">✓</span>
-                    )}
-                  </td>
+                        </span>
+                      ) : (
+                        <span className="text-success-text">✓</span>
+                      )}
+                    </Td>
 
-                  {/* Actions */}
-                  <td className="px-1 py-0.5 text-center">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onRowClick(row);
-                      }}
-                      className="p-0.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition"
-                      title="View Details"
-                    >
-                      <Eye size={12} />
-                    </button>
-                  </td>
-                </tr>
-              ))
+                    {/* Actions */}
+                    <Td className={`${GROUP_EDGE} text-center`}>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRowClick(row);
+                        }}
+                        className="press rounded-full p-0.5 text-ink-faint hover:bg-brand/10 hover:text-brand-deep"
+                        title="View details"
+                      >
+                        <Eye size={12} />
+                      </button>
+                    </Td>
+                  </Tr>
+                );
+              })
             )}
-          </tbody>
-          <tfoot className="sticky bottom-0 bg-gray-100 border-t-2 border-gray-400">
-            <tr className="font-bold text-gray-900" style={{ height: '24px' }}>
-              <td className="px-1 py-0.5 text-center border-r-2 border-gray-400 bg-gray-200">
-                Σ
-              </td>
-              <td colSpan={2} className="px-1 py-0.5 text-left border-r border-gray-300">
-                Total: {totals.count}
-              </td>
-              <td className="px-1 py-0.5 text-right text-emerald-700 border-r border-gray-200">
+          </Tbody>
+
+          {/* Sticky totals. Deliberately NOT glass: a second blurred sticky
+              band inside a blurred shell is a third composited layer for no
+              visual gain, so this is an opaque surface with a hairline. */}
+          <tfoot className="sticky bottom-0 z-10 bg-surface/95 font-semibold text-ink-strong">
+            <tr className="h-[24px]">
+              <Td className="border-t border-glass-hairline text-center">Σ</Td>
+              <Td colSpan={2} className={`${GROUP_EDGE} border-t border-glass-hairline`}>
+                Total: <span className="nums">{totals.count}</span>
+              </Td>
+              <Td className="nums-money border-t border-glass-hairline text-success-text">
                 {formatCurrency(totals.checksTotal)}
-              </td>
-              <td colSpan={2} className="px-1 py-0.5 border-r-2 border-gray-400"></td>
-              <td colSpan={2} className="px-1 py-0.5 border-r border-gray-300"></td>
-              <td className="px-1 py-0.5 text-right text-emerald-700 border-r border-gray-200">
+              </Td>
+              <Td colSpan={2} className="border-t border-glass-hairline" />
+              <Td colSpan={2} className={`${GROUP_EDGE} border-t border-glass-hairline`} />
+              <Td className="nums-money border-t border-glass-hairline text-success-text">
                 {formatCurrency(totals.qbTotal)}
-              </td>
-              <td colSpan={2} className="px-1 py-0.5 border-r-2 border-gray-400"></td>
-              <td className="px-1 py-0.5 text-center border-r border-gray-200">
-                <span className={totals.difference === 0 ? 'text-emerald-700' : 'text-red-700'}>
+              </Td>
+              <Td colSpan={2} className="border-t border-glass-hairline" />
+              <Td className={`${GROUP_EDGE} nums-money border-t border-glass-hairline text-center`}>
+                <span className={totals.difference === 0 ? 'text-success-text' : 'text-error-text'}>
                   Δ {formatCurrency(Math.abs(totals.difference))}
                 </span>
-              </td>
-              <td className="px-1 py-0.5 text-center border-r border-gray-300">—</td>
-              <td className="px-1 py-0.5 border-r-2 border-gray-400"></td>
-              <td className="px-1 py-0.5"></td>
+              </Td>
+              <Td colSpan={2} className="border-t border-glass-hairline" />
+              <Td colSpan={2} className={`${GROUP_EDGE} border-t border-glass-hairline`} />
             </tr>
           </tfoot>
-        </table>
-      </div>
-    </div>
+        </Table>
+      </TableScroll>
+      {footer}
+    </TableShell>
   );
 };

@@ -17,8 +17,9 @@ export function BorderBeam({
   size = 200,
   duration = 15,
   borderWidth = 1.5,
-  colorFrom = "#10b981",
-  colorTo = "#0ea5e9",
+  // Token-driven defaults: the beam is brand colour, not a stray hex.
+  colorFrom = "hsl(var(--emerald))",
+  colorTo = "hsl(var(--brand))",
   delay = 0,
 }: BorderBeamProps) {
   return (
@@ -26,7 +27,11 @@ export function BorderBeam({
       style={
         {
           "--size": size,
-          "--duration": `${duration}s`,
+          // UNITLESS on purpose. The preserved animation in tailwind.config.js
+          // is `border-beam calc(var(--duration)*1s) ...`, so a value of "12s"
+          // makes that calc() resolve to calc(12s * 1s) — invalid, which CSS
+          // drops silently: the beam simply never moves and nothing logs.
+          "--duration": `${duration}`,
           "--border-width": `${borderWidth}px`,
           "--color-from": colorFrom,
           "--color-to": colorTo,

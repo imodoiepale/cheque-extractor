@@ -1,6 +1,7 @@
 'use client';
 
 import { X, FileText } from 'lucide-react';
+import { GlassCard, GlassCardTitle, IconButton } from '@/components/ui';
 
 interface Props {
   files: File[];
@@ -15,29 +16,36 @@ export default function MultiFileQueue({ files, onRemove }: Props) {
   };
 
   return (
-    <div className="bg-white rounded-lg shadow">
-      <div className="px-6 py-4 border-b">
-        <h3 className="font-semibold">Files Ready to Upload ({files.length})</h3>
+    <GlassCard padding="none" className="overflow-hidden">
+      <div className="border-b border-glass-hairline px-6 py-4">
+        <GlassCardTitle className="text-sm">
+          Files Ready to Upload ({files.length})
+        </GlassCardTitle>
       </div>
-      <div className="divide-y">
+      <div>
         {files.map((file, index) => (
-          <div key={index} className="px-6 py-4 flex items-center justify-between hover:bg-gray-50">
+          <div
+            key={index}
+            className="glass-divider flex items-center justify-between px-6 py-4 transition-colors duration-quick ease-settle hover:bg-brand/[0.045]"
+          >
             <div className="flex items-center gap-3">
-              <FileText className="text-gray-400" size={24} />
+              <FileText className="text-ink-faint" size={24} />
               <div>
-                <p className="font-medium text-gray-900">{file.name}</p>
-                <p className="text-sm text-gray-500">{formatFileSize(file.size)}</p>
+                <p className="font-medium text-ink-strong">{file.name}</p>
+                <p className="nums text-sm text-ink-faint">{formatFileSize(file.size)}</p>
               </div>
             </div>
-            <button
+            <IconButton
+              aria-label={`Remove ${file.name}`}
+              size="icon-sm"
               onClick={() => onRemove(index)}
-              className="text-gray-400 hover:text-red-600"
+              className="text-ink-faint hover:text-error-text"
             >
-              <X size={20} />
-            </button>
+              <X size={18} />
+            </IconButton>
           </div>
         ))}
       </div>
-    </div>
+    </GlassCard>
   );
 }

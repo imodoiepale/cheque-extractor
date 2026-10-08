@@ -1,70 +1,82 @@
 'use client';
 
 import { useState } from 'react';
-import { formatCurrency, formatConfidence } from '@/lib/utils/formatting';
+import { ChevronDown } from 'lucide-react';
+import { formatConfidence } from '@/lib/utils/formatting';
+import { GlassCard, GlassCardTitle, GlassPanel } from '@/components/ui';
+import { cn } from '@/lib/utils';
 
 interface Props {
   ocrResults: any;
   aiResults: any;
 }
 
+const FIELDS = ['payee', 'amount', 'check_date', 'check_number'];
+
 export default function ComparisonPanel({ ocrResults, aiResults }: Props) {
   const [showComparison, setShowComparison] = useState(false);
 
   if (!ocrResults || !aiResults) return null;
 
-  const fields = ['payee', 'amount', 'check_date', 'check_number'];
-
   return (
-    <div className="bg-white rounded-lg shadow">
+    <GlassCard padding="none" className="overflow-hidden">
       <button
         onClick={() => setShowComparison(!showComparison)}
-        className="w-full px-6 py-4 text-left flex items-center justify-between hover:bg-gray-50"
+        aria-expanded={showComparison}
+        className="press flex w-full items-center justify-between gap-3 px-6 py-4 text-left hover:bg-ink-strong/[0.03]"
       >
-        <h3 className="font-semibold">OCR vs AI Comparison</h3>
-        <span className="text-sm text-gray-500">
+        <GlassCardTitle className="text-base">OCR vs AI Comparison</GlassCardTitle>
+        <span className="flex items-center gap-1.5 text-sm text-ink-faint">
           {showComparison ? 'Hide' : 'Show'}
+          <ChevronDown
+            size={16}
+            className={cn('transition-transform duration-settle ease-settle', showComparison && 'rotate-180')}
+          />
         </span>
       </button>
 
       {showComparison && (
-        <div className="px-6 pb-6 space-y-4">
-          {fields.map(field => {
+        <div className="animate-glass-fade space-y-4 px-6 pb-6">
+          {FIELDS.map(field => {
             const ocrField = ocrResults[field];
             const aiField = aiResults[field];
 
             if (!ocrField && !aiField) return null;
 
             return (
-              <div key={field} className="border-t pt-4">
-                <p className="text-sm font-medium text-gray-700 mb-3 capitalize">
+              <div key={field} className="border-t border-glass-hairline pt-4">
+                <p className="mb-3 text-sm font-medium capitalize text-ink-body">
                   {field.replace('_', ' ')}
                 </p>
-                
+
                 <div className="grid grid-cols-2 gap-4">
                   {/* OCR */}
-                  <div className="bg-blue-50 rounded-lg p-3">
-                    <p className="text-xs text-blue-600 font-medium mb-1">OCR</p>
-                    <p className="font-medium">{ocrField?.value || 'N/A'}</p>
-                    <p className="text-xs text-gray-600 mt-1">
+                  <GlassPanel radius="input" padding="sm">
+                    <p className="text-eyebrow mb-1 text-ink-faint">OCR</p>
+                    <p className={cn('font-medium text-ink-strong', field === 'amount' && 'nums')}>
+                      {ocrField?.value || 'N/A'}
+                    </p>
+                    <p className="nums mt-1 text-xs text-ink-faint">
                       {formatConfidence(ocrField?.confidence || 0)}
                     </p>
-                  </div>
+                  </GlassPanel>
 
                   {/* AI */}
-                  <div className="bg-purple-50 rounded-lg p-3">
-                    <p className="text-xs text-purple-600 font-medium mb-1">AI</p>
-                    <p className="font-medium">{aiField?.value || 'N/A'}</p>
-                    <p className="text-xs text-gray-600 mt-1">
+                  <GlassPanel radius="input" padding="sm">
+                    <p className="text-eyebrow mb-1 text-brand-deep">AI</p>
+                    <p className={cn('font-medium text-ink-strong', field === 'amount' && 'nums')}>
+                      {aiField?.value || 'N/A'}
+                    </p>
+                    <p className="nums mt-1 text-xs text-ink-faint">
                       {formatConfidence(aiField?.confidence || 0)}
                     </p>
-                  </div>
+                  </GlassPanel>
                 </div>
               </div>
             );
           })}
         </div>
       )}
-    </div>
+    </GlassCard>
   );
 }

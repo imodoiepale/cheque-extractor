@@ -41,6 +41,7 @@ from PIL import Image as PILImage
 import hashlib
 
 from check_extractor import CheckExtractorApp
+from usage_rules import ledger_idempotency_key, is_billable
 
 # ── Supabase REST (lightweight – no heavy SDK needed) ─────────────
 import requests as _requests
@@ -396,6 +397,10 @@ def _load_jobs_from_supabase():
             "error": row.get("error_message"),
             "created_at": row.get("created_at", ""),
             "completed_at": row.get("completed_at"),
+            # Carried through the restart so a job resumed after a crash still
+            # writes its usage_ledger rows against the right firm.
+            "tenant_id": row.get("tenant_id"),
+            "user_id": row.get("user_id"),
         }
         loaded += 1
     if loaded:
@@ -558,17 +563,289 @@ def _verify_token(request: Request):
         raise HTTPException(401, f"Invalid token: {e}")
 
 
+# ── Tenant resolution, duplicate detection, trial gate, usage ledger ─────────
+# Everything below talks to the tables added in migrations 026–029.
+#
+# Why the backend resolves the tenant itself rather than trusting a header:
+# check_jobs rows were being written with no tenant_id at all, and the API usage
+# logger fell back to the all-zero UUID. A header the caller supplies would be a
+# cross-tenant write primitive on a directly-reachable service.
+
+def _claims_from_request(request) -> Optional[dict]:
+    """Decode the caller's Supabase JWT, or None.
+
+    Verified when SUPABASE_JWT_SECRET (or the service key) is configured, which
+    is the production path. Unverified decode is the local-dev path, where
+    REQUIRE_AUTH is off and the only consumer is attribution.
+
+    ponytail: dev-mode unverified decode is attribution-only, and a forged `sub`
+    could mis-attribute usage. The authoritative trial gate is
+    frontend/pages/api/* (always a validated session). Upgrade path: set
+    REQUIRE_AUTH=true so _verify_token rejects unsigned tokens before this runs.
+    """
+    try:
+        auth = request.headers.get("Authorization", "") or ""
+    except Exception:
+        return None
+    if not auth.startswith("Bearer "):
+        return None
+    token = auth[7:]
+    if not _HAS_JWT:
+        return None
+    secret = _jwt_secret or _sb_key
+    if secret:
+        try:
+            return _pyjwt.decode(
+                token, secret, algorithms=["HS256"], options={"verify_aud": False}
+            )
+        except Exception:
+            pass
+    if _require_auth:
+        return None
+    try:
+        return _pyjwt.decode(token, options={"verify_signature": False})
+    except Exception:
+        return None
+
+
+_tenant_by_user: dict = {}
+
+
+def _auth_context(request) -> dict:
+    """{'user_id': ..., 'tenant_id': ...}; either may be None."""
+    claims = _claims_from_request(request)
+    user_id = (claims or {}).get("sub")
+    if not user_id:
+        return {"user_id": None, "tenant_id": None}
+    if user_id in _tenant_by_user:
+        return {"user_id": user_id, "tenant_id": _tenant_by_user[user_id]}
+    tenant_id = None
+    # Live table is user_profiles (see public.user_tenant_id(), migration 008).
+    rows = _supabase_select("user_profiles", "tenant_id", {"id": user_id}, limit=1)
+    if rows:
+        tenant_id = rows[0].get("tenant_id")
+    if tenant_id:
+        _tenant_by_user[user_id] = tenant_id
+    return {"user_id": user_id, "tenant_id": tenant_id}
+
+
+# ── Batches (migration 032) ──────────────────────────────────────────────────
+# A batch is one reconciliation run: company + bank account + period + position
+# in Upload -> Match -> Review -> Approve. Jobs carry batch_id; the batch itself
+# stores no step number, because every step's completion is derived from facts
+# (see supabase/migrations/032_batches.sql and frontend/lib/batch-state.ts).
+#
+# Same rule as tenant_id (migration 026): the backend resolves and validates the
+# link itself rather than trusting the caller, so a crafted batch_id cannot
+# attach a job to another firm's run.
+
+def _resolve_batch(tenant_id: str, batch_id: str) -> Optional[str]:
+    """The batch id when it is an open batch of this tenant, else None.
+
+    Returns None — never raises — when the batches table is absent, so a
+    database without migration 032 keeps processing uploads as before.
+    """
+    if not tenant_id or not batch_id:
+        return None
+    rows = _supabase_select(
+        "batches", "id,status", {"id": batch_id, "tenant_id": tenant_id}, limit=1
+    )
+    if not rows:
+        print(f"  Batch {batch_id} not found for this tenant (or table absent) — job left unattached")
+        return None
+    if rows[0].get("status") != "open":
+        print(f"  Batch {batch_id} is {rows[0].get('status')}, not open — job left unattached")
+        return None
+    return rows[0].get("id")
+
+
+def _attach_checks_to_batch(job_id: str, tenant_id: str, check_ids: list):
+    """Stamp checks.batch_id for the cheques a finished job produced.
+
+    Runs after flatten_checks_from_job(). The cheques are matched by check_id
+    rather than job_id because the live checks table has no job_id column —
+    migration 020 dropped it from the insert list. matches.batch_id follows via
+    the triggers in migration 032, in either arrival order.
+    """
+    if not _supabase_ok or not tenant_id or not check_ids:
+        return
+    batch_id = None
+    rows = _supabase_select("check_jobs", "batch_id", {"job_id": job_id}, limit=1)
+    if rows:
+        batch_id = rows[0].get("batch_id")
+    if not batch_id:
+        return
+    ids = ",".join(f'"{str(c)}"' for c in check_ids if c)
+    if not ids:
+        return
+    try:
+        resp = _requests.patch(
+            f"{_sb_url}/rest/v1/checks"
+            f"?tenant_id=eq.{tenant_id}&batch_id=is.null&check_id=in.({ids})",
+            headers=_sb_headers(),
+            json={"batch_id": batch_id},
+            timeout=30,
+        )
+        if resp.status_code >= 400:
+            print(f"  Batch attach error ({resp.status_code}): {resp.text[:200]}")
+        else:
+            print(f"  ✓ Attached {len(check_ids)} cheque(s) of job {job_id} to batch {batch_id}")
+    except Exception as e:
+        print(f"  Batch attach exception: {e}")
+
+
+def _usage_state(tenant_id: str) -> Optional[dict]:
+    """public.tenant_usage_state() for one tenant, or None if unavailable."""
+    if not tenant_id:
+        return None
+    out = _supabase_rpc("tenant_usage_state", {"p_tenant_id": tenant_id})
+    return out if isinstance(out, dict) else None
+
+
+def _assert_processing_allowed(tenant_id: str):
+    """Server-side trial gate. Raises 402 when processing is not allowed.
+
+    402 rather than 403 so the frontend can tell "trial over, upgrade" apart
+    from "you lack the role". History endpoints are deliberately untouched: the
+    trial stops processing, not reading.
+    """
+    state = _usage_state(tenant_id)
+    if state is None:
+        return  # No tenant resolved / DB unavailable: the proxy gate still applies.
+    if not state.get("processing_allowed", True):
+        raise HTTPException(
+            402,
+            {
+                "error": "processing_disabled",
+                "reason": state.get("block_reason"),
+                "days_remaining": state.get("days_remaining"),
+                "checks_remaining": state.get("checks_remaining"),
+                "is_comped": state.get("is_comped"),
+                "message": "Processing is disabled for this account. Your history remains available.",
+            },
+        )
+
+
+def _lookup_upload_fingerprint(tenant_id: str, content_hash: str) -> Optional[dict]:
+    """The previous fingerprint row for this content, or None. Read-only."""
+    if not tenant_id or not content_hash:
+        return None
+    rows = _supabase_select(
+        "upload_fingerprints",
+        "first_uploaded_at,last_uploaded_at,upload_count,file_name,first_job_id,last_job_id",
+        {"tenant_id": tenant_id, "content_hash": content_hash},
+        limit=1,
+    )
+    return rows[0] if rows else None
+
+
+def _register_upload_fingerprint(tenant_id: str, content_hash: str, file_name: str,
+                                 file_size: int, job_id: str, user_id: str = None) -> dict:
+    """Record the upload and return what was known about it beforehand."""
+    out = _supabase_rpc("register_upload_fingerprint", {
+        "p_tenant_id": tenant_id,
+        "p_content_hash": content_hash,
+        "p_file_name": file_name,
+        "p_file_size": file_size,
+        "p_job_id": job_id,
+        "p_user_id": user_id,
+    })
+    return out if isinstance(out, dict) else {}
+
+
+def _duplicate_guard(tenant_id: str, content_hash: str, file_name: str,
+                     confirmed: bool) -> Optional[dict]:
+    """Durable duplicate check. Returns a response body to send, or None.
+
+    Replaces the in-memory `jobs` scan, which reset on every restart and so
+    billed identical customer behaviour differently.
+
+    When the same bytes were uploaded before and the user has not confirmed,
+    the caller returns this instead of processing. It carries
+    previous_uploaded_at so the UI can say "uploaded previously on <date>"
+    (Michael, 30 September) and offer to process and be counted anyway.
+
+    Returned as a 409 so a client can tell "needs your confirmation" from a
+    normal success. The legacy in-memory fallback below still answers 200 with
+    duplicate=true, which is the older "we reused the previous job" contract.
+    """
+    if confirmed:
+        return None
+    prev = _lookup_upload_fingerprint(tenant_id, content_hash)
+    if not prev:
+        return None
+    return {
+        "duplicate": True,
+        "requires_confirmation": True,
+        "previous_uploaded_at": prev.get("first_uploaded_at"),
+        "previous_last_uploaded_at": prev.get("last_uploaded_at"),
+        "previous_upload_count": prev.get("upload_count"),
+        "previous_job_id": prev.get("last_job_id") or prev.get("first_job_id"),
+        "previous_file_name": prev.get("file_name"),
+        "file_name": file_name,
+        "message": (
+            "This file was uploaded previously. Processing it again will count "
+            "towards your usage. Re-send with confirm_reupload=true to continue."
+        ),
+    }
+
+
+def _record_ledger_for_job(job_id: str, checks: list, tenant_id: str = None,
+                           user_id: str = None, realm_id: str = None,
+                           is_reupload: bool = False) -> int:
+    """Append one usage_ledger row per SUCCESSFULLY processed cheque.
+
+    Called from every path that marks a job complete. Returns the number of rows
+    actually appended; a retry returns 0 because the idempotency key exists.
+
+    Billing rules this enforces, all from CHECKLIST section 8:
+      * success only  — a cheque with no `extraction` is skipped, so failed OCR
+                        never bills.
+      * per cheque    — the loop is over detected cheques, so several on one page
+                        are several rows and a 40-page statement with 6 cheques
+                        is 6 rows, not 40.
+      * no double count — see usage_rules.ledger_idempotency_key.
+    """
+    if not _supabase_ok:
+        return 0
+    if not tenant_id:
+        print(f"  ⚠️ usage ledger skipped for {job_id}: no tenant resolved")
+        return 0
+
+    recorded = 0
+    not_billable = 0
+    for c in checks or []:
+        if not is_billable(c):
+            not_billable += 1
+            continue
+        check_id = c["check_id"]
+        out = _supabase_rpc("record_check_processed", {
+            "p_tenant_id": tenant_id,
+            "p_check_id": check_id,
+            "p_idempotency_key": ledger_idempotency_key(job_id, check_id),
+            "p_job_id": job_id,
+            "p_user_id": user_id,
+            "p_realm_id": realm_id,
+            "p_page_number": c.get("page"),
+            "p_engines": c.get("methods_used") or None,
+            "p_is_reupload": bool(is_reupload),
+        })
+        if isinstance(out, dict) and out.get("recorded"):
+            recorded += 1
+    already = max(0, len(checks or []) - not_billable - recorded)
+    print(f"  📒 usage ledger {job_id}: {recorded} new, {already} already counted, {not_billable} not billable")
+    return recorded
+
 app = FastAPI(title="Check Extractor API", version="1.0.0")
 
-# CORS configuration - allow all origins for maximum compatibility
-# Production frontend: https://check-extractor-frontend.vercel.app
-# Build allowed origins from environment variable
+# CORS configuration.
+# The Vercel project was renamed from "check-extractor-frontend" to Kyriq, which
+# changes every preview URL, so previews are matched by regex rather than listed.
+# There is deliberately no "*" here: a wildcard entry made the allowlist inert.
 _frontend_urls = os.environ.get("FRONTEND_URL", "").strip()
 _allowed_origins = [
-    "https://check-extractor-frontend.vercel.app",
-    "https://cheque-extractor-frontend.vercel.app",
-    "http://kyriq.com",
     "https://kyriq.com",
+    "https://www.kyriq.com",
     "http://localhost:3080",
     "http://localhost:3000",
 ]
@@ -580,12 +857,14 @@ if _frontend_urls:
         if url and url not in _allowed_origins:
             _allowed_origins.append(url)
 
-# Add wildcard for maximum compatibility
-_allowed_origins.append("*")
+# Vercel preview deployments for the renamed project, plus the legacy name while
+# any old deployment is still reachable.
+_allowed_origin_regex = r"https://(kyriq|cheque-extractor|check-extractor)[a-z0-9-]*\.vercel\.app"
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
+    allow_origin_regex=_allowed_origin_regex,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -800,6 +1079,15 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
         })
         print(f"  ✓ Database updated successfully")
 
+        # Billable event: one ledger row per cheque that actually extracted.
+        _job = jobs.get(job_id, {})
+        _record_ledger_for_job(
+            job_id, checks,
+            tenant_id=_job.get("tenant_id"),
+            user_id=_job.get("user_id"),
+            is_reupload=bool(_job.get("is_reupload")),
+        )
+
         # Remove local paths from in-memory job
         for c in checks:
             c.pop("image_path", None)
@@ -820,6 +1108,13 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
 
         # Flatten checks_data into individual rows in the checks table
         _supabase_rpc("flatten_checks_from_job", {"p_job_id": job_id})
+
+        # The cheques now exist as rows, so they can be attached to the run.
+        # This is what moves the batch's step 1 (Upload) to complete.
+        _attach_checks_to_batch(
+            job_id, _job.get("tenant_id") or jobs.get(job_id, {}).get("tenant_id"),
+            [c.get("check_id") for c in checks],
+        )
 
         # ── Cleanup local files after successful DB save ───────────
         # All files are now in Storage, safe to delete everything locally
@@ -844,7 +1139,12 @@ def health():
 
 
 @app.post("/api/upload-pdf")
-async def upload_pdf(file: UploadFile = File(...), _auth=Depends(_verify_token)):
+async def upload_pdf(
+    request: Request,
+    file: UploadFile = File(...),
+    confirm_reupload: bool = False,
+    _auth=Depends(_verify_token),
+):
     """Upload a PDF file, start detection + extraction in background."""
     if not file or not file.filename:
         raise HTTPException(400, "No file provided")
@@ -867,15 +1167,25 @@ async def upload_pdf(file: UploadFile = File(...), _auth=Depends(_verify_token))
     if file_size > 100 * 1024 * 1024:  # 100MB limit
         raise HTTPException(413, "File too large (max 100MB)")
 
-    # Duplicate detection: check if same filename + size already exists
+    ctx = _auth_context(request)
+    tenant_id, user_id = ctx["tenant_id"], ctx["user_id"]
+    _assert_processing_allowed(tenant_id)
+
+    # Duplicate detection, database-backed (migration 028).
     file_hash = hashlib.md5(content).hexdigest()
-    for existing in jobs.values():
-        if (existing.get("pdf_name") == file.filename
-                and existing.get("file_size") == file_size
-                and existing.get("file_hash") == file_hash
-                and existing.get("status") not in ("error",)):
-            return {"job_id": existing["job_id"], "status": existing["status"],
-                    "message": "Duplicate detected — returning existing job", "duplicate": True}
+    content_hash = "sha256:" + hashlib.sha256(content).hexdigest()
+    if tenant_id:
+        dup = _duplicate_guard(tenant_id, content_hash, file.filename, confirm_reupload)
+        if dup:
+            return JSONResponse(status_code=409, content=dup)
+    else:
+        for existing in jobs.values():
+            if (existing.get("pdf_name") == file.filename
+                    and existing.get("file_size") == file_size
+                    and existing.get("file_hash") == file_hash
+                    and existing.get("status") not in ("error",)):
+                return {"job_id": existing["job_id"], "status": existing["status"],
+                        "message": "Duplicate detected — returning existing job", "duplicate": True}
 
     job_id = str(uuid.uuid4())[:8]
     pdf_path = str(UPLOAD_DIR / f"{job_id}.pdf")
@@ -898,11 +1208,24 @@ async def upload_pdf(file: UploadFile = File(...), _auth=Depends(_verify_token))
         "error": None,
         "created_at": datetime.now().isoformat(),
         "completed_at": None,
+        "tenant_id": tenant_id,
+        "user_id": user_id,
+        "content_hash": content_hash,
+        "is_reupload": False,
     }
+
+    if tenant_id:
+        fp = _register_upload_fingerprint(
+            tenant_id, content_hash, file.filename, file_size, job_id, user_id
+        )
+        jobs[job_id]["is_reupload"] = bool(fp.get("duplicate"))
+        jobs[job_id]["_fingerprint_registered"] = True
 
     # Write job to database immediately so it appears in Dashboard
     _supabase_update("check_jobs", {"job_id": job_id}, {
         "status": "pending",
+        "tenant_id": tenant_id,
+        "user_id": user_id,
         "pdf_name": file.filename,
         "file_size": file_size,
         "total_pages": 0,
@@ -918,8 +1241,22 @@ async def upload_pdf(file: UploadFile = File(...), _auth=Depends(_verify_token))
 
 
 @app.post("/api/upload-analyze")
-async def upload_analyze(file: UploadFile = File(...), _auth=Depends(_verify_token)):
-    """Upload a PDF, detect cheques, return page info with dimensions — no OCR yet."""
+async def upload_analyze(
+    request: Request,
+    file: UploadFile = File(...),
+    confirm_reupload: bool = False,
+    batch_id: str = None,
+    _auth=Depends(_verify_token),
+):
+    """Upload a PDF, detect cheques, return page info with dimensions — no OCR yet.
+
+    `confirm_reupload` (query param) is the user opting in after being warned
+    the file was uploaded before and will be counted again.
+
+    `batch_id` (query param) attaches this PDF to a reconciliation run
+    (migration 032). It is validated against the resolved tenant and ignored if
+    it does not name an open batch of that firm.
+    """
     if not file or not file.filename:
         raise HTTPException(400, "No file provided")
 
@@ -941,16 +1278,31 @@ async def upload_analyze(file: UploadFile = File(...), _auth=Depends(_verify_tok
     if file_size > 100 * 1024 * 1024:  # 100MB limit
         raise HTTPException(413, "File too large (max 100MB)")
 
-    # Duplicate detection (check in-memory jobs only, not DB)
-    # Skip duplicate check if jobs dict is empty (fresh start)
+    # ── Who is this, and may they process? ───────────────────────────────────
+    ctx = _auth_context(request)
+    tenant_id, user_id = ctx["tenant_id"], ctx["user_id"]
+    _assert_processing_allowed(tenant_id)
+
+    # ── Duplicate detection, database-backed (migration 028) ─────────────────
+    # The old check scanned the in-memory `jobs` dict, so a restart made the
+    # same file look brand new. `file_hash` stays md5 for the legacy in-memory
+    # fields; the durable fingerprint is sha256 of the bytes.
     file_hash = hashlib.md5(content).hexdigest()
-    if jobs:  # Only check duplicates if we have jobs in memory
+    content_hash = "sha256:" + hashlib.sha256(content).hexdigest()
+    if tenant_id:
+        dup = _duplicate_guard(tenant_id, content_hash, file.filename, confirm_reupload)
+        if dup:
+            print(f"  Duplicate upload for tenant {tenant_id}: {file.filename}")
+            return JSONResponse(status_code=409, content=dup)
+    elif jobs:
+        # No tenant resolved (local dev with REQUIRE_AUTH off): fall back to the
+        # old in-memory behaviour rather than silently skipping the check.
         for existing in jobs.values():
             if (existing.get("pdf_name") == file.filename
                     and existing.get("file_size") == file_size
                     and existing.get("file_hash") == file_hash
                     and existing.get("status") not in ("error",)):
-                print(f"  Duplicate detected: {existing['job_id']}")
+                print(f"  Duplicate detected (in-memory): {existing['job_id']}")
                 return {"job_id": existing["job_id"], "status": existing["status"],
                         "message": "Duplicate detected — returning existing job", "duplicate": True}
 
@@ -1024,13 +1376,35 @@ async def upload_analyze(file: UploadFile = File(...), _auth=Depends(_verify_tok
             "error": None,
             "created_at": datetime.now().isoformat(),
             "completed_at": None,
+            "tenant_id": tenant_id,
+            "user_id": user_id,
+            "content_hash": content_hash,
+            "is_reupload": False,
             "_app_ext": app_ext,
             "_manifest": manifest,
         }
 
-        # Save to DB immediately
-        _supabase_insert("check_jobs", {
+        # Attach this PDF to a reconciliation run, if the caller named one that
+        # really belongs to this firm and is still open.
+        resolved_batch = _resolve_batch(tenant_id, batch_id)
+        jobs[job_id]["batch_id"] = resolved_batch
+
+        # Record the fingerprint, and remember whether this was a confirmed
+        # re-upload so the ledger row carries is_reupload.
+        if tenant_id:
+            fp = _register_upload_fingerprint(
+                tenant_id, content_hash, file.filename, file_size, job_id, user_id
+            )
+            jobs[job_id]["is_reupload"] = bool(fp.get("duplicate"))
+            jobs[job_id]["_fingerprint_registered"] = True
+
+        # Save to DB immediately. tenant_id was missing here, which is why
+        # check_jobs rows had no owner and api_usage_logs fell back to the
+        # all-zero UUID.
+        job_row = {
             "job_id": job_id,
+            "tenant_id": tenant_id,
+            "user_id": user_id,
             "pdf_name": file.filename,
             "status": "analyzed",
             "doc_format": doc_format,
@@ -1038,7 +1412,13 @@ async def upload_analyze(file: UploadFile = File(...), _auth=Depends(_verify_tok
             "total_checks": len(manifest),
             "file_size": file_size,
             "checks_data": json.dumps([]),
-        })
+        }
+        # Only when resolved: on a database without migration 032 the column
+        # does not exist, and sending it would fail the whole insert — which is
+        # how check_jobs rows lost their owner the last time.
+        if resolved_batch:
+            job_row["batch_id"] = resolved_batch
+        _supabase_insert("check_jobs", job_row)
 
         # Upload PDF to storage
         try:
@@ -1099,11 +1479,22 @@ class StartExtractionRequest(BaseModel):
     methods: list[str] = ["gemini"]
     page_range: Optional[dict] = None
     cheque_range: Optional[dict] = None
+    # An explicit page list, so a bank statement whose cheque pages are not
+    # consecutive can be run without widening to a range. Usage is billed on
+    # cheques detected, so widening would bill pages the user deselected.
+    # Takes precedence over page_range, which the client still sends as a
+    # fallback for older servers.
+    pages: Optional[list[int]] = None
     force: bool = False  # Force re-extraction even if results exist
+    # The user opting in after being warned this file was uploaded before.
+    confirm_reupload: bool = False
+    # The reconciliation run this job belongs to (migration 032). Only used when
+    # the job is not already attached — upload-analyze is the normal place.
+    batch_id: Optional[str] = None
 
 
 @app.post("/api/start-extraction")
-def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
+def start_extraction(req: StartExtractionRequest, request: Request, _auth=Depends(_verify_token)):
     """Start OCR extraction on a previously analyzed job.
     Supports page_range ({from, to}) and cheque_range ({from, to}) filtering.
     Allows re-extraction on complete jobs (only processes checks without results).
@@ -1114,6 +1505,58 @@ def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
         raise HTTPException(404, "Job not found")
 
     job = jobs[req.job_id]
+
+    # Server-side trial gate. Extraction is the billable act, so this is the
+    # gate that matters: an expired trial gets 402 here even if the UI button
+    # is still visible. Nothing about reading /api/jobs/* changes.
+    ctx = _auth_context(request)
+    if not job.get("tenant_id") and ctx["tenant_id"]:
+        job["tenant_id"] = ctx["tenant_id"]
+        job["user_id"] = ctx["user_id"]
+        # /api/upload-analyze is called straight from the browser with no
+        # Authorization header, so the job row was written without an owner.
+        # Extraction is the first point where the tenant is known; stamp it so
+        # the dashboard, the API usage log and the ledger all agree.
+        _supabase_update("check_jobs", {"job_id": req.job_id}, {
+            "tenant_id": ctx["tenant_id"],
+            "user_id": ctx["user_id"],
+        })
+
+    tenant_id = job.get("tenant_id") or ctx["tenant_id"]
+    _assert_processing_allowed(tenant_id)
+
+    # Attach to a reconciliation run if upload-analyze could not: it is called
+    # before the batch exists in some flows, and the tenant is only certain
+    # here. Never re-points a job that is already attached.
+    if req.batch_id and not job.get("batch_id"):
+        resolved_batch = _resolve_batch(tenant_id, req.batch_id)
+        if resolved_batch:
+            job["batch_id"] = resolved_batch
+            _supabase_update("check_jobs", {"job_id": req.job_id}, {"batch_id": resolved_batch})
+
+    # ── Duplicate warning, at the point where it can actually be given ───────
+    # Detection (upload-analyze) is free; extraction is the billable act, so the
+    # "uploaded previously on <date>" prompt belongs here, where the tenant is
+    # resolved. Confirming sets is_reupload on every ledger row for this job.
+    # ponytail: _fingerprint_registered is in-memory, so a server restart
+    # between upload and extraction re-warns once. Upgrade path: persist it on
+    # check_jobs if the extra prompt is ever a nuisance.
+    if tenant_id and job.get("content_hash") and not job.get("_fingerprint_registered"):
+        dup = _duplicate_guard(
+            tenant_id, job["content_hash"], job.get("pdf_name", ""), req.confirm_reupload
+        )
+        if dup:
+            dup["job_id"] = req.job_id
+            dup["status"] = job["status"]
+            return JSONResponse(status_code=409, content=dup)
+        fp = _register_upload_fingerprint(
+            tenant_id, job["content_hash"], job.get("pdf_name", ""),
+            job.get("file_size"), req.job_id, job.get("user_id"),
+        )
+        job["_fingerprint_registered"] = True
+        if fp.get("duplicate"):
+            job["is_reupload"] = True
+
     # Allow re-extraction on complete/error jobs too
     if job["status"] in ("extracting", "ocr_running"):
         return {"job_id": req.job_id, "status": job["status"], "message": "Already processing"}
@@ -1218,6 +1661,15 @@ def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
                 c_to = min(len(manifest), req.cheque_range.get("to", len(manifest)))
                 filtered_manifest = filtered_manifest[c_from - 1 : c_to]
                 print(f"  Cheque range filter: #{c_from}-#{c_to} → {len(filtered_manifest)} checks")
+            elif req.pages:
+                # Explicit list wins over page_range: the client sends both, the
+                # range only so an older server still does something sensible.
+                wanted = {int(p) for p in req.pages}
+                filtered_manifest = [
+                    (cid, ip, pn) for cid, ip, pn in filtered_manifest
+                    if pn in wanted
+                ]
+                print(f"  Page list filter: {len(wanted)} pages → {len(filtered_manifest)} checks")
             elif req.page_range:
                 p_from = req.page_range.get("from", 1)
                 p_to = req.page_range.get("to", job.get("total_pages", 9999))
@@ -1445,6 +1897,16 @@ def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
                 "completed_at": datetime.now().isoformat(),
             })
 
+            # Billable event: one ledger row per cheque that actually extracted.
+            # Re-running this job re-uses the same idempotency keys, so a retry
+            # adds nothing.
+            _record_ledger_for_job(
+                req.job_id, checks,
+                tenant_id=job.get("tenant_id") or tenant_id,
+                user_id=job.get("user_id"),
+                is_reupload=bool(job.get("is_reupload")),
+            )
+
             for c in checks:
                 c.pop("image_path", None)
 
@@ -1465,6 +1927,13 @@ def start_extraction(req: StartExtractionRequest, _auth=Depends(_verify_token)):
 
             # Flatten checks_data into individual rows in the checks table
             _supabase_rpc("flatten_checks_from_job", {"p_job_id": req.job_id})
+
+            # The cheques now exist as rows, so they can be attached to the run.
+            # This is what moves the batch's step 1 (Upload) to complete.
+            _attach_checks_to_batch(
+                req.job_id, job.get("tenant_id"),
+                [c.get("check_id") for c in checks],
+            )
 
             # ── Cleanup local files after successful extraction ────
             # All files are now in Storage, safe to delete everything locally
@@ -2328,6 +2797,21 @@ class IntegrationSettings(BaseModel):
     gemini_api_key: Optional[str] = None
 
 
+def _redact_settings(data: dict) -> dict:
+    """Field names and value lengths only — never the values.
+
+    This used to print `update_data` straight out, which put the tenant's Gemini
+    API key into the server log in plaintext on every save.
+    """
+    out = {}
+    for k, v in (data or {}).items():
+        if any(t in k.lower() for t in ("key", "token", "secret", "password")):
+            out[k] = f"<redacted {len(str(v))} chars>" if v else "<empty>"
+        else:
+            out[k] = v
+    return out
+
+
 @app.get("/api/settings/integrations")
 def get_integration_settings(_auth=Depends(_verify_token)):
     """
@@ -2398,7 +2882,7 @@ async def update_integration_settings(settings: IntegrationSettings, _auth=Depen
             setting_id = existing[0].get("id")
             print(f"📝 Updating existing record with id={setting_id}")
             print(f"   URL: {_sb_url}/rest/v1/app_settings?id=eq.{setting_id}")
-            print(f"   Data: {update_data}")
+            print(f"   Fields: {_redact_settings(update_data)}")
             resp = _requests.patch(
                 f"{_sb_url}/rest/v1/app_settings?id=eq.{setting_id}",
                 headers=_sb_headers(),
@@ -2411,7 +2895,7 @@ async def update_integration_settings(settings: IntegrationSettings, _auth=Depen
             update_data["created_at"] = datetime.utcnow().isoformat()
             print(f"➕ Creating new record")
             print(f"   URL: {_sb_url}/rest/v1/app_settings")
-            print(f"   Data: {update_data}")
+            print(f"   Fields: {_redact_settings(update_data)}")
             resp = _requests.post(
                 f"{_sb_url}/rest/v1/app_settings",
                 headers=_sb_headers(),
@@ -2904,7 +3388,17 @@ if __name__ == "__main__":
                                     "checks_data": json.dumps(checks_data),
                                     "completed_at": datetime.now().isoformat(),
                                 })
-                                
+
+                                # Billable event — same helper, same idempotency
+                                # keys, so this recovery path cannot double-count
+                                # cheques the normal path already counted.
+                                _record_ledger_for_job(
+                                    jid, jobs[jid].get("checks", []),
+                                    tenant_id=jobs[jid].get("tenant_id"),
+                                    user_id=jobs[jid].get("user_id"),
+                                    is_reupload=bool(jobs[jid].get("is_reupload")),
+                                )
+
                                 jobs[jid]["status"] = "complete"
                                 jobs[jid]["completed_at"] = datetime.now().isoformat()
                                 
