@@ -1,9 +1,10 @@
 /**
  * Kyriq email copy and the one layout every message uses.
  *
- * CHECKLIST section 9. Nineteen templates: six whose triggers already existed,
+ * CHECKLIST section 9. Twenty templates: six whose triggers already existed,
  * three QuickBooks ones unblocked by the connection-health column in migration
- * 034, and ten trial/usage ones driven off public.tenant_usage_state().
+ * 034, ten trial/usage ones driven off public.tenant_usage_state(), and the
+ * annual renewal reminder CHECKLIST section 7 asks for.
  *
  * Two rules are enforced here rather than left to reviewers:
  *
@@ -336,6 +337,29 @@ export const TEMPLATES = {
         `Those ${v.overageChecks} will appear as overage on the invoice for the period ending ${formatDate(v.periodEnd)}.`,
       ],
       cta: { label: 'See usage', url: appUrl('/billing') },
+    }),
+  },
+
+  /* ── 20: the annual renewal reminder (CHECKLIST section 7) ───────────
+   *
+   * 'transactional', deliberately. This is the ~30-day notice before a card is
+   * charged for another year; a customer who opted out of usage digests must
+   * still be told before money moves. Sent at most once per renewal date via
+   * sendOnce(), so the category choice cannot turn into repetition either.
+   */
+  annual_renewal_reminder: {
+    category: 'transactional',
+    spec: 'billing-07 annual renewal reminder',
+    subject: (v) => `Your Kyriq annual plan renews on ${formatDate(v.renewalDate)}`,
+    body: (v) => ({
+      paragraphs: [
+        `The annual ${v.planLabel || 'Kyriq'} plan for ${firmOf(v)} renews on ${formatDate(v.renewalDate)}, in about ${v.daysAhead || 30} ${plural(v.daysAhead || 30, 'day', 'days')}.`,
+        v.amountUsd
+          ? `Your card on file will be charged $${Number(v.amountUsd).toLocaleString('en-US')} for the next twelve months. Nothing is charged before that date.`
+          : 'Your card on file will be charged for the next twelve months. Nothing is charged before that date.',
+        'No action is needed if you are staying. If you want to change plans or stop the renewal, do it before that date — cancelling afterwards does not refund the year.',
+      ],
+      cta: { label: 'Review your plan', url: appUrl('/billing') },
     }),
   },
 } satisfies Record<string, EmailTemplate>;

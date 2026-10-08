@@ -63,7 +63,10 @@ const PAGE_CAPABILITIES: Array<[string, string, RegExp]> = [
   ['company switcher',        STEP, /<QBCompanySwitcher\s*\/>/],
   ['sync QB & match',         STEP, /onClick=\{syncQB\}/],
   ['sync in-flight state',    STEP, /loading=\{isSyncing\}/],
-  ['bulk approve: auto >=95', STEP, /bulkApprove\(\{\s*minConfidence:\s*95\s*\}\)/],
+  // The threshold used to be hardcoded at 95. It is now the control in the
+  // Review toolbar (CHECKLIST section 3), so what matters is that bulk approve
+  // is driven BY that state rather than by a literal.
+  ['bulk approve: uses the threshold control', STEP, /bulkApprove\(\{\s*minConfidence\s*\}\)/],
   ['bulk approve: selection', STEP, /bulkApprove\(\{\s*matchIds:\s*Array\.from\(selected\)\s*\}\)/],
   ['error banner',            STEP, /role="alert"/],
   ['status filters w/ counts',STEP, /statusCounts\[key\]/],

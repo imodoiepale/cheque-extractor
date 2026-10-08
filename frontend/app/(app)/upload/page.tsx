@@ -529,12 +529,10 @@ function UploadPageInner() {
       isDuplicate,
     };
 
-    // If duplicate and status is 'analyzed', auto-extract it
-    if (isDuplicate && data.status === 'analyzed') {
-      setTimeout(() => {
-        handleStartExtraction(result.job_id);
-      }, 1000);
-    }
+    // A re-uploaded duplicate used to auto-extract here. Same bug as the
+    // multi-file path: it ran before the user could reach Configure, so every
+    // page was billed regardless of the selection they were about to make.
+    // It now waits for Start like any other job.
 
     return result;
   }, [askReupload]);
@@ -606,11 +604,11 @@ function UploadPageInner() {
       setSelectedPages(defaultPageSelection(firstSuccess.value.pages || []));
       setChequeTo(firstSuccess.value.total_checks || 1);
       setStep('preview');
-
-      // Auto-extract all uploaded jobs so they appear in QB Comparisons
-      setTimeout(() => {
-        handleExtractAll();
-      }, 500);
+      // Deliberately NO auto-extract here. Usage is billed per cheque
+      // processed, and the per-page grid in Configure exists so the user can
+      // exclude the non-cheque pages of a bank statement. Firing extraction
+      // before they reach that step would bill pages they never chose.
+      // Extraction starts when the user presses Start (or Extract All).
     } else if (!gate) {
       const allSkipped =
         rejections.length > 0 && rejections.every((r) => r instanceof DuplicateSkipped);
@@ -675,8 +673,16 @@ function UploadPageInner() {
         body.page_range = selectedRange(sel);
       } else if (rangeType === 'cheques' && jobId === activeJobId) {
         body.cheque_range = { from: chequeFrom, to: chequeTo };
-      } else {
+      } else if (jobId === activeJobId) {
+        // The user explicitly chose "All pages" for the job on screen.
         body.page_range = { from: 1, to: r.total_pages };
+      } else {
+        // An "Extract All" sibling: nobody has reviewed its pages, so it runs
+        // on its OWN default selection (pages where detection found cheques),
+        // not on every page. Billing is per cheque processed.
+        const sel = defaultPageSelection(r.pages || []);
+        body.pages = [...sel].sort((a, b) => a - b);
+        body.page_range = sel.size > 0 ? selectedRange(sel) : { from: 1, to: r.total_pages };
       }
 
       const response = await fetch('/api/start-extraction', {

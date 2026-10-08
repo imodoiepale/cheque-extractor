@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   RefreshCw, Search, Check, AlertTriangle, Flag, Clock, HelpCircle,
   CheckCircle2, Filter, ArrowUpDown, Building2, ListChecks, BadgeCheck,
@@ -154,10 +155,26 @@ export interface ReviewStepProps {
    *  this renders as its own page and the page already has a title. */
   heading?: string;
   className?: string;
+  /**
+   * The batch being reconciled. Every read here is scoped to it — the rows AND
+   * the tab/chip counts — because the stepper marks step 3 complete from
+   * batch_counts(batch_id) and a tab counting the whole tenant would contradict
+   * it ("24 need attention" over an empty tab, or vice versa).
+   *
+   * Defaults to `?batch=` in the URL, which is how the reconcile stepper
+   * already identifies the batch, so mounting ReviewStep there needs no prop.
+   * Undefined/absent means the whole active company, which is only correct for
+   * a standalone matches view.
+   */
+  batchId?: string | null;
 }
 
-export default function ReviewStep({ heading, className }: ReviewStepProps) {
+export default function ReviewStep({ heading, className, batchId }: ReviewStepProps) {
   const { hasConnections, isLoading: qbLoading } = useQBConnections();
+  const searchParams = useSearchParams();
+  /** An explicit prop wins; otherwise the stepper's own `?batch=` id. */
+  const effectiveBatchId =
+    batchId !== undefined ? batchId : searchParams?.get('batch') || null;
 
   const [tab, setTab] = useState<string>('attention');
   /** Within-tab status narrowing. '' means "the whole tab". */
@@ -204,7 +221,14 @@ export default function ReviewStep({ heading, className }: ReviewStepProps) {
     matches, total, statusCounts, isLoading, isSyncing, error,
     refresh, syncQB, approveSingle, bulkApprove, flagMatch,
     addNote, resolveDiscrepancy, remapMatch, undoApproval, createInQB, updateQBTransaction,
-  } = useMatches({ status: statusParam, search: searchQuery, sort: sortBy, page, limit: perPage });
+  } = useMatches({
+    status: statusParam,
+    search: searchQuery,
+    sort: sortBy,
+    page,
+    limit: perPage,
+    batchId: effectiveBatchId,
+  });
 
   /** Live counts. The tab counts are sums over the SAME per-status counts the
    *  chips show, so a tab can never disagree with the chips inside it. */

@@ -127,6 +127,7 @@ function SettingsPageContent() {
         const success = searchParams.get('success')
         const detail = searchParams.get('detail')
         const tab = searchParams.get('tab')
+        const notice = searchParams.get('notice')
         
         if (tab === 'integrations') {
             setActiveTab('integrations')
@@ -160,6 +161,18 @@ function SettingsPageContent() {
             toast.success('Successfully connected to QuickBooks!', { duration: 5000, icon: '\u2705' })
             router.replace('/settings?tab=integrations', { scroll: false })
             fetchIntegrationStatus()
+        }
+
+        // Additive to the success toast above: the connection worked, the free
+        // trial is what did not apply. Read in the same pass, because the
+        // router.replace() in either branch drops the param before a re-run.
+        if (notice === 'trial_already_used') {
+            handledOAuthRef.current = true
+            toast(
+                'This QuickBooks company has already had a Kyriq trial, so a new one was not started. The connection is active — choose a plan on the Billing page to keep processing.',
+                { duration: 12000, icon: 'ℹ️' }
+            )
+            router.replace('/settings?tab=integrations', { scroll: false })
         }
     }, [mounted, searchParams])
 

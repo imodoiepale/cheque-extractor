@@ -39,6 +39,13 @@ interface UseMatchesOptions {
   page?: number;
   /** Records per page. The grid offers up to 2000; do not cap it lower here. */
   limit?: number;
+  /**
+   * Scope every read to one reconciliation batch. Omitted (or null) means the
+   * whole active company, which is right for a standalone matches view but
+   * WRONG inside the stepper: an unscoped Review tab shows other periods'
+   * cheques and its counts then contradict the stepper's batch_counts().
+   */
+  batchId?: string | null;
 }
 
 export function useMatches({
@@ -47,6 +54,7 @@ export function useMatches({
   sort = 'confidence',
   page = 1,
   limit = 50,
+  batchId = null,
 }: UseMatchesOptions = {}) {
   const [matches, setMatches] = useState<any[]>([]);
   const [total, setTotal] = useState(0);
@@ -80,8 +88,13 @@ export function useMatches({
       const params = new URLSearchParams({ sort, page: String(page), limit: String(limit) });
       if (status && status !== 'all') params.set('status', status);
       if (searchDebounced) params.set('search', searchDebounced);
+      if (batchId) params.set('batchId', batchId);
 
       const data = await apiFetch(`/api/matches?${params}`);
+      if (!Array.isArray(data.matches)) {
+        // A 200 is not proof of success: assert on the parsed shape.
+        throw new Error('Matches response did not contain a matches array');
+      }
       setMatches(data.matches || []);
       setTotal(typeof data.total === 'number' ? data.total : (data.matches || []).length);
       setStatusCounts(data.statusCounts || {});
@@ -90,7 +103,7 @@ export function useMatches({
     } finally {
       setIsLoading(false);
     }
-  }, [status, searchDebounced, sort, page, limit]);
+  }, [status, searchDebounced, sort, page, limit, batchId]);
 
   useEffect(() => {
     fetchMatches();
@@ -137,7 +150,10 @@ export function useMatches({
       try {
         const result = await apiFetch('/api/matches/bulk-approve', {
           method: 'POST',
-          body: JSON.stringify(body),
+          // The batch this hook is reading is the batch it may approve. Sent
+          // from here rather than left to each caller, so a new call site
+          // cannot forget it and quietly approve another batch's matches.
+          body: JSON.stringify({ ...(batchId ? { batchId } : {}), ...body }),
         });
         await fetchMatches();
         return result;
@@ -145,7 +161,7 @@ export function useMatches({
         setError(e.message);
       }
     },
-    [fetchMatches]
+    [fetchMatches, batchId]
   );
 
   const flagMatch = useCallback(

@@ -134,13 +134,15 @@ header {
 .profile-name { font-size: 13px; font-weight: 700; color: var(--gray-900); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .profile-email { font-size: 11px; color: var(--gray-500); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 1px; }
 .profile-divider { height: 1px; background: var(--gray-100); margin: 8px 0; }
-.profile-meta { display: flex; align-items: center; justify-content: space-between; }
+.profile-meta { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .profile-label { font-size: 11px; font-weight: 600; color: var(--gray-500); }
 .profile-link {
   font-size: 11px; font-weight: 600; color: var(--indigo); text-decoration: none;
   padding: 3px 8px; border-radius: 6px; background: var(--indigo-light); transition: all 0.1s;
 }
 .profile-link:hover { background: var(--brand-tint); color: var(--brand-deep); }
+/* Same pill as .profile-link, but a <button> needs the UA defaults undone. */
+.profile-link-btn { border: none; cursor: pointer; font-family: inherit; white-space: nowrap; }
 .btn-profile-disconnect {
   width: 100%; text-align: left; background: none; border: 1px solid var(--gray-200);
   border-radius: 7px; padding: 7px 12px; font-size: 12px; font-weight: 600;

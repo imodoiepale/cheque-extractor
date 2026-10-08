@@ -2207,6 +2207,8 @@ function bindEvents() {
     }
   });
   $('#btn-profile-logout')?.addEventListener('click', doLogout);
+  // The options page is otherwise only reachable via chrome://extensions.
+  $('#btn-ext-options')?.addEventListener('click', () => chrome.runtime.openOptionsPage());
 
   // ── Disconnect QB (profile panel) ──
   $('#btn-qb-disconnect')?.addEventListener('click', async () => {

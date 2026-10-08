@@ -11,7 +11,6 @@ import {
 } from 'lucide-react';
 import {
   Badge,
-  Button,
   GlassCard,
   GlassCardTitle,
   GlassPanel,
@@ -32,6 +31,7 @@ import { advanceStep, loadBatch, loadResume, type ResumeState } from '@/lib/reco
 import Stepper from '@/components/reconcile/Stepper';
 import MatchProgress from '@/components/reconcile/MatchProgress';
 import ConnectQuickBooksCard from '@/components/reconcile/ConnectQuickBooksCard';
+import ApprovePanel from '@/components/reconcile/ApprovePanel';
 
 /**
  * /reconcile — the one route for a reconciliation run (CHECKLIST section 3).
@@ -50,9 +50,8 @@ import ConnectQuickBooksCard from '@/components/reconcile/ConnectQuickBooksCard'
  *     step 1 with the Connect QuickBooks card above the upload box, so
  *     onboarding is the same four steps as every other day.
  *
- * Steps 3 and 4 are slots on purpose: the Review merge (QB Match + QB
- * Comparisons into three tabs) and the Approve & Clear page are separate
- * parcels.
+ * Steps 3 and 4 are thin slots: `ReviewStep` owns the Review tabs and
+ * `ApprovePanel` owns Approve & Clear, including the one finalize call.
  */
 
 function Loading() {
@@ -249,7 +248,7 @@ function Reconcile() {
       ) : null}
 
       {activeStep === 3 ? <ReviewSlot /> : null}
-      {activeStep === 4 ? <ApproveSlot batch={batch} /> : null}
+      {activeStep === 4 ? <ApproveSlot batch={batch} onBatch={setBatch} /> : null}
     </div>
   );
 }
@@ -352,33 +351,31 @@ function ReviewSlot() {
   return <ReviewStep />;
 }
 
-/** Step 4 slot. The Approve & Clear page is a separate parcel. */
-function ApproveSlot({ batch }: { batch: BatchPayload | null }) {
-  const canApprove = batch?.state.can_approve === true;
-  const reason = batch?.state.steps.find((s) => s.step === 4)?.reason ?? null;
-
-  return (
-    <GlassCard className="space-y-3">
-      <GlassCardTitle className="text-sm">Approve and clear</GlassCardTitle>
-      <p className="text-sm text-ink-body">
-        {canApprove
-          ? 'Every cheque in this batch has been settled. Approving clears the matched cheques in QuickBooks and writes the audit entries.'
-          : reason || 'Review is not complete.'}
-      </p>
-      {batch ? (
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge tone={canApprove ? 'success' : 'warning'}>
-            {canApprove ? 'Ready to approve' : 'Not ready'}
-          </Badge>
-          <span className="text-xs text-ink-faint">
-            <span className="nums">{batch.state.counts.matched}</span> matched ·{' '}
-            <span className="nums">{batch.state.counts.needs_attention}</span> need attention
-          </span>
-        </div>
-      ) : null}
-      <Button size="sm" variant="secondary" disabled>
-        Approve &amp; clear — coming in the next parcel
-      </Button>
-    </GlassCard>
-  );
+/**
+ * Step 4 slot. `ApprovePanel` owns the summary, the pre-flight checklist and the
+ * one finalize call.
+ *
+ * Without a batch there is nothing to approve and nothing to describe — which is
+ * only reachable by a deep link that failed to resolve, so it says that rather
+ * than rendering an empty panel with a dead button.
+ */
+function ApproveSlot({
+  batch,
+  onBatch,
+}: {
+  batch: BatchPayload | null;
+  onBatch: (next: BatchPayload) => void;
+}) {
+  if (!batch) {
+    return (
+      <GlassCard className="space-y-2">
+        <GlassCardTitle className="text-sm">Approve and clear</GlassCardTitle>
+        <p className="text-sm text-ink-body">
+          No reconciliation is open, so there is nothing to approve. Start a run and come back when
+          Review is finished.
+        </p>
+      </GlassCard>
+    );
+  }
+  return <ApprovePanel batch={batch} onBatch={onBatch} />;
 }

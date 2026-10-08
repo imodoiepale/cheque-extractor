@@ -48,8 +48,13 @@ const CSS_FILES = [
   'sidepanel/sidepanel.css',
   'popup/popup.css',
   'content/qbo-overlay.css',
+  'options/options.css',
 ];
-const MARKUP_FILES = ['sidepanel/sidepanel.html', 'popup/popup.html'];
+const MARKUP_FILES = [
+  'sidepanel/sidepanel.html',
+  'popup/popup.html',
+  'options/options.html',
+];
 
 let checks = 0;
 const ok = (label) => { checks++; console.log(`  ok  ${label}`); };
@@ -96,10 +101,11 @@ ok(`${blurRules} blurred rules, every one prefixed-first / standard-last`);
 
 // ── 3. The @supports fallback ──────────────────────────────────────────────
 const SUPPORTS = '@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)))';
-for (const rel of ['sidepanel/sidepanel.css', 'popup/popup.css', 'content/qbo-overlay.css']) {
+for (const rel of CSS_FILES) {
+  if (rel === 'styles/tokens.css') continue; // tokens only, no surfaces of its own
   assert.ok(read(rel).includes(SUPPORTS), `${rel} is missing the @supports glass fallback`);
 }
-ok('@supports glass fallback present in all three stylesheets');
+ok('@supports glass fallback present in every stylesheet that blurs');
 
 // ── 4. No blur on a list row ───────────────────────────────────────────────
 // These classes are repeated per record. One blurred surface per row would be
@@ -219,5 +225,39 @@ assert.ok(
 assert.ok(/company=\$\{encodeURIComponent\(realmId\)\}/.test(caseBody),
   'OPEN_QB_COMPANY does not pin the QuickBooks URL to the active realm');
 ok('header controls, five approved tabs, four attention chips, server-side active realm');
+
+// ── 8. Every extension page is reachable and its script actually runs ──────
+// options.html shipped for months with its logic in an inline <script>, which
+// MV3's extension-page CSP blocks outright — the page rendered and silently
+// did nothing — and with no manifest entry at all, so nothing could open it.
+const manifest = JSON.parse(read('manifest.json'));
+assert.equal(
+  manifest.options_ui?.page, 'options/options.html',
+  'manifest.json does not declare options_ui.page — the settings page is unreachable'
+);
+for (const rel of MARKUP_FILES) {
+  const markup = read(rel).replace(/<!--[\s\S]*?-->/g, '');
+  for (const tag of markup.match(/<script\b[^>]*>/gi) || []) {
+    assert.ok(
+      /\bsrc\s*=/.test(tag),
+      `${rel} has an inline <script> — MV3's extension-page CSP blocks it, so it never runs. ` +
+      'Move the code to its own .js file and load it with src.'
+    );
+  }
+  assert.ok(
+    !/\son[a-z]+\s*=\s*["']/i.test(markup),
+    `${rel} has an inline event handler attribute — also blocked by the MV3 CSP.`
+  );
+}
+// Relative asset paths: options/ and popup/ are one level down from icons/.
+for (const rel of MARKUP_FILES) {
+  for (const m of read(rel).matchAll(/(?:src|href)="([^"]*icons\/[^"]*)"/g)) {
+    assert.ok(
+      m[1].startsWith('../icons/'),
+      `${rel} references "${m[1]}" — pages live one directory down, so icon paths need ../`
+    );
+  }
+}
+ok('every page declared, no inline script or handler, icon paths resolve');
 
 console.log(`\n${checks} checks passed.`);

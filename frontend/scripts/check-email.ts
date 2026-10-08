@@ -161,6 +161,13 @@ const SAMPLES: Record<TemplateKey, Record<string, any>> = {
     planLabel: 'Growth',
     periodEnd: '2026-10-31',
   },
+  annual_renewal_reminder: {
+    firmName: 'Harrow & Finch',
+    renewalDate: '2027-04-01',
+    planLabel: 'Professional',
+    amountUsd: 5467,
+    daysAhead: 30,
+  },
   overage_summary: {
     firmName: 'Harrow & Finch',
     checksUsed: 1120,
@@ -172,7 +179,9 @@ const SAMPLES: Record<TemplateKey, Record<string, any>> = {
 };
 
 {
-  assert.equal(TEMPLATE_KEYS.length, 19, 'CHECKLIST section 9 is 6 + 3 + 10 = 19 Kyriq-sent emails');
+  // 6 + 3 + 10 from CHECKLIST section 9, plus the annual renewal reminder the
+  // Stripe requirements ask for ~30 days before the charge (section 7).
+  assert.equal(TEMPLATE_KEYS.length, 20, 'section 9 is 6 + 3 + 10, plus the annual renewal reminder');
   const missing = TEMPLATE_KEYS.filter((k) => !SAMPLES[k]);
   assert.deepEqual(missing, [], `every template needs sample vars, missing: ${missing.join(', ')}`);
   const extra = Object.keys(SAMPLES).filter((k) => !TEMPLATE_KEYS.includes(k as TemplateKey));
