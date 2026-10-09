@@ -1,9 +1,13 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
+import { backendAuthHeaders } from '@/lib/backend-auth'
 import { createAuthenticatedClient } from '@/lib/supabase/api'
 
 const PYTHON_API = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090'
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    const auth = await backendAuthHeaders(req, res)
+    if (!auth) return
+
     if (req.method !== 'GET') {
         return res.status(405).json({ error: 'Method not allowed' })
     }
@@ -25,7 +29,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 })
                 if (status) params.set('status', status)
                 
-                const response = await fetch(`${PYTHON_API}/api/jobs?${params.toString()}`)
+                const response = await fetch(`${PYTHON_API}/api/jobs?${params.toString()}`, { headers: auth })
                 if (response.ok) {
                     const data = await response.json()
                     console.log('✅ [/api/jobs] Fetched from Python backend:', data.jobs?.length || 0, 'jobs')
