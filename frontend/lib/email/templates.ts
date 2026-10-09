@@ -25,6 +25,8 @@
  *     invoice.
  */
 
+import { emailShell } from './layout';
+
 export type EmailCategory = 'transactional' | 'notification';
 
 export interface EmailCta {
@@ -428,39 +430,15 @@ export function renderTemplate(
   textParts.push(`Questions? Reply to this email or write to ${REPLY_TO}.`);
   if (unsub) textParts.push(`Stop receiving these updates: ${unsub}`);
 
-  const html = `<!doctype html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHtml(subject)}</title></head>
-<body style="margin:0;padding:24px;background:#f4f6f8;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#17212e;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center">
-<table role="presentation" width="560" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%;background:#ffffff;border-radius:14px;padding:32px;">
-<tr><td style="font-size:18px;font-weight:600;letter-spacing:-0.01em;padding-bottom:18px;">Kyriq</td></tr>
-<tr><td style="font-size:20px;font-weight:600;line-height:1.3;padding-bottom:16px;">${escapeHtml(subject)}</td></tr>
-${paragraphs
-  .map(
-    (p) =>
-      `<tr><td style="font-size:15px;line-height:1.6;padding-bottom:14px;">${escapeHtml(p)}</td></tr>`
-  )
-  .join('\n')}
-${
-  body.cta
-    ? `<tr><td style="padding:10px 0 6px;"><a href="${escapeHtml(body.cta.url)}" style="display:inline-block;background:#17212e;color:#ffffff;text-decoration:none;font-size:15px;font-weight:600;padding:12px 22px;border-radius:10px;">${escapeHtml(body.cta.label)}</a></td></tr>`
-    : ''
-}
-${
-  body.footnote
-    ? `<tr><td style="font-size:13px;line-height:1.5;color:#5b6775;padding-top:10px;">${escapeHtml(body.footnote)}</td></tr>`
-    : ''
-}
-<tr><td style="font-size:13px;line-height:1.5;color:#5b6775;padding-top:22px;border-top:1px solid #e6eaef;">
-Questions? Reply to this email or write to <a href="mailto:${REPLY_TO}" style="color:#17212e;">${REPLY_TO}</a>.
-${
-  unsub
-    ? `<br><a href="${escapeHtml(unsub)}" style="color:#5b6775;">Stop receiving these updates</a>`
-    : '<br>You are receiving this because it concerns your Kyriq account.'
-}
-</td></tr>
-</table></td></tr></table></body></html>`;
+  const html = emailShell({
+    heading: subject,
+    preheader: paragraphs[0],
+    eyebrow: template.category === 'transactional' ? 'Your account' : 'Update',
+    paragraphs,
+    cta: body.cta,
+    footnote: body.footnote,
+    unsubscribeUrl: unsub,
+  });
 
   return { subject, html, text: textParts.join('\n\n'), category: template.category };
 }
