@@ -141,3 +141,6 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Real logo lockup from the brand pack (2.43:1). */
+.logo-lockup { height: 30px; width: auto; flex-shrink: 0; display: block; }

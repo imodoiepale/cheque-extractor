@@ -13,8 +13,7 @@ export default function AuthLayout({
       {/* Minimal nav */}
       <div className="px-6 py-4">
         <Link href="/" className="inline-flex items-center gap-2.5 group press">
-          <Image src="/Kyriq_Logo_Files/kyriq-icon.svg" alt="Kyriq" width={32} height={32} className="rounded-md shadow-contact" />
-          <span className="text-base font-extrabold text-ink-strong tracking-wordmark">Kyriq</span>
+          <Image src="/brand/kyriq-logo.svg" alt="Kyriq" width={97} height={40} priority />
         </Link>
       </div>
 

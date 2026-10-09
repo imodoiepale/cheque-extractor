@@ -116,3 +116,6 @@ temp/
 *.bak
 *.backup
 .env*
+
+# Designer logo source pack (AI/EPS/PSD, ~50 MB). The web-ready cuts live in frontend/public/brand/.
+Kyriq Logo - All Source files - 12 versions/

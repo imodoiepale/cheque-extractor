@@ -4,23 +4,15 @@
   "description": "Automated check processing with OCR and AI",
   "private": true,
   "workspaces": [
-    "frontend",
-    "backend"
+    "frontend"
   ],
   "scripts": {
     "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\"",
     "dev:frontend": "cd frontend && npm run dev",
-    "dev:backend": "cd backend && npm run dev",
-    "build": "npm run build:frontend && npm run build:backend",
-    "build:frontend": "cd frontend && npm run build",
-    "build:backend": "cd backend && npm run build",
-    "test": "npm run test:frontend && npm run test:backend",
-    "test:frontend": "cd frontend && npm test",
-    "test:backend": "cd backend && npm test",
-    "lint": "npm run lint:frontend && npm run lint:backend",
-    "lint:frontend": "cd frontend && npm run lint",
-    "lint:backend": "cd backend && npm run lint",
-    "clean": "rm -rf frontend/.next frontend/out backend/dist node_modules frontend/node_modules backend/node_modules",
+    "dev:backend": "cd backend && ../.venv/Scripts/python -X utf8 api_server.py",
+    "build": "cd frontend && npm run build",
+    "lint": "cd frontend && npm run lint",
+    "type-check": "cd frontend && npm run type-check",
     "setup": "./scripts/setup.sh"
   },
   "devDependencies": {

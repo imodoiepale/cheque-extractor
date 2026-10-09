@@ -65,9 +65,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <aside className="w-60 glass-shell border-r text-shell-text hidden md:flex flex-col fixed left-0 top-0 h-screen">
         <div className="px-5 py-5 border-b border-glass-hairline-dark">
           <div className="flex items-center gap-2.5">
-            <Image src="/Kyriq_Logo_Files/kyriq-icon.svg" alt="Kyriq" width={32} height={32} className="rounded-md" />
             <div>
-              <div className="text-sm font-bold text-shell-text tracking-wordmark">Kyriq</div>
+              <Image src="/brand/kyriq-logo-white.svg" alt="Kyriq" width={78} height={32} priority />
               <div className="flex items-center gap-1 text-[10px] text-shell-muted">
                 <Crown size={10} className="text-warning" />
                 Super Admin
@@ -115,8 +114,8 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           chrome on screen and may carry its own blur. */}
       <div className="md:hidden fixed top-0 left-0 right-0 z-50 glass-chrome border-b px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Image src="/Kyriq_Logo_Files/kyriq-icon.svg" alt="Kyriq" width={20} height={20} className="rounded" />
-          <span className="text-sm font-bold text-ink-strong">Kyriq Admin</span>
+          <Image src="/brand/kyriq-logo.svg" alt="Kyriq" width={58} height={24} />
+          <span className="text-sm font-bold text-ink-strong">Admin</span>
         </div>
         <div className="flex items-center gap-2">
           {ADMIN_NAV.map((item) => {
