@@ -95,6 +95,12 @@ function MfaFlow() {
     enrolling.current = true;
     const { data: enrolled, error: enrolErr } = await supabase.auth.mfa.enroll({
       factorType: 'totp',
+      // `issuer` is what the authenticator app shows beside the code. Without
+      // it Supabase falls back to the project's site URL, so every code read
+      // "localhost:3000" — on the user's phone, next to their real banking
+      // tokens. friendlyName is internal (it disambiguates factors in the
+      // admin list) and is NOT what the phone displays.
+      issuer: 'Kyriq',
       friendlyName: `Kyriq ${new Date().toISOString().slice(0, 10)} ${Math.random()
         .toString(36)
         .slice(2, 6)}`,

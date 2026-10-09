@@ -146,6 +146,13 @@ Security and correctness. None of this is visible, all of it is blocking.
       at real volume. **Partly done:** `supabase/config.toml` now has `site_url` on 3080 and a real
       `additional_redirect_urls` list. The Resend SMTP credentials themselves are a dashboard
       setting, so they stay an ops item (section 14).
+- [ ] **Set the HOSTED project's Site URL to `https://kyriq.com`.** `config.toml` only governs local
+      development; the hosted project has its own setting and it is still `http://localhost:3000`.
+      This surfaced on 9 Oct when an authenticator app displayed the two-factor code as
+      "localhost:3000" on a user's phone. That particular symptom is fixed in code (the enrolment now
+      passes an explicit issuer), but the same wrong value is what password-reset and email
+      confirmation links are built from, so in production those links point at localhost. Dashboard →
+      Authentication → URL Configuration.
 - [x] **Trial enforcement server-side:** 14 days or 250 successfully processed checks, whichever
       first. Processing stops; history stays viewable. Include the comp-account override from
       section 5 so pilot firms are not cut off mid-test.

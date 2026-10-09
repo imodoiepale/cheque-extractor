@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { Settings, Loader2, AlertCircle, RefreshCw, Upload, Trash2, AlertTriangle, Wrench } from 'lucide-react';
+import { Settings, Loader2, AlertCircle, RefreshCw, Upload, Wrench } from 'lucide-react';
 import { Badge, Button, Dialog, GlassCard, Toast } from '@/components/ui';
 import { applyFixesToQB, computeCorrections } from './utils/fixDiscrepancy';
 import { QBCompanySwitcher } from '@/components/QBCompanySwitcher';
@@ -14,6 +14,7 @@ import { StatisticsPanel } from './components/StatisticsPanel';
 import { ComparisonTable } from './components/ComparisonTable';
 import { DetailModal } from './components/DetailModal';
 import { ColumnSettings } from './components/ColumnSettings';
+import { HeaderOverflowMenu } from './components/HeaderOverflowMenu';
 import { Pagination } from './components/Pagination';
 import { QBConnectionModal } from './components/QBConnectionModal';
 import { DeleteConfirmModal } from '@/components/DeleteConfirmModal';
@@ -540,6 +541,16 @@ export default function QBComparisonsPage() {
     return matchedRows.filter(r => r.hasIssue).length;
   }, [matchedRows]);
 
+  // Mismatches that have real differences to push to QB. Drives the one
+  // "Fix All" button in the header — it replaces the old warning bar, which
+  // spent a full row explaining a number the button already carries.
+  const fixableCount = useMemo(
+    () => comparisonData.filter(r =>
+      r.matchStatus === 'mismatch' && r.qbData && Object.keys(computeCorrections(r)).length > 0
+    ).length,
+    [comparisonData]
+  );
+
   const handleExportCSV = () => {
     exportToCSV(comparisonData, visibleColumns);
     setShowExportDropdown(false);
@@ -788,14 +799,25 @@ export default function QBComparisonsPage() {
       {/* Page chrome. Light glass, not the old navy slab: the dark shell is
           what makes these surfaces read as elevated. */}
       <GlassCard tier="chrome" padding="sm" className="mx-4 mt-3 rounded-card border">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
             <h1 className="font-heading text-xl font-semibold text-ink-strong">
               QuickBooks Comparisons
             </h1>
-            <p className="text-xs text-ink-body">
-              Intelligent matching between QuickBooks data and cheque extractions
-            </p>
+
+            {/* The counts, as filtering chips rather than five KPI tiles. */}
+            <StatisticsPanel
+              total={statistics.total}
+              matched={statistics.matched}
+              mismatched={statistics.mismatched}
+              missingInQB={statistics.missingInQB}
+              missingInExtraction={statistics.missingInExtraction}
+              filterStatus={filterStatus}
+              onSelectStatus={(status) => {
+                setFilterStatus(status);
+                setCurrentPage(1);
+              }}
+            />
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -820,20 +842,11 @@ export default function QBComparisonsPage() {
               ))}
             </div>
 
-            {qbEntries.length > 0 && (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => setShowDeleteAllModal(true)}
-                loading={deletingAllQB}
-                icon={<Trash2 size={12} />}
-                className="text-error-text"
-              >
-                Delete All QB Data
-              </Button>
-            )}
-
-            <Badge tone={qbConnected ? 'success' : qbConfigured ? 'warning' : 'neutral'}>
+            {/* Connection state and synced volume in one mark, not two. */}
+            <Badge
+              tone={qbConnected ? 'success' : qbConfigured ? 'warning' : 'neutral'}
+              className="nums"
+            >
               <span
                 className={`h-2 w-2 rounded-full ${
                   qbConnected ? 'animate-pulse bg-success' : qbConfigured ? 'bg-warning' : 'bg-ink-faint'
@@ -841,12 +854,21 @@ export default function QBComparisonsPage() {
                 aria-hidden
               />
               {qbConnected ? 'QB Connected' : qbConfigured ? 'QB Configured' : 'QB Not Setup'}
+              {qbEntries.length > 0 && ` · ${qbEntries.length} entries`}
             </Badge>
 
-            {qbEntries.length > 0 && (
-              <Badge tone="brand" className="nums">
-                {qbEntries.length} QB {qbEntries.length === 1 ? 'Entry' : 'Entries'}
-              </Badge>
+            {fixableCount > 0 && (
+              <Button
+                size="sm"
+                onClick={() => setShowFixAllConfirm(true)}
+                loading={fixingAll}
+                icon={<Wrench size={14} />}
+                title="Push extraction values (amount, date, check #) to QuickBooks for mismatched rows"
+              >
+                {fixingAll && fixAllProgress
+                  ? `Fixing ${fixAllProgress.done}/${fixAllProgress.total}…`
+                  : `Fix All (${fixableCount})`}
+              </Button>
             )}
 
             <Button
@@ -857,47 +879,19 @@ export default function QBComparisonsPage() {
             >
               Columns
             </Button>
+
+            <HeaderOverflowMenu
+              dateFormat={dateFormat}
+              setDateFormat={setDateFormat}
+              onDeleteAll={
+                qbEntries.length > 0 && !deletingAllQB
+                  ? () => setShowDeleteAllModal(true)
+                  : undefined
+              }
+            />
           </div>
         </div>
       </GlassCard>
-
-      <StatisticsPanel
-        total={statistics.total}
-        matched={statistics.matched}
-        mismatched={statistics.mismatched}
-        missingInQB={statistics.missingInQB}
-        missingInExtraction={statistics.missingInExtraction}
-      />
-
-      {/* Fix All Discrepancies action bar — shown when there are mismatches with actionable diffs */}
-      {statistics.mismatched > 0 && (() => {
-        const fixableCount = comparisonData.filter(r =>
-          r.matchStatus === 'mismatch' && r.qbData && Object.keys(computeCorrections(r)).length > 0
-        ).length;
-        if (fixableCount === 0) return null;
-        return (
-          <div className="mx-4 mt-3 flex flex-wrap items-center gap-3 rounded-card border border-warning-border bg-warning-bg px-4 py-2.5">
-            <AlertTriangle size={16} className="flex-shrink-0 text-warning-text" aria-hidden />
-            <div className="flex-1 text-sm text-warning-text">
-              <strong className="nums">{fixableCount}</strong> discrepanc{fixableCount === 1 ? 'y has' : 'ies have'} differences that can be pushed to QuickBooks
-              (amount, date, or check#).
-            </div>
-            {fixingAll && fixAllProgress && (
-              <span className="nums text-xs font-medium text-warning-text">
-                {fixAllProgress.done}/{fixAllProgress.total}…
-              </span>
-            )}
-            <Button
-              size="sm"
-              onClick={() => setShowFixAllConfirm(true)}
-              loading={fixingAll}
-              icon={<Wrench size={14} />}
-            >
-              {fixingAll ? 'Fixing…' : `Fix All (${fixableCount})`}
-            </Button>
-          </div>
-        );
-      })()}
 
       {/* Fix All confirmation */}
       <Dialog
@@ -967,8 +961,6 @@ export default function QBComparisonsPage() {
         showIssuesOnly={showIssuesOnly}
         setShowIssuesOnly={setShowIssuesOnly}
         issueCount={issueCount}
-        dateFormat={dateFormat}
-        setDateFormat={setDateFormat}
       />
 
       {/* The grid. Its glass shell is the surface; the pagination bar rides
