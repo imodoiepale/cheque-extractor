@@ -100,6 +100,10 @@
     /* ---- Opaque surfaces ---- */
     --app-bg: 225 30% 97%;
     --surface: 0 0% 100%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
     --surface-tint: 226 100% 99%;
     --surface-sunken: 220 20% 95%;
 
@@ -245,6 +249,10 @@
 
     --app-bg: 228 50% 7%;
     --surface: 228 44% 10%;
+    --card: 228 44% 10%;
+    --card-foreground: 210 40% 98%;
+    --popover: 228 44% 9%;
+    --popover-foreground: 210 40% 98%;
     --surface-tint: 230 40% 12%;
     --surface-sunken: 228 50% 6%;
 
