@@ -2,8 +2,18 @@
  * Create the Stripe products and prices Kyriq needs, then print the environment
  * variables to paste into Vercel.
  *
- *   cd frontend
- *   STRIPE_SECRET_KEY=rk_live_... npx tsx scripts/provision-stripe.ts
+ *   PowerShell (the shell on this project's machines):
+ *     cd frontend
+ *     $env:STRIPE_SECRET_KEY = Read-Host "Stripe secret key"
+ *     npx tsx scripts/provision-stripe.ts
+ *     Remove-Item Env:\STRIPE_SECRET_KEY
+ *
+ *   bash / zsh:
+ *     cd frontend
+ *     STRIPE_SECRET_KEY=rk_live_... npx tsx scripts/provision-stripe.ts
+ *
+ * Read-Host is not a convenience. A key typed on the command line is written to
+ * PowerShell's history file; one read this way is not.
  *
  * Add --apply to actually write to Stripe. Without it the script only reports
  * what it would create, which is how you should run it first.
@@ -40,7 +50,12 @@ const apply = process.argv.includes('--apply');
 if (!secretKey) {
   console.error(
     'STRIPE_SECRET_KEY is not set.\n\n' +
-      '  STRIPE_SECRET_KEY=rk_live_... npx tsx scripts/provision-stripe.ts\n'
+      'PowerShell:\n' +
+      '  $env:STRIPE_SECRET_KEY = Read-Host "Stripe secret key"\n' +
+      '  npx tsx scripts/provision-stripe.ts\n' +
+      '  Remove-Item Env:\\STRIPE_SECRET_KEY\n\n' +
+      'bash / zsh:\n' +
+      '  STRIPE_SECRET_KEY=rk_... npx tsx scripts/provision-stripe.ts\n'
   );
   process.exit(1);
 }

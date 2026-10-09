@@ -46,15 +46,34 @@ Nine prices: three plans, each with monthly base, annual base and a metered over
 this by hand in the dashboard is how a price id ends up on the wrong plan, and that failure is
 silent — the customer is simply charged the wrong amount.
 
-```bash
+These machines run **PowerShell**, where the `VAR=value command` prefix does not exist.
+
+```powershell
 cd frontend
-STRIPE_SECRET_KEY=rk_live_... npx tsx scripts/provision-stripe.ts
+$env:STRIPE_SECRET_KEY = Read-Host "Stripe secret key"
+npx tsx scripts/provision-stripe.ts
 ```
+
+`Read-Host` is not just convenience. A key typed directly on the command line is written to
+PowerShell's history file at `(Get-PSReadLineOption).HistorySavePath`, where it then sits in plain
+text indefinitely. A key read this way is not recorded.
 
 That is a **dry run**. It prints what it would create. Read it, then:
 
+```powershell
+npx tsx scripts/provision-stripe.ts --apply
+```
+
+When you are finished, clear it from the session:
+
+```powershell
+Remove-Item Env:\STRIPE_SECRET_KEY
+```
+
+On bash or zsh the one-line prefix form works as usual:
+
 ```bash
-STRIPE_SECRET_KEY=rk_live_... npx tsx scripts/provision-stripe.ts --apply
+STRIPE_SECRET_KEY=rk_live_... npx tsx scripts/provision-stripe.ts
 ```
 
 It is idempotent. Every price carries a `lookup_key`, so re-running reuses what exists rather than
