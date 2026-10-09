@@ -169,13 +169,11 @@ Security and correctness. None of this is visible, all of it is blocking.
       **Done:** both panels removed along with the now-dead `progressLogs`, `logsEndRef`,
       `methodBarColor` and the `Terminal` import. The post-completion "Extraction Method Results"
       summary is kept — it was not in the screenshot's scope.
-- [ ] **Ship the new logo.** Versions 1 (horizontal wordmark) and 7 (square K icon) from the logo
-      pack. **Blocked:** `Kyriq Logo - All Source files - 12 versions.zip` is not in the repo —
-      `new changes/` has the proposals, specs, screenshots and the switcher mockup but no logo pack,
-      so versions 1 and 7 are not available to ship. Brand colours Indigo `#6366f1` and Emerald
-      `#10b981` are in the design tokens regardless. Font Cera Round Pro Bold. Replace
-      `frontend/public/Kyriq_Logo_Files/*`, `frontend/public/logo.png`, `chrome-extension/icons/*`
-      and the favicon. The redesign site still uses placeholder purples; use the real logo colours.
+- [x] **Ship the new logo.** Done 2026-10-09. Web cuts of pack versions 1, 3, 6, 7, 9 and 12 live in
+      `frontend/public/brand/` with tight viewBoxes. `app/icon.png`, `app/apple-icon.png`,
+      `app/favicon.ico` and the extension icons are rendered from version 9 on an indigo tile.
+      The old `Kyriq_Logo_Files/` and `logo.png` are deleted. The source pack (AI/EPS/PSD) is gitignored.
+      Cera Round Pro is still pending: the pack names it but has no webfont files.
 
 ---
 
@@ -606,7 +604,7 @@ The client requires the extension to match the app in look and options.
       colour-coded cards.
 - [x] **Open QuickBooks to the company the user is working on**, so they watch Kyriq clear each
       approved item. *From item 7 of the client list.*
-- [ ] New logo in all icon sizes.
+- [x] New logo in all icon sizes.
 - [ ] Chrome Web Store listing: publisher **Kyriq**, contact `support@kyriq.com`, official URL
       `kyriq.com` verified in Search Console. The personal developer account can be ignored; it
       cannot be removed and does not appear on the listing.
@@ -634,7 +632,7 @@ Implement the approved redesign copy verbatim from
       Flagging it because it was not on the client's list.
 - [x] Every CTA routes to `/signup`.
 - [ ] Real logo and brand colours. **Colours done** — Indigo `#6366f1` and Emerald `#10b981` from
-      the tokens, not the prototype's placeholders. **Logo still blocked** on the missing pack.
+      the tokens, not the prototype's placeholders. **Logo done** (2026-10-09).
 - [x] Note on every plan that the Chrome extension is included.
 
 ---

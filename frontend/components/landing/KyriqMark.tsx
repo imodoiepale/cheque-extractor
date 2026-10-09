@@ -1,46 +1,24 @@
 /**
- * The Kyriq mark, in one place.
- *
- * Both variants read the brand from the tokens (`--brand`, `--brand-light`,
- * `--emerald`, `--shell-solid`) through arbitrary properties rather than
- * carrying hex literals, so a brand change is still a one-file change.
- * The stops need a CSS *property* (`stop-color`), which is why these are
- * classNames and not SVG presentation attributes — `var()` does not resolve
- * inside a presentation attribute.
+ * The Kyriq mark, in one place. Every variant is a file in public/brand/,
+ * cut from the designer's logo pack (SVG versions 1, 6, 7, 9 and 12).
  */
+/* eslint-disable @next/next/no-img-element -- static SVGs, nothing for next/image to optimise */
 import { cn } from '@/lib/utils';
 
-export function KyriqIcon({ size = 36, className }: { size?: number; className?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 100 100" fill="none" className={className} aria-hidden>
-      <defs>
-        <linearGradient id="kStem" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
-          <stop offset="0%" className="[stop-color:hsl(var(--emerald))]" />
-          <stop offset="100%" className="[stop-color:hsl(var(--brand))]" />
-        </linearGradient>
-      </defs>
-      <rect width="100" height="100" rx="22" className="[fill:hsl(var(--shell-solid))]" />
-      <rect x="22" y="20" width="11" height="60" rx="5.5" fill="url(#kStem)" />
-      <line x1="33" y1="50" x2="68" y2="20" strokeWidth="11" strokeLinecap="round" className="[stroke:hsl(var(--emerald))]" />
-      <line x1="33" y1="50" x2="68" y2="80" strokeWidth="11" strokeLinecap="round" className="[stroke:hsl(var(--brand))]" />
-    </svg>
-  );
+type MarkProps = { size?: number; className?: string };
+
+/** App-icon tile: deep indigo square, white K with the emerald tick. Reads on any surface. */
+export function KyriqIcon({ size = 36, className }: MarkProps) {
+  return <img src="/brand/kyriq-app-icon.svg" width={size} height={size} alt="" aria-hidden className={cn('shrink-0', className)} />;
 }
 
-/** The mark on the dark shell: lighter stops, translucent tile. */
-export function KyriqIconWhite({ size = 22, className }: { size?: number; className?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 100 100" fill="none" className={cn(className)} aria-hidden>
-      <defs>
-        <linearGradient id="kStemW" x1="0" y1="0" x2="0" y2="1" gradientUnits="objectBoundingBox">
-          <stop offset="0%" className="[stop-color:hsl(var(--emerald))]" />
-          <stop offset="100%" className="[stop-color:hsl(var(--brand-light))]" />
-        </linearGradient>
-      </defs>
-      <rect width="100" height="100" rx="22" className="[fill:rgba(255,255,255,0.07)]" />
-      <rect x="22" y="20" width="11" height="60" rx="5.5" fill="url(#kStemW)" />
-      <line x1="33" y1="50" x2="68" y2="20" strokeWidth="11" strokeLinecap="round" className="[stroke:hsl(var(--emerald))]" />
-      <line x1="33" y1="50" x2="68" y2="80" strokeWidth="11" strokeLinecap="round" className="[stroke:hsl(var(--brand-light))]" />
-    </svg>
-  );
+/** Bare mark for dark surfaces: white K, emerald tick, no tile. */
+export function KyriqIconWhite({ size = 22, className }: MarkProps) {
+  return <img src="/brand/kyriq-icon-on-brand.svg" width={size} height={size} alt="" aria-hidden className={cn('shrink-0', className)} />;
+}
+
+/** Full lockup. `height` drives size; the artwork is 2.43:1. */
+export function KyriqLogo({ height = 32, variant = 'color', className }: { height?: number; variant?: 'color' | 'white'; className?: string }) {
+  const src = variant === 'white' ? '/brand/kyriq-logo-white.svg' : '/brand/kyriq-logo.svg';
+  return <img src={src} height={height} width={Math.round(height * 2.43)} alt="Kyriq" className={cn('shrink-0', className)} />;
 }

@@ -42,7 +42,7 @@ export default function ShellTopBar() {
           className="md:hidden mr-1 flex shrink-0 items-center gap-2 text-[15px] font-semibold text-ink-strong"
         >
           <Image
-            src="/Kyriq_Logo_Files/kyriq-icon.svg"
+            src="/brand/kyriq-app-icon.svg"
             alt="Kyriq"
             width={24}
             height={24}

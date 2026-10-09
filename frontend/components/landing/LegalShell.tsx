@@ -13,7 +13,7 @@
  */
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
-import { KyriqIcon } from './KyriqMark';
+import { KyriqLogo } from './KyriqMark';
 
 /** One prose recipe for all three documents. Body text at full strength. */
 const PROSE = [
@@ -44,8 +44,7 @@ export function LegalShell({
       <nav className="glass-chrome border-b px-6 py-4">
         <div className="max-w-3xl mx-auto flex items-center justify-between">
           <Link href="/" className="inline-flex items-center gap-2.5">
-            <KyriqIcon size={28} className="rounded-lg" />
-            <span className="text-base font-extrabold tracking-wordmark text-ink-strong">kyriq</span>
+            <KyriqLogo height={30} />
           </Link>
           <Link
             href="/"

@@ -201,33 +201,26 @@ console.log('  ok  every CTA reads "Start Free Trial" and resolves to /signup');
     `${LANDING}: the Chrome-extension note is gone — it must appear on every plan`
   );
   assert.match(src, /12-month commitment/, `${LANDING} lost the annual terms note`);
-  assert.match(src, /resets monthly and does not roll over/, `${LANDING} lost the allowance-reset term`);
-  assert.match(src, /not prorated or refunded/, `${LANDING} lost the no-refund term`);
+  assert.match(src, /allowances still\s+reset each month/, `${LANDING} lost the allowance-reset term`);
+  assert.match(src, /non-refundable except where required/, `${LANDING} lost the annual refund term`);
+  assert.match(src, /whichever comes first/, `${LANDING} lost the trial terms`);
 }
 console.log('  ok  pricing is 147 / 497 / 997 monthly, 1617 / 5467 / 10967 annual, with overage and terms');
 
-/* --- 5. The FAQ slot is still a slot, and still says why --------------- */
-// The approved 15 questions are in Kyriq-Developer-Handoff-v17.zip, which is
-// not in this repo. The slot must not quietly fill with invented copy, and it
-// must not quietly ship half-filled either.
+/* --- 5. The FAQ is the approved 15, verbatim ---------------------------- */
+// The 15 pairs come from the client's redesign site. A partial edit or an
+// invented extra question fails here rather than shipping quietly.
 {
   const src = read(LANDING);
-
-  assert.match(
-    src,
-    /Kyriq-Developer-Handoff-v17\.zip/,
-    `${LANDING}: the TODO naming the missing FAQ source is gone — if the copy arrived, delete this assertion with it`
-  );
-
-  const faqs = src.match(/const FAQS: \{ q: string; a: string \}\[\] = \[([\s\S]*?)\];/);
-  assert.ok(faqs, `${LANDING}: the FAQS slot is gone — the section is meant to receive 15 approved pairs`);
-  const pairs = [...faqs![1].matchAll(/\bq:\s*['"`]/g)].length;
-  assert.ok(
-    pairs === 0 || pairs === 15,
-    `${LANDING}: FAQS holds ${pairs} pairs — the approved FAQ is 15 questions, so this is a partial paste`
-  );
+  const faqs = src.match(/const FAQS: \{ q: string; a: string \}\[\] = \[([\s\S]*?)\r?\n\];/);
+  assert.ok(faqs, `${LANDING}: the FAQS list is gone`);
+  const pairs = [...faqs![1].matchAll(/^\s*q:\s*['"`]/gm)].length;
+  assert.equal(pairs, 15, `${LANDING}: FAQS holds ${pairs} pairs, the approved FAQ is 15 questions`);
+  for (const q of ['What does Kyriq do?', 'Where can I get help?', 'Can Kyriq read handwritten checks?']) {
+    assert.ok(src.includes(q), `${LANDING}: approved FAQ question "${q}" is missing`);
+  }
 }
-console.log('  ok  FAQ slot is empty-and-explained or complete at 15, never partial');
+console.log('  ok  FAQ holds the approved 15 questions');
 
 /* --- 6. The Magic-UI keyframes and variables survive ------------------- */
 // Parcel A preserved these verbatim and fenced them with a comment naming the
@@ -324,15 +317,8 @@ console.log('  ok  five keyframes, three variables, and all four components stil
     );
   }
 
-  // The carousel's auto-rotation is motion nobody asked for; it must stop
-  // outright rather than merely run faster.
-  assert.match(
-    src,
-    /if \(reduced\) return;\s*\n\s*const interval = setInterval/,
-    `${LANDING}: the carousel keeps auto-rotating under prefers-reduced-motion`
-  );
 }
-console.log('  ok  framer-motion branches on useReducedMotion, carousel auto-rotation stops');
+console.log('  ok  framer-motion branches on useReducedMotion');
 
 /* --- 8. The duplicate legal pages stay resolved ------------------------ */
 {

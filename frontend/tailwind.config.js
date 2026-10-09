@@ -30,6 +30,9 @@ module.exports = {
         ring: t("ring"),
         background: t("background"),
         foreground: t("foreground"),
+        // shadcn surfaces, used by the ported admin console's menus and sheets.
+        card: { DEFAULT: t("card"), foreground: t("card-foreground") },
+        popover: { DEFAULT: t("popover"), foreground: t("popover-foreground") },
 
         // Brand — Indigo #6366f1 / Emerald #10b981
         brand: {

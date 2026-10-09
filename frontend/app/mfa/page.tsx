@@ -208,8 +208,7 @@ function MfaFlow() {
     <main className="flex min-h-screen items-center justify-center px-4 py-12">
       <div className="w-full max-w-md space-y-6">
         <div className="flex items-center justify-center gap-2.5">
-          <Image src="/Kyriq_Logo_Files/kyriq-icon.svg" alt="Kyriq" width={32} height={32} className="rounded-lg" />
-          <span className="font-heading text-lg font-extrabold tracking-tight">kyriq</span>
+          <Image src="/brand/kyriq-logo.svg" alt="Kyriq" width={97} height={40} priority />
         </div>
 
         <GlassCard padding="lg" reveal className="space-y-5">

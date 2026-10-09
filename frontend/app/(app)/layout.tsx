@@ -49,8 +49,7 @@ export default function AppLayout({
         <aside className="w-60 glass-shell border-r text-shell-text hidden md:flex flex-col fixed left-0 top-0 h-screen">
           <div className="px-5 py-5 border-b border-glass-hairline-dark flex-shrink-0">
             <Link href="/reconcile" className="flex items-center gap-2.5 font-semibold text-[15px] text-shell-text">
-              <Image src="/Kyriq_Logo_Files/kyriq-icon.svg" alt="Kyriq" width={28} height={28} className="rounded-md" />
-              <span className="font-extrabold tracking-wordmark">kyriq</span>
+              <Image src="/brand/kyriq-logo-white.svg" alt="Kyriq" width={92} height={38} priority />
             </Link>
           </div>
 
