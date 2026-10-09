@@ -46,35 +46,24 @@ Nine prices: three plans, each with monthly base, annual base and a metered over
 this by hand in the dashboard is how a price id ends up on the wrong plan, and that failure is
 silent — the customer is simply charged the wrong amount.
 
-These machines run **PowerShell**, where the `VAR=value command` prefix does not exist.
-
 ```powershell
 cd frontend
-$env:STRIPE_SECRET_KEY = Read-Host "Stripe secret key"
 npx tsx scripts/provision-stripe.ts
 ```
 
-`Read-Host` is not just convenience. A key typed directly on the command line is written to
-PowerShell's history file at `(Get-PSReadLineOption).HistorySavePath`, where it then sits in plain
-text indefinitely. A key read this way is not recorded.
+It asks for the key and **hides what you type**. Paste it at the prompt and press Enter.
 
-That is a **dry run**. It prints what it would create. Read it, then:
+Do not put the key on the command line. Anything typed as a command is written to PowerShell's
+history file at `(Get-PSReadLineOption).HistorySavePath` and sits there in plain text indefinitely.
+The prompt exists so the key never reaches history, a file, or the screen.
+
+That first run is a **dry run**: it prints what it would create and writes nothing. Read it, then:
 
 ```powershell
 npx tsx scripts/provision-stripe.ts --apply
 ```
 
-When you are finished, clear it from the session:
-
-```powershell
-Remove-Item Env:\STRIPE_SECRET_KEY
-```
-
-On bash or zsh the one-line prefix form works as usual:
-
-```bash
-STRIPE_SECRET_KEY=rk_live_... npx tsx scripts/provision-stripe.ts
-```
+`STRIPE_SECRET_KEY` in the environment is still honoured if it is set, which is what CI would use.
 
 It is idempotent. Every price carries a `lookup_key`, so re-running reuses what exists rather than
 creating duplicates, and a partial failure can simply be re-run.

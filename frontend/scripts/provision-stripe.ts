@@ -2,18 +2,14 @@
  * Create the Stripe products and prices Kyriq needs, then print the environment
  * variables to paste into Vercel.
  *
- *   PowerShell (the shell on this project's machines):
- *     cd frontend
- *     $env:STRIPE_SECRET_KEY = Read-Host "Stripe secret key"
- *     npx tsx scripts/provision-stripe.ts
- *     Remove-Item Env:\STRIPE_SECRET_KEY
+ *   cd frontend
+ *   npx tsx scripts/provision-stripe.ts
  *
- *   bash / zsh:
- *     cd frontend
- *     STRIPE_SECRET_KEY=rk_live_... npx tsx scripts/provision-stripe.ts
+ * It asks for the key and hides what you type. Nothing is echoed, nothing is
+ * written to shell history, and nothing is saved. That is the whole reason it
+ * prompts rather than taking the key on the command line.
  *
- * Read-Host is not a convenience. A key typed on the command line is written to
- * PowerShell's history file; one read this way is not.
+ * STRIPE_SECRET_KEY in the environment still works, for CI.
  *
  * Add --apply to actually write to Stripe. Without it the script only reports
  * what it would create, which is how you should run it first.
@@ -39,35 +35,82 @@
  * logged, and is not written anywhere. Keep it that way.
  */
 
-import { PLANS, priceEnvVar, type PlanKey } from '../lib/billing/plans';
+import { PLANS, priceEnvVar, type PlanKey, type StripeEnv } from '../lib/billing/plans';
 import { stripeEnvFromKey } from '../lib/billing/stripe';
 
 const API = 'https://api.stripe.com';
 
-const secretKey = (process.env.STRIPE_SECRET_KEY || '').trim();
 const apply = process.argv.includes('--apply');
 
-if (!secretKey) {
-  console.error(
-    'STRIPE_SECRET_KEY is not set.\n\n' +
-      'PowerShell:\n' +
-      '  $env:STRIPE_SECRET_KEY = Read-Host "Stripe secret key"\n' +
-      '  npx tsx scripts/provision-stripe.ts\n' +
-      '  Remove-Item Env:\\STRIPE_SECRET_KEY\n\n' +
-      'bash / zsh:\n' +
-      '  STRIPE_SECRET_KEY=rk_... npx tsx scripts/provision-stripe.ts\n'
-  );
-  process.exit(1);
+/**
+ * Ask for the key, with the typing hidden.
+ *
+ * The script prompts rather than only reading the environment because every
+ * other route puts the key somewhere it persists: a shell one-liner lands in
+ * PowerShell's history file, and `Read-Host` is easy to misuse by passing the
+ * key as the prompt text instead of typing it at the prompt — which silently
+ * sets the variable to an empty string. Nothing typed here is echoed or stored.
+ */
+function promptForKey(): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (!process.stdin.isTTY) {
+      reject(new Error('STRIPE_SECRET_KEY is not set and there is no terminal to ask on.'));
+      return;
+    }
+    process.stdout.write('Stripe secret key (input hidden): ');
+
+    const stdin = process.stdin;
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.setEncoding('utf8');
+
+    let buf = '';
+    const onData = (ch: string) => {
+      for (const c of ch) {
+        if (c === '\r' || c === '\n') {
+          stdin.setRawMode(false);
+          stdin.pause();
+          stdin.removeListener('data', onData);
+          process.stdout.write('\n');
+          resolve(buf.trim());
+          return;
+        }
+        if (c === '\u0003') {           // Ctrl-C
+          stdin.setRawMode(false);
+          process.stdout.write('\n');
+          process.exit(130);
+        }
+        if (c === '\u007f' || c === '\b') buf = buf.slice(0, -1);
+        else if (c >= ' ') buf += c;
+      }
+    };
+    stdin.on('data', onData);
+  });
 }
 
-const derivedEnv = stripeEnvFromKey(secretKey);
-if (!derivedEnv) {
-  console.error('STRIPE_SECRET_KEY is not a recognisable sk_/rk_ test or live key.');
-  process.exit(1);
+/**
+ * Both are assigned by resolveKey() before anything else runs. They cannot be
+ * `const` at module scope because tsx compiles this to CommonJS, where
+ * top-level await is unavailable, so the prompt has to happen inside main().
+ */
+let secretKey!: string;
+let env!: StripeEnv;
+
+async function resolveKey(): Promise<void> {
+  secretKey = (process.env.STRIPE_SECRET_KEY || '').trim() || (await promptForKey());
+
+  if (!secretKey) {
+    console.error('\nNo key entered.\n');
+    process.exit(1);
+  }
+
+  const derived = stripeEnvFromKey(secretKey);
+  if (!derived) {
+    console.error('\nThat is not a recognisable Stripe key. Expected sk_test_, sk_live_, rk_test_ or rk_live_.\n');
+    process.exit(1);
+  }
+  env = derived;
 }
-// Bound after the guard so the narrowing survives into the helpers below;
-// process.exit() does not narrow a module-level `let` for TypeScript.
-const env = derivedEnv;
 
 /** Stripe takes form encoding, with bracketed paths for nested fields. */
 function form(obj: Record<string, unknown>, prefix = ''): string {
@@ -82,8 +125,9 @@ function form(obj: Record<string, unknown>, prefix = ''): string {
 }
 
 async function stripe(path: string, body?: Record<string, unknown>, method = 'POST') {
+  const verb = body ? method : 'GET';
   const res = await fetch(`${API}${path}`, {
-    method: body ? method : 'GET',
+    method: verb,
     headers: {
       Authorization: `Bearer ${secretKey}`,
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -96,7 +140,7 @@ async function stripe(path: string, body?: Record<string, unknown>, method = 'PO
     const msg = json?.error?.message || `${res.status} ${res.statusText}`;
     // A restricted key missing a permission fails here with a clear message,
     // which is more useful than a generic throw.
-    throw new Error(`${method} ${path} → ${msg}`);
+    throw new Error(`${verb} ${path} -> ${msg}`);
   }
   return json;
 }
@@ -117,6 +161,8 @@ async function findProductByName(name: string): Promise<any | null> {
 }
 
 async function main() {
+  await resolveKey();
+
   console.log(`\nStripe environment: ${env.toUpperCase()}${apply ? '' : '   (dry run — add --apply to write)'}\n`);
 
   const lines: string[] = [];
