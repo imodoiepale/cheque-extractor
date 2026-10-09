@@ -161,6 +161,14 @@ const SAMPLES: Record<TemplateKey, Record<string, any>> = {
     planLabel: 'Growth',
     periodEnd: '2026-10-31',
   },
+  welcome: { firmName: 'Harrow & Finch', name: 'Ada' },
+  extraction_complete: { firmName: 'Harrow & Finch', documentName: 'August statement.pdf', checkCount: 42, exactMatches: 38, needsAttention: 4, jobId: 'job_1' },
+  reconciliation_cleared: { firmName: 'Harrow & Finch', companyName: 'Acme Ltd', approvedBy: 'Ada Lovelace', clearedCount: 38, clearedTotal: 51234.5, remaining: 4, jobId: 'job_1' },
+  weekly_report: { firmName: 'Harrow & Finch', weekStart: '2026-09-28', weekEnd: '2026-10-04', checksProcessed: 120, companies: 3, exactMatches: 108, cleared: 101, openItems: 12, discrepancies: 5, duplicates: 1, usageUsed: 640, usageAllowance: 1200 },
+  monthly_report: { firmName: 'Harrow & Finch', monthLabel: 'September 2026', checksProcessed: 512, cleared: 488, clearedTotal: 402113.1, exactMatchRate: 91, openItems: 9 },
+  payment_receipt: { firmName: 'Harrow & Finch', amountUsd: 497, invoiceNumber: 'KYQ-0042', planLabel: 'Professional', periodLabel: 'Oct 2026' },
+  payment_failed: { firmName: 'Harrow & Finch', amountUsd: 497, nextAttempt: '2026-10-12' },
+  security_new_signin: { at: '2026-10-09T10:00:00Z', device: 'Chrome on Windows', location: 'Nairobi' },
   annual_renewal_reminder: {
     firmName: 'Harrow & Finch',
     renewalDate: '2027-04-01',
@@ -181,7 +189,9 @@ const SAMPLES: Record<TemplateKey, Record<string, any>> = {
 {
   // 6 + 3 + 10 from CHECKLIST section 9, plus the annual renewal reminder the
   // Stripe requirements ask for ~30 days before the charge (section 7).
-  assert.equal(TEMPLATE_KEYS.length, 20, 'section 9 is 6 + 3 + 10, plus the annual renewal reminder');
+  // Plus 8 added Oct 2026: welcome, extraction complete, reconciliation cleared,
+  // weekly and monthly reports, payment receipt, payment failed, new sign-in.
+  assert.equal(TEMPLATE_KEYS.length, 28, "section 9 (19) + annual renewal + 8 onboarding/reconciliation/reporting/billing/security");
   const missing = TEMPLATE_KEYS.filter((k) => !SAMPLES[k]);
   assert.deepEqual(missing, [], `every template needs sample vars, missing: ${missing.join(', ')}`);
   const extra = Object.keys(SAMPLES).filter((k) => !TEMPLATE_KEYS.includes(k as TemplateKey));

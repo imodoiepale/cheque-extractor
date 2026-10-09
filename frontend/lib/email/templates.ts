@@ -364,6 +364,120 @@ export const TEMPLATES = {
       cta: { label: 'Review your plan', url: appUrl('/billing') },
     }),
   },
+
+  /* ── 21-28: onboarding, reconciliation, reporting, payments, security ── */
+
+  welcome: {
+    category: 'transactional',
+    spec: 'onboarding-01 welcome',
+    subject: () => 'Welcome to Kyriq: your first reconciliation in four steps',
+    body: (v) => ({
+      paragraphs: [
+        `Welcome${v.name ? `, ${v.name}` : ''}. ${firmOf(v)} is set up on Kyriq.`,
+        '1. Connect QuickBooks Online. 2. Add the bank statement you already download. 3. Review the matches Kyriq finds. 4. Approve, and approved checks are cleared in QuickBooks.',
+        'Your trial covers 14 days or 250 processed checks, whichever comes first, with unlimited companies and users.',
+      ],
+      cta: { label: 'Start your first reconciliation', url: appUrl('/upload') },
+    }),
+  },
+
+  extraction_complete: {
+    category: 'transactional',
+    spec: 'reconciliation-01 extraction finished',
+    subject: (v) => `${v.checkCount ?? 0} checks ready to review in ${v.documentName || 'your statement'}`,
+    body: (v) => ({
+      paragraphs: [
+        `Kyriq finished reading ${v.documentName || 'your statement'} for ${firmOf(v)} and compared every check with QuickBooks.`,
+        `${v.exactMatches ?? 0} exact ${plural(v.exactMatches ?? 0, 'match is', 'matches are')} ready to approve together. ${v.needsAttention ?? 0} ${plural(v.needsAttention ?? 0, 'check needs', 'checks need')} a closer look (lower confidence, possible duplicates or discrepancies).`,
+        'Nothing is cleared until someone on your team approves it.',
+      ],
+      cta: { label: 'Review the batch', url: appUrl(`/review/${v.jobId || ''}`) },
+    }),
+  },
+
+  reconciliation_cleared: {
+    category: 'transactional',
+    spec: 'reconciliation-02 approved and cleared',
+    subject: (v) => `${v.clearedCount ?? 0} checks cleared in QuickBooks for ${v.companyName || firmOf(v)}`,
+    body: (v) => ({
+      paragraphs: [
+        `${v.approvedBy || 'A team member'} approved ${v.clearedCount ?? 0} ${plural(v.clearedCount ?? 0, 'check', 'checks')} totalling $${Number(v.clearedTotal ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}, and Kyriq cleared them in the ${v.companyName || 'QuickBooks'} reconciliation.`,
+        v.remaining
+          ? `${v.remaining} ${plural(v.remaining, 'check is', 'checks are')} still open in this batch.`
+          : 'Every check in this batch is resolved.',
+        'The full record of who approved what is in the audit trail.',
+      ],
+      cta: { label: 'Open the reconciliation', url: appUrl(`/review/${v.jobId || ''}`) },
+    }),
+  },
+
+  weekly_report: {
+    category: 'notification',
+    spec: 'reporting-01 weekly reconciliation report',
+    subject: (v) => `Your Kyriq week: ${v.checksProcessed ?? 0} checks processed, ${v.openItems ?? 0} still open`,
+    body: (v) => ({
+      paragraphs: [
+        `Here is ${firmOf(v)}'s reconciliation week, ${formatDate(v.weekStart)} to ${formatDate(v.weekEnd)}.`,
+        `Processed: ${v.checksProcessed ?? 0} checks across ${v.companies ?? 0} ${plural(v.companies ?? 0, 'company', 'companies')}. Matched exactly: ${v.exactMatches ?? 0}. Approved and cleared: ${v.cleared ?? 0}.`,
+        `Still open: ${v.openItems ?? 0} (${v.discrepancies ?? 0} ${plural(v.discrepancies ?? 0, 'discrepancy', 'discrepancies')}, ${v.duplicates ?? 0} possible ${plural(v.duplicates ?? 0, 'duplicate', 'duplicates')}).`,
+        `Plan usage: ${v.usageUsed ?? 0} of ${v.usageAllowance ?? 0} checks this billing month.`,
+      ],
+      cta: { label: 'See open items', url: appUrl('/qb-comparisons') },
+    }),
+  },
+
+  monthly_report: {
+    category: 'notification',
+    spec: 'reporting-02 monthly reconciliation report',
+    subject: (v) => `${v.monthLabel || 'Monthly'} reconciliation report for ${firmOf(v)}`,
+    body: (v) => ({
+      paragraphs: [
+        `${v.monthLabel || 'Last month'} at ${firmOf(v)}: ${v.checksProcessed ?? 0} checks processed and ${v.cleared ?? 0} cleared in QuickBooks, totalling $${Number(v.clearedTotal ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}.`,
+        `${v.exactMatchRate ?? 0}% of checks matched exactly. ${v.openItems ?? 0} ${plural(v.openItems ?? 0, 'item carries', 'items carry')} into next month.`,
+        'The full report, with every check and its approver, is ready to export as CSV or PDF.',
+      ],
+      cta: { label: 'Open the report', url: appUrl('/reports') },
+    }),
+  },
+
+  payment_receipt: {
+    category: 'transactional',
+    spec: 'billing-08 payment receipt',
+    subject: (v) => `Receipt: $${Number(v.amountUsd ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })} paid to Kyriq`,
+    body: (v) => ({
+      paragraphs: [
+        `Thank you. We received $${Number(v.amountUsd ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })} for ${firmOf(v)}${v.invoiceNumber ? ` (invoice ${v.invoiceNumber})` : ''}.`,
+        `${v.planLabel || 'Your plan'} covers ${v.periodLabel || 'the current billing period'}.`,
+      ],
+      cta: v.invoiceUrl ? { label: 'View the invoice', url: v.invoiceUrl } : { label: 'Billing', url: appUrl('/billing') },
+    }),
+  },
+
+  payment_failed: {
+    category: 'transactional',
+    spec: 'billing-09 payment failed',
+    subject: () => 'Action needed: your Kyriq payment did not go through',
+    body: (v) => ({
+      paragraphs: [
+        `We could not charge the card on file for ${firmOf(v)}${v.amountUsd ? ` ($${Number(v.amountUsd).toLocaleString('en-US', { minimumFractionDigits: 2 })})` : ''}.`,
+        `Stripe will retry${v.nextAttempt ? ` on ${formatDate(v.nextAttempt)}` : ' automatically'}. Update the card before then to keep reconciling without interruption.`,
+      ],
+      cta: { label: 'Update payment method', url: appUrl('/billing') },
+    }),
+  },
+
+  security_new_signin: {
+    category: 'transactional',
+    spec: 'security-01 new sign-in',
+    subject: () => 'New sign-in to your Kyriq account',
+    body: (v) => ({
+      paragraphs: [
+        `Your Kyriq account was signed in to on ${formatDate(v.at)}${v.device ? ` from ${v.device}` : ''}${v.location ? ` near ${v.location}` : ''}.`,
+        'If this was you, there is nothing to do. If not, reset your password now and turn on two-factor authentication.',
+      ],
+      cta: { label: 'Secure your account', url: appUrl('/settings') },
+    }),
+  },
 } satisfies Record<string, EmailTemplate>;
 
 export type TemplateKey = keyof typeof TEMPLATES;
