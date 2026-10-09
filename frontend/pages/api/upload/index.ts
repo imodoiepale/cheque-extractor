@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
+import { backendAuthHeaders } from '@/lib/backend-auth'
 
 const PYTHON_API = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090'
 
@@ -9,6 +10,9 @@ export const config = {
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    const auth = await backendAuthHeaders(req, res)
+    if (!auth) return
+
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' })
     }
@@ -24,7 +28,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         // Forward to Python API with same content-type (multipart)
         const response = await fetch(`${PYTHON_API}/api/upload-pdf`, {
             method: 'POST',
-            headers: {
+            headers: { ...auth,
                 'content-type': req.headers['content-type'] || 'application/octet-stream',
             },
             body,

@@ -46,9 +46,9 @@ const MONTH_ROW = 'px-5 py-3.5';
  * between these and the checklist table is what check-parcel-h.ts asserts.
  */
 const PLANS = [
-  { name: 'Essential',    monthly: 147, annual: 1617,  includedChecks: 1200,  overage: 0.15, popular: false },
-  { name: 'Professional', monthly: 497, annual: 5467,  includedChecks: 4500,  overage: 0.12, popular: true },
-  { name: 'Scale',        monthly: 997, annual: 10967, includedChecks: 10000, overage: 0.10, popular: false },
+  { name: 'Starter',      monthly: 249,  annual: 2739,  includedChecks: 1200,  overage: 0.20, popular: false },
+  { name: 'Professional', monthly: 649,  annual: 7139,  includedChecks: 4500,  overage: 0.20, popular: true },
+  { name: 'Firm',         monthly: 1299, annual: 14289, includedChecks: 10000, overage: 0.20, popular: false },
 ] as const;
 
 /** Billing facts with no source yet. Shown as pending, never as a value. */
@@ -227,13 +227,16 @@ export default function BillingPage() {
 
   const fetchData = useCallback(async () => {
     try {
-      const res = await fetch(`${BACKEND}/api/jobs`);
+      // The backend requires a session token once REQUIRE_AUTH is on.
+      const { data: { session } } = await createClient().auth.getSession();
+      const authHeaders = { Authorization: `Bearer ${session?.access_token || ''}` };
+      const res = await fetch(`${BACKEND}/api/jobs`, { headers: authHeaders });
       const data = await res.json();
       setJobs((data.jobs || []).sort((a: Job, b: Job) =>
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       ));
 
-      const usageRes = await fetch(`${BACKEND}/api/billing/usage`);
+      const usageRes = await fetch(`${BACKEND}/api/billing/usage`, { headers: authHeaders });
       setApiUsage(await usageRes.json());
       setUsageError(null);
     } catch (e: any) {

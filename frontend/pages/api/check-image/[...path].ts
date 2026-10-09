@@ -1,9 +1,13 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
+import { backendAuthHeaders } from '@/lib/backend-auth'
 
 const PYTHON_API = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090'
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    const auth = await backendAuthHeaders(req, res)
+    if (!auth) return
+
     if (req.method !== 'GET') {
         return res.status(405).json({ error: 'Method not allowed' })
     }
@@ -16,7 +20,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const [jobId, checkId] = pathParts
 
     try {
-        const response = await fetch(`${PYTHON_API}/api/checks/${jobId}/${checkId}/image`)
+        const response = await fetch(`${PYTHON_API}/api/checks/${jobId}/${checkId}/image`, { headers: auth })
 
         if (response.ok) {
             const buffer = Buffer.from(await response.arrayBuffer())

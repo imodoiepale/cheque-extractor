@@ -1,5 +1,6 @@
 'use client';
 
+import { createClient } from '@/lib/supabase/client';
 import { Suspense, useState, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import DropzoneUpload from './components/DropzoneUpload';
@@ -454,8 +455,10 @@ function UploadPageInner() {
 
       const formData2 = new FormData();
       formData2.append('file', file);
+      const { data: { session: uploadSession } } = await createClient().auth.getSession();
       const response = await fetch(`${backendUrl}/api/upload-pdf`, {
         method: 'POST',
+        headers: { Authorization: `Bearer ${uploadSession?.access_token || ''}` },
         body: formData2,
       });
       if (!response.ok) {

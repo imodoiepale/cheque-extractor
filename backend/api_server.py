@@ -25,6 +25,7 @@ import shutil
 import threading
 import traceback
 import io
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -49,6 +50,8 @@ import requests as _requests
 
 _sb_url = os.environ.get("NEXT_PUBLIC_SUPABASE_URL", "").strip()
 _sb_key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "").strip() or os.environ.get("SUPABASE_SERVICE_KEY", "").strip()
+_sb_anon_key = os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY", "").strip()
+_auth_cache: dict = {}  # token -> verified payload, see _verify_token
 _supabase_ok = bool(_sb_url and _sb_key and _sb_url.startswith("http"))
 if _supabase_ok:
     print(f"✓ Supabase configured: {_sb_url[:40]}…")
@@ -552,16 +555,35 @@ def _verify_token(request: Request):
     if not auth.startswith("Bearer "):
         raise HTTPException(401, "Missing or invalid Authorization header")
     token = auth[7:]
-    try:
-        payload = _pyjwt.decode(
-            token,
-            _jwt_secret or _sb_key,
-            algorithms=["HS256"],
-            options={"verify_aud": False},
-        )
+    if _jwt_secret:
+        try:
+            return _pyjwt.decode(token, _jwt_secret, algorithms=["HS256"], options={"verify_aud": False})
+        except Exception as e:
+            raise HTTPException(401, f"Invalid token: {e}")
+    # No legacy HS256 secret configured (and projects on asymmetric signing
+    # keys have none): ask Supabase Auth whether the token is a live session.
+    # The service key is NOT a signing secret, so it must never be used to
+    # decode. ponytail: one Auth round trip per call, cached 60s per token;
+    # switch to JWKS verification if this shows up in latency.
+    payload = _auth_cache.get(token)
+    if payload and payload["_exp"] > time.time():
         return payload
+    try:
+        r = _requests.get(
+            f"{_sb_url}/auth/v1/user",
+            headers={"Authorization": f"Bearer {token}", "apikey": _sb_anon_key or _sb_key},
+            timeout=8,
+        )
     except Exception as e:
-        raise HTTPException(401, f"Invalid token: {e}")
+        raise HTTPException(503, f"Auth service unreachable: {e}")
+    if r.status_code != 200:
+        raise HTTPException(401, "Invalid or expired session")
+    user = r.json()
+    payload = {"sub": user.get("id"), "email": user.get("email"), "role": user.get("role"), "_exp": time.time() + 60}
+    if len(_auth_cache) > 5000:
+        _auth_cache.clear()
+    _auth_cache[token] = payload
+    return payload
 
 
 # ── Tenant resolution, duplicate detection, trial gate, usage ledger ─────────

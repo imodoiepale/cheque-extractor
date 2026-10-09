@@ -1,8 +1,12 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
+import { backendAuthHeaders } from '@/lib/backend-auth'
 
 const PYTHON_API = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090'
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+    const auth = await backendAuthHeaders(req, res)
+    if (!auth) return
+
     if (req.method !== 'POST') {
         return res.status(405).json({ error: 'Method not allowed' })
     }
@@ -12,7 +16,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     try {
         const response = await fetch(`${PYTHON_API}/api/jobs/${id}/retry-failed`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { ...auth, 'Content-Type': 'application/json' },
         })
         const data = await response.json()
 
