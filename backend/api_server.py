@@ -15,6 +15,7 @@ Endpoints:
   GET  /api/health              Health check
 """
 
+import asyncio
 import os
 import sys
 import csv
@@ -33,7 +34,7 @@ from dotenv import load_dotenv
 load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env")
 load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env.local")
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request, Depends
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from pydantic import BaseModel
@@ -3436,3 +3437,37 @@ if __name__ == "__main__":
     print(f"  Docs: http://localhost:{port}/docs")
     print(f"{'='*60}\n")
     uvicorn.run(app, host="0.0.0.0", port=port)
+
+
+# ── OCR Lab (admin only) ─────────────────────────────────────────────────────
+# Compares extraction engines on one uploaded document. Nothing is persisted
+# and nothing counts toward a tenant's usage. Gated twice: the Next proxy
+# checks the super-admin allowlist, and this route re-checks the verified
+# token's email against LAB_ADMIN_EMAILS so a direct call cannot spend the
+# engines' credits.
+_LAB_ADMINS = {e.strip().lower() for e in os.getenv("LAB_ADMIN_EMAILS", "michael@itaxhub.com").split(",") if e.strip()}
+_LAB_MAX_BYTES = 25 * 1024 * 1024
+_LAB_MIMES = {"application/pdf", "image/png", "image/jpeg"}
+
+
+@app.post("/api/lab/run")
+async def lab_run(
+    request: Request,
+    file: UploadFile = File(...),
+    doc_type: str = Form("statement"),
+    engines: str = Form("gemini,chandra,razor,unlimited"),
+    _auth=Depends(_verify_token),
+):
+    claims = _auth or _claims_from_request(request) or {}
+    if str(claims.get("email", "")).lower() not in _LAB_ADMINS:
+        raise HTTPException(403, "OCR Lab is restricted to Kyriq admins")
+    if doc_type not in ("statement", "check"):
+        raise HTTPException(400, "doc_type must be 'statement' or 'check'")
+    mime = (file.content_type or "").lower()
+    if mime not in _LAB_MIMES:
+        raise HTTPException(400, "Upload a PDF, PNG or JPG")
+    data = await file.read()
+    if len(data) > _LAB_MAX_BYTES:
+        raise HTTPException(413, "File is larger than 25 MB")
+    from ocr_lab import run_lab
+    return await asyncio.to_thread(run_lab, data, mime, doc_type, [e.strip() for e in engines.split(",")])
