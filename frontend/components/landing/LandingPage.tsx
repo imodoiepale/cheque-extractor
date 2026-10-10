@@ -8,7 +8,7 @@
  * 1. CHECKLIST 12. The fabricated social proof is gone (watch-demo button,
  *    "trusted by 500+ accounting firms", every testimonial), every CTA reads
  *    "Start Free Trial" and routes to /signup, the hero leads with the bank
- *    statement, and pricing is the Essential / Professional / Scale table
+ *    statement, and pricing is the Starter / Professional / Firm table
  *    with the monthly-annual toggle, overage rates and annual terms.
  *
  * 2. DESIGN-SYSTEM. Colour comes from tokens only — no hex, no raw Tailwind
@@ -656,9 +656,9 @@ type Plan = {
 };
 
 const PLANS: Plan[] = [
-  { tier: 'essential', name: 'Essential', monthly: 147, annual: 1617, allowance: 1200, overage: '0.15' },
-  { tier: 'professional', name: 'Professional', monthly: 497, annual: 5467, allowance: 4500, overage: '0.12', popular: true, extra: 'Priority support' },
-  { tier: 'scale', name: 'Scale', monthly: 997, annual: 10967, allowance: 10000, overage: '0.10', extra: 'Onboarding assistance' },
+  { tier: 'essential', name: 'Starter', monthly: 249, annual: 2739, allowance: 1200, overage: '0.20' },
+  { tier: 'professional', name: 'Professional', monthly: 649, annual: 7139, allowance: 4500, overage: '0.20', popular: true, extra: 'Priority support' },
+  { tier: 'scale', name: 'Firm', monthly: 1299, annual: 14289, allowance: 10000, overage: '0.20', extra: 'Onboarding assistance' },
 ];
 
 /** True of every plan, so it is stated once and rendered on all three. */
@@ -753,6 +753,15 @@ function Pricing() {
           ))}
         </div>
 
+        {/* Above the top plan's allowance, nobody should assume they are cut off. */}
+        <p className="mt-8 text-center text-sm text-ink-soft">
+          Reconciling more than 10,000 checks a month? Overage is {'$0.20'} per check on every plan, and{' '}
+          <a href="mailto:support@kyriq.com?subject=Kyriq%20volume%20pricing" className="font-semibold text-brand-deep hover:text-brand-dark">
+            contact us
+          </a>{' '}
+          for volume pricing above the Firm allowance.
+        </p>
+
         {/* Trial, usage, overage and the annual terms, verbatim from the redesign. */}
         <div className="mt-10 grid gap-4 md:grid-cols-2">
           <div className="glass-card rounded-card p-6">
@@ -761,7 +770,7 @@ function Pricing() {
               Try Kyriq for 14 days or process up to 250 checks, whichever comes first. No credit card is required.
               A check counts when it is processed from an upload. If the same check is uploaded and processed again, it
               counts again. After the monthly allowance ({PLANS.map((p) => p.allowance.toLocaleString('en-US')).join(' / ')} checks
-              on Essential / Professional / Scale) is reached, additional checks are billed automatically at the overage
+              on Starter / Professional / Firm) is reached, additional checks are billed automatically at the overage
               rate shown for the plan. Usage resets at the beginning of each monthly billing cycle.
             </p>
           </div>

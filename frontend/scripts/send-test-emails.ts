@@ -46,9 +46,10 @@ const SAMPLE: Record<string, unknown> = {
   approvedBy: 'Jane Smith', checksProcessed: 1260, openItems: 37, discrepancies: 12, duplicates: 4, cleared: 1189,
   companies: 6, usageUsed: 3120, usageAllowance: 4500, monthLabel: 'August 2026', exactMatchRate: 91,
   weekStart: days(-7), weekEnd: now.toISOString(), trialEndsAt: days(3), renewalDate: days(30), daysAhead: 30,
-  used: 2250, allowance: 4500, limit: 250, checksUsed: 125, overageChecks: 312, overageUsd: 37.44, rate: 0.12,
+  used: 2250, allowance: 4500, limit: 250, checksUsed: 125, overageChecks: 312, overageUsd: 37.44, rate: 0.20,
   planLabel: 'Professional', amountUsd: 497, invoiceNumber: 'KYQ-0042', periodLabel: 'Sep 9 to Oct 8, 2026',
   invoiceUrl: appUrl('/billing'), nextAttempt: days(3), at: now.toISOString(), device: 'Chrome on Windows', location: 'Nairobi',
+  oldRoleLabel: "Member", newRoleLabel: "Admin", checkLimit: 250, checksRemaining: 125, daysRemaining: 3, periodEnd: days(12),
   acceptUrl: appUrl('/invite/demo'), inviteUrl: appUrl('/invite/demo'), roleLabel: 'Member', memberEmail: 'jane@northstar.example', expiresAt: days(7), removedBy: 'Michael', newRole: 'admin',
 };
 

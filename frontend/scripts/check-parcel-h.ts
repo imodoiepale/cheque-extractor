@@ -300,7 +300,7 @@ console.log('  ok  every money column is tabular, and the two QB ones share one 
   const num = (s: string) => parseFloat(s.replace(/[$,]/g, ''));
 
   const rows = [...checklist.matchAll(
-    /^\|\s*(Essential|Professional[^|]*|Scale)\s*\|\s*(\$[\d,]+)\s*\|\s*(\$[\d,]+)\s*\|\s*([\d,]+)\s*\|\s*(\$[\d.]+)\s*\|/gm
+    /^\|\s*(Starter|Professional[^|]*|Firm)\s*\|\s*(\$[\d,]+)\s*\|\s*(\$[\d,]+)\s*\|\s*([\d,]+)\s*\|\s*(\$[\d.]+)\s*\|/gm
   )];
   assert.equal(rows.length, 3, 'could not parse the three plan rows out of CHECKLIST section 7');
 
