@@ -2,8 +2,8 @@
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
     "builder": "DOCKERFILE",
-    "dockerfilePath": "docker/Dockerfile.voice",
-    "watchPatterns": ["voice/**", "docker/Dockerfile.voice"]
+    "dockerfilePath": "Dockerfile",
+    "watchPatterns": ["**"]
   },
   "deploy": {
     "numReplicas": 1,
