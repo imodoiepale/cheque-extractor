@@ -594,7 +594,7 @@ export default function DashboardPage() {
         >
           <div className="h-[calc(90vh-7rem)] overflow-hidden rounded-card border border-glass-hairline bg-surface-sunken">
             <iframe
-              src={`${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090'}/api/jobs/${selectedJob.job_id}/pdf`}
+              src={`/api/pdf-file/${selectedJob.job_id}`}
               className="h-full w-full border-0"
               title="PDF Viewer"
             />

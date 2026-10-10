@@ -120,3 +120,8 @@ temp/
 # Designer logo source pack (AI/EPS/PSD, ~50 MB). The web-ready cuts live in frontend/public/brand/.
 Kyriq Logo - All Source files - 12 versions/
 frontend/email-previews/
+
+# Local diagnostic scripts that held live keys (removed Oct 2026). Never commit keys.
+complete-oauth.ps1
+test-gemini-keys.ps1
+diagnose-qb.ps1

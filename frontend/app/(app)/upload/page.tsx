@@ -321,7 +321,7 @@ function UploadPageInner() {
       pollCount++;
 
       try {
-        const response = await fetch(`${backendUrl}/api/jobs/${jobId}`);
+        const response = await fetch(`/api/jobs/${jobId}`);
         if (response.ok) {
           const jobData = await response.json();
 
@@ -484,7 +484,7 @@ function UploadPageInner() {
 
       while (attempts < maxAttempts) {
         try {
-          const statusRes = await fetch(`${backendUrl}/api/jobs/${jobId}`);
+          const statusRes = await fetch(`/api/jobs/${jobId}`);
           if (statusRes.ok) {
             const jobData = await statusRes.json();
 

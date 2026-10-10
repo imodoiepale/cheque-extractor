@@ -276,7 +276,7 @@ export default function ChequeDialog({ job, selectedCheckIdx, onClose, onNavigat
         {viewMode === 'pdf' ? (
           <div className="min-h-0 flex-1 overflow-hidden rounded-card border border-glass-hairline bg-surface-sunken">
             <iframe
-              src={`${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090'}/api/jobs/${job.job_id}/pdf`}
+              src={`/api/pdf-file/${job.job_id}`}
               className="h-full w-full border-0"
               title="PDF Viewer"
             />

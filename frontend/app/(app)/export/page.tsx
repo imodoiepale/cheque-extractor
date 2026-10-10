@@ -54,7 +54,7 @@ export default function ExportPage() {
   const fetchData = useCallback(async () => {
     try {
       const [jobsRes, fmtRes] = await Promise.all([
-        fetch(`${BACKEND}/api/jobs`),
+        fetch('/api/jobs'),
         fetch(`${BACKEND}/api/export-formats`),
       ]);
       const jobsData = await jobsRes.json();
@@ -96,7 +96,7 @@ export default function ExportPage() {
   const handleExport = async (jobId: string, format: string) => {
     setExporting(jobId);
     try {
-      window.open(`${BACKEND}/api/jobs/${jobId}/export?format=${format}`, '_blank');
+      window.open(`/api/jobs/${jobId}/export?format=${format}`, '_blank');
       const job = jobs.find(j => j.job_id === jobId);
       setExportHistory(prev => [{
         jobId,

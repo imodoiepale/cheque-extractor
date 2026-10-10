@@ -25,6 +25,8 @@ import shutil
 import threading
 import traceback
 import io
+import re
+from urllib.parse import quote as _urlquote
 import time
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +40,7 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent / ".env.local")
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from PIL import Image as PILImage
 import hashlib
@@ -318,7 +321,7 @@ def _supabase_select(table: str, columns: str = "*", filters: dict = None, limit
         return []
     query = f"{_sb_url}/rest/v1/{table}?select={columns}"
     if filters:
-        query += "&" + "&".join(f"{k}=eq.{v}" for k, v in filters.items())
+        query += "&" + "&".join(f"{k}=eq.{_urlquote(str(v), safe='')}" for k, v in filters.items())
     query += f"&limit={limit}&order=created_at.desc"
     try:
         resp = _requests.get(query, headers=_sb_headers(), timeout=15)
@@ -543,8 +546,8 @@ try:
 except ImportError:
     _HAS_JWT = False
     if _require_auth:
-        print("⚠ REQUIRE_AUTH is set but PyJWT not installed. Auth disabled.")
-        _require_auth = False
+        # Fail closed: silently disabling auth here would expose every tenant.
+        raise RuntimeError("REQUIRE_AUTH is set but PyJWT is not installed")
 
 
 def _verify_token(request: Request):
@@ -883,6 +886,55 @@ if _frontend_urls:
 # Vercel preview deployments for the renamed project, plus the legacy name while
 # any old deployment is still reachable.
 _allowed_origin_regex = r"https://(kyriq|cheque-extractor|check-extractor)[a-z0-9-]*\.vercel\.app"
+
+# ── API gate: authentication + tenant ownership for every /api route ────────
+# Routes used to opt in to auth one by one, and eleven read routes (jobs,
+# checks, page/check images, PDFs, exports) never did, so any anonymous caller
+# could list every firm's jobs. This middleware runs before all of them:
+#   - rejects path traversal and malformed job/check ids;
+#   - with REQUIRE_AUTH, requires a live Supabase session (_verify_token);
+#   - for /api/jobs/{id}/... and /api/checks/{id}/..., requires the job to
+#     belong to the caller's tenant, and answers 404 otherwise so job ids
+#     cannot be probed.
+_PUBLIC_API = {"/api/health", "/api/export-formats"}
+_JOB_SCOPED = re.compile(r"^/api/(?:jobs|checks)/([^/]+)")
+_SAFE_ID = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
+
+
+def _job_tenant(job_id: str):
+    j = jobs.get(job_id)
+    if j and j.get("tenant_id"):
+        return j["tenant_id"]
+    rows = _supabase_select("check_jobs", "tenant_id", {"job_id": job_id}, limit=1)
+    return rows[0].get("tenant_id") if rows else None
+
+
+@app.middleware("http")
+async def _api_gate(request: Request, call_next):
+    path = request.url.path
+    if request.method == "OPTIONS" or not path.startswith("/api/") or path in _PUBLIC_API:
+        return await call_next(request)
+    if ".." in path or "\\" in path or "%2e%2e" in path.lower():
+        return JSONResponse(status_code=400, content={"detail": "Invalid path"})
+    scoped = _JOB_SCOPED.match(path)
+    if scoped:
+        segments = [seg for seg in path.split("/")[3:5] if seg]
+        if not all(_SAFE_ID.match(seg) for seg in segments):
+            return JSONResponse(status_code=400, content={"detail": "Invalid id"})
+    if not _require_auth:
+        return await call_next(request)
+    try:
+        await run_in_threadpool(_verify_token, request)
+    except HTTPException as e:
+        return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
+    ctx = await run_in_threadpool(_auth_context, request)
+    request.state.tenant_id = ctx.get("tenant_id")
+    if scoped:
+        owner = await run_in_threadpool(_job_tenant, scoped.group(1))
+        if not ctx.get("tenant_id") or owner != ctx.get("tenant_id"):
+            return JSONResponse(status_code=404, content={"detail": "Job not found"})
+    return await call_next(request)
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -2141,7 +2193,7 @@ def get_billing_usage(start_date: str = None, end_date: str = None, _auth=Depend
 
 
 @app.get("/api/jobs")
-def list_jobs(limit: int = 50, offset: int = 0, status: str = None, source: str = "auto"):
+def list_jobs(request: Request, limit: int = 50, offset: int = 0, status: str = None, source: str = "auto"):
     """List jobs with optional pagination and status filter.
     
     Args:
@@ -2165,7 +2217,12 @@ def list_jobs(limit: int = 50, offset: int = 0, status: str = None, source: str 
     if (source == "auto" or source == "db") and _supabase_ok:
         try:
             # Fetch all jobs from DB (they're already sorted by created_at desc in DB)
-            db_jobs_raw = _supabase_select("check_jobs", columns="*", limit=1000)
+            # Tenant-scoped when auth is on (the gate set request.state.tenant_id).
+            tenant_filter = {"tenant_id": request.state.tenant_id} if _require_auth else None
+            if _require_auth and not request.state.tenant_id:
+                db_jobs_raw = []
+            else:
+                db_jobs_raw = _supabase_select("check_jobs", columns="*", filters=tenant_filter, limit=1000)
             for db_job in db_jobs_raw:
                 # Parse checks_data JSON
                 checks_data = []
@@ -2194,7 +2251,7 @@ def list_jobs(limit: int = 50, offset: int = 0, status: str = None, source: str 
     
     # Add in-memory jobs if requested (and deduplicate)
     if source == "auto" or source == "memory":
-        memory_jobs = list(jobs.values())
+        memory_jobs = [j for j in jobs.values() if not _require_auth or (request.state.tenant_id and j.get("tenant_id") == request.state.tenant_id)]
         # Add memory jobs that aren't already in the list from DB
         existing_ids = {j["job_id"] for j in all_jobs}
         for mem_job in memory_jobs:

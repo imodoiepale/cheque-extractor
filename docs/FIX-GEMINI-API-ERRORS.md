@@ -17,8 +17,8 @@ Gemini extracted: payee=None, amount=None, date=None, check#=None
 Your Gemini API keys are **invalid or expired**. The 400 error means Google is rejecting the API keys.
 
 **Keys that are failing:**
-- `AIzaSyAqkmLfSmgjcTrXpWiczxNafK9nb6Dt30s`
-- `AIzaSyALrrfFmiZYxVtzpAjgaPz3FB_LkNhFOuo`
+- `AIza...REDACTED`
+- `AIza...REDACTED`
 
 ---
 
