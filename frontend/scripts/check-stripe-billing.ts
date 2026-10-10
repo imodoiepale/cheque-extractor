@@ -84,7 +84,7 @@ const migration = sql(MIGRATION);
 
   const rows = [
     ...checklist.matchAll(
-      /^\|\s*(Essential|Professional[^|]*|Scale)\s*\|\s*(\$[\d,]+)\s*\|\s*(\$[\d,]+)\s*\|\s*([\d,]+)\s*\|\s*(\$[\d.]+)\s*\|/gm
+      /^\|\s*(Starter|Professional[^|]*|Firm)\s*\|\s*(\$[\d,]+)\s*\|\s*(\$[\d,]+)\s*\|\s*([\d,]+)\s*\|\s*(\$[\d.]+)\s*\|/gm
     ),
   ];
   assert.equal(rows.length, 3, 'could not parse the three plan rows out of CHECKLIST section 7');
@@ -93,7 +93,10 @@ const migration = sql(MIGRATION);
 
   for (const [, nameRaw, monthly, annual, checks, overage] of rows) {
     const name = nameRaw.trim().replace(/\s*\(.*\)$/, '');
-    const key = name.toLowerCase();
+    // Display names changed (Essential -> Starter, Scale -> Firm); the keys are stored
+    // in tenants.plan and Stripe metadata, so they stay as they were.
+    const KEY_FOR_NAME: Record<string, string> = { starter: 'essential', professional: 'professional', firm: 'scale' };
+    const key = KEY_FOR_NAME[name.toLowerCase()] ?? name.toLowerCase();
 
     /* (a) the catalogue module — compared as VALUES, not as text */
     const plan = PLANS.find((p) => p.key === key);
@@ -492,7 +495,7 @@ const migration = sql(MIGRATION);
     applyFn![0],
     /metadata/,
     `${WEBHOOK}: applySubscription() reads metadata — metadata is client-supplied, so it could award ` +
-      'a Scale allowance on an Essential price. The price id is what Stripe actually charges.'
+      'a Firm allowance on a Starter price. The price id is what Stripe actually charges.'
   );
   console.log('  ok  the plan is resolved from the Stripe price id, not from client-supplied metadata');
 }

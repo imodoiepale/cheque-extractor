@@ -3,9 +3,12 @@
  *
  * | Plan         | Monthly | Annual  | Cheques/mo | Overage |
  * |--------------|---------|---------|------------|---------|
- * | Essential    | $147    | $1,617  | 1,200      | $0.15   |
- * | Professional | $497    | $5,467  | 4,500      | $0.12   |
- * | Scale        | $997    | $10,967 | 10,000     | $0.10   |
+ * | Starter      | $249    | $2,739  | 1,200      | $0.20   |
+ * | Professional | $649    | $7,139  | 4,500      | $0.20   |
+ * | Firm         | $1,299  | $14,289 | 10,000     | $0.20   |
+ *
+ * The `key` values stay essential / professional / scale: they are stored in
+ * tenants.plan and in Stripe metadata, so only the display name changed.
  *
  * Three things live here and nowhere else:
  *
@@ -44,9 +47,9 @@ export interface Plan {
 }
 
 export const PLANS: readonly Plan[] = [
-  { key: 'essential',    name: 'Essential',    monthly: 147, annual: 1617,  includedChecks: 1200,  overage: 0.15, popular: false },
-  { key: 'professional', name: 'Professional', monthly: 497, annual: 5467,  includedChecks: 4500,  overage: 0.12, popular: true  },
-  { key: 'scale',        name: 'Scale',        monthly: 997, annual: 10967, includedChecks: 10000, overage: 0.10, popular: false },
+  { key: 'essential',    name: 'Starter',      monthly: 249,  annual: 2739,  includedChecks: 1200,  overage: 0.20, popular: false },
+  { key: 'professional', name: 'Professional', monthly: 649,  annual: 7139,  includedChecks: 4500,  overage: 0.20, popular: true  },
+  { key: 'scale',        name: 'Firm',         monthly: 1299, annual: 14289, includedChecks: 10000, overage: 0.20, popular: false },
 ] as const;
 
 export const PLAN_KEYS: readonly PlanKey[] = PLANS.map((p) => p.key);

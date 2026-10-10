@@ -482,9 +482,9 @@ Everything here comes from `STRIPE-BILLING-REQUIREMENTS.md`.
 
 | Plan | Monthly | Annual | Checks / month | Overage |
 |---|---|---|---|---|
-| Essential | $147 | $1,617 | 1,200 | $0.15 |
-| Professional (Most Popular) | $497 | $5,467 | 4,500 | $0.12 |
-| Scale | $997 | $10,967 | 10,000 | $0.10 |
+| Starter | $249 | $2,739 | 1,200 | $0.20 |
+| Professional (Most Popular) | $649 | $7,139 | 4,500 | $0.20 |
+| Firm | $1,299 | $14,289 | 10,000 | $0.20 |
 
 - [ ] Products and prices in Stripe **Test and Live**, IDs in environment variables separated by
       environment.

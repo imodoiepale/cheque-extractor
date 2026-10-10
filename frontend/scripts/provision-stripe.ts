@@ -145,9 +145,14 @@ async function stripe(path: string, body?: Record<string, unknown>, method = 'PO
   return json;
 }
 
-/** Stable, human-readable, and unique per plan+kind+env. */
-function lookupKey(plan: PlanKey, kind: 'monthly' | 'annual' | 'overage'): string {
-  return `kyriq_${env}_${plan}_${kind}`;
+/**
+ * Stable, human-readable, unique per plan+kind+env+AMOUNT. The amount is in
+ * the key so a price change creates a new Stripe price. Prices are immutable,
+ * and a key without the amount would silently reuse the old price.
+ */
+function lookupKey(plan: PlanKey, kind: 'monthly' | 'annual' | 'overage', amount: number): string {
+  const cents = Math.round(amount * 100);
+  return `kyriq_${env}_${plan}_${kind}_${cents}c`;
 }
 
 async function findPriceByLookupKey(key: string): Promise<any | null> {
@@ -206,7 +211,8 @@ async function main() {
     ];
 
     for (const spec of specs) {
-      const lk = lookupKey(plan.key, spec.kind);
+      const amount = spec.kind === 'monthly' ? plan.monthly : spec.kind === 'annual' ? plan.annual : plan.overage;
+      const lk = lookupKey(plan.key, spec.kind, amount);
       const existing = await findPriceByLookupKey(lk);
       let priceId: string;
 

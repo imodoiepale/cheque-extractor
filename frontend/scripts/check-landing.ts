@@ -160,9 +160,9 @@ console.log('  ok  every CTA reads "Start Free Trial" and resolves to /signup');
   const src = read(LANDING);
 
   const EXPECTED = [
-    { tier: 'essential', name: 'Essential', monthly: 147, annual: 1617, allowance: 1200, overage: '0.15' },
-    { tier: 'professional', name: 'Professional', monthly: 497, annual: 5467, allowance: 4500, overage: '0.12' },
-    { tier: 'scale', name: 'Scale', monthly: 997, annual: 10967, allowance: 10000, overage: '0.10' },
+    { tier: 'essential', name: 'Starter', monthly: 249, annual: 2739, allowance: 1200, overage: '0.20' },
+    { tier: 'professional', name: 'Professional', monthly: 649, annual: 7139, allowance: 4500, overage: '0.20' },
+    { tier: 'scale', name: 'Firm', monthly: 1299, annual: 14289, allowance: 10000, overage: '0.20' },
   ];
 
   for (const p of EXPECTED) {

@@ -538,6 +538,14 @@ export function renderTemplate(
   const body = template.body(vars);
   const paragraphs = body.paragraphs.filter(Boolean);
 
+  // A missing variable must never reach a customer as the word "undefined".
+  // The render error is logged as a failed send by sendEmail(), not mailed.
+  const everything = [subject, ...paragraphs, body.cta?.label, body.cta?.url, body.footnote].filter(Boolean).join(' ');
+  const leak = everything.match(/\b(undefined|NaN|null|\[object Object\])\b/);
+  if (leak) {
+    throw new EmailRenderError(`Template "${key}" would print "${leak[0]}": a variable it needs was not supplied.`);
+  }
+
   const textParts = [...paragraphs];
   if (body.cta) textParts.push(`${body.cta.label}: ${body.cta.url}`);
   if (body.footnote) textParts.push(body.footnote);
