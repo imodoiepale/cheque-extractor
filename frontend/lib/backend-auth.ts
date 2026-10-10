@@ -8,10 +8,12 @@
  */
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createServerClient } from '@supabase/ssr';
+import { isSuperAdmin } from '@/lib/super-admin';
 
 export async function backendAuthHeaders(
   req: NextApiRequest,
-  res: NextApiResponse
+  res: NextApiResponse,
+  opts: { superAdminOnly?: boolean } = {}
 ): Promise<Record<string, string> | null> {
   const bearer = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7).trim() : null;
 
@@ -26,6 +28,10 @@ export async function backendAuthHeaders(
   const { data } = bearer ? await supabase.auth.getUser(bearer) : await supabase.auth.getUser();
   if (!data.user) {
     res.status(401).json({ error: 'Sign in to continue.' });
+    return null;
+  }
+  if (opts.superAdminOnly && !isSuperAdmin(data.user)) {
+    res.status(403).json({ error: 'Kyriq Voice is limited to administrators during the beta.' });
     return null;
   }
   const token = bearer ?? (await supabase.auth.getSession()).data.session?.access_token ?? null;

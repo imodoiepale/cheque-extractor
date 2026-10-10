@@ -87,15 +87,17 @@ def _user(token: str) -> dict:
 
 
 # ── Data access: read-only, as the caller ──────────────────────────────────
-CHECK_COLS = "id,check_id,job_id,check_number,payee,amount,check_date,status,confidence_summary"
+# Live checks columns (the live table differs from 001_schema.sql: no job_id,
+# check_id or amount_written; the image is file_url).
+CHECK_COLS = "id,check_number,payee,amount,check_date,status,confidence_summary,file_url,batch_id"
 DETAIL_COLS = (
-    f"{CHECK_COLS},memo,bank_name,amount_written,payee_confidence,amount_confidence,"
+    f"{CHECK_COLS},memo,bank_name,payee_confidence,amount_confidence,"
     "check_date_confidence,check_number_confidence,"
     "matches(id,confidence_score,status,discrepancy_type,discrepancy_amount,flagged_reason)"
 )
 ISSUE_SELECT = (
     "id,confidence_score,status,discrepancy_type,discrepancy_amount,flagged_reason,"
-    "checks(id,check_id,job_id,check_number,payee,amount,check_date)"
+    "checks(id,check_number,payee,amount,check_date,file_url)"
 )
 
 

@@ -2,6 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { createServerClient } from '@supabase/ssr';
 import { emailShell } from '@/lib/email/layout';
 import { SENDER, REPLY_TO } from '@/lib/email/templates';
+import { isSuperAdmin } from '@/lib/super-admin';
 
 /**
  * POST /api/voice/email-report {title, filename, pdfBase64, summary?}
@@ -27,6 +28,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const { data } = await supabase.auth.getUser();
   const to = data.user?.email;
   if (!to) return res.status(401).json({ error: 'Sign in to continue.' });
+  if (!isSuperAdmin(data.user)) return res.status(403).json({ error: 'Administrators only during the beta.' });
 
   const key = process.env.RESEND_API_KEY?.trim();
   if (!key) return res.status(503).json({ error: 'Email is not configured.' });

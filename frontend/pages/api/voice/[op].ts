@@ -21,7 +21,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const method = OPS[op];
   if (!method) return res.status(404).json({ error: 'Not found' });
   if (req.method !== method) return res.status(405).json({ error: 'Method not allowed' });
-  const auth = await backendAuthHeaders(req, res);
+  const auth = await backendAuthHeaders(req, res, { superAdminOnly: true });
   if (!auth) return;
 
   let body: string | undefined;
