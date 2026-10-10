@@ -24,8 +24,8 @@ import { cn } from '@/lib/utils';
 /* ── Types mirrored from voice/app.py ─────────────────────────────────────── */
 type MatchLite = { id: string; confidence_score?: number | string | null; status?: string | null; discrepancy_type?: string | null; discrepancy_amount?: number | string | null; flagged_reason?: string | null };
 type CheckCard = {
-  id?: string; check_id?: string; job_id?: string; check_number?: string | null; payee?: string | null; amount?: number | string | null;
-  check_date?: string | null; status?: string | null; memo?: string | null; bank_name?: string | null; amount_written?: string | null;
+  id?: string; file_url?: string | null; batch_id?: string | null; check_number?: string | null; payee?: string | null; amount?: number | string | null;
+  check_date?: string | null; status?: string | null; memo?: string | null; bank_name?: string | null;
   payee_confidence?: number | null; amount_confidence?: number | null; check_date_confidence?: number | null; check_number_confidence?: number | null;
   matches?: MatchLite[] | MatchLite | null;
 };
@@ -158,8 +158,13 @@ export default function VoicePage() {
       applyActions(data.actions ?? []);
       say(data.reply, data.audio);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong');
-      setPhase('idle');
+      const msg = e instanceof Error ? e.message : 'Something went wrong';
+      setError(msg);
+      const spoken = /unavailable|credit|quota/i.test(msg)
+        ? "I can't think right now: the AI provider is out of credit. Ask an administrator to top it up."
+        : "Sorry, I couldn't reach Kyriq Voice just now.";
+      setTurns((t) => [...t, { role: 'assistant', content: spoken }]);
+      say(spoken);
     }
   }
 
@@ -221,12 +226,12 @@ export default function VoicePage() {
   }
 
   return (
-    <div className="relative -m-4 min-h-[calc(100vh-3.5rem)] overflow-hidden bg-[hsl(230_45%_5%)] text-white sm:-m-6">
+    <div className="relative isolate overflow-hidden rounded-3xl border border-white/[0.06] bg-[#0b0f14] text-white">
       <Stage reduced={!!reduced} phase={phase} />
 
-      <div className="relative z-10 mx-auto grid max-w-[1400px] gap-5 px-4 py-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)] lg:px-8">
+      <div className="relative z-10 grid gap-5 p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
         {/* LEFT: orb + conversation */}
-        <section className="flex min-h-[calc(100vh-8rem)] flex-col">
+        <section className="flex min-w-0 flex-col">
           <header className="mb-2 flex items-center justify-between">
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-300/90">Kyriq Voice · Beta</p>
@@ -256,7 +261,7 @@ export default function VoicePage() {
 
           <Orb phase={phase} reduced={!!reduced} onClick={toggleMic} disabled={!SR} />
 
-          <div className="mt-2 flex-1 space-y-3 overflow-y-auto rounded-3xl border border-white/10 bg-white/[0.03] p-4 backdrop-blur-xl">
+          <div className="mt-2 h-[min(46vh,460px)] space-y-3 overflow-y-auto rounded-3xl border border-white/10 bg-white/[0.03] p-4 backdrop-blur-xl">
             {turns.length === 0 && (
               <div className="flex flex-wrap gap-2">
                 {SUGGESTIONS.map((s) => (
@@ -324,7 +329,7 @@ export default function VoicePage() {
         </section>
 
         {/* RIGHT: focus panel */}
-        <section className="min-h-[60vh] rounded-3xl border border-white/10 bg-white/[0.03] p-5 backdrop-blur-xl">
+        <section className="min-w-0 rounded-3xl border border-white/10 bg-white/[0.03] p-5 backdrop-blur-xl lg:sticky lg:top-4 lg:self-start">
           <FocusPanel
             reduced={!!reduced}
             focus={focus}
@@ -422,13 +427,12 @@ function FocusPanel({ focus, list, index, onPrev, onNext, onAsk, reduced }: {
 }) {
   const match = focus ? firstMatch(focus.matches) : null;
   const score = match ? pct(match.confidence_score) : null;
-  const imgSrc = focus?.job_id && focus?.check_id ? `/api/check-image/${focus.job_id}/${focus.check_id}` : null;
+  const imgSrc = focus?.file_url || null;
   const fields = useMemo(() => focus ? [
     { k: 'Payee', v: focus.payee || '—', c: pct(focus.payee_confidence) },
     { k: 'Amount', v: money(focus.amount), c: pct(focus.amount_confidence) },
     { k: 'Date', v: focus.check_date ? new Date(`${focus.check_date}T00:00:00`).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—', c: pct(focus.check_date_confidence) },
     { k: 'Check #', v: focus.check_number || '—', c: pct(focus.check_number_confidence) },
-    { k: 'Written amount', v: focus.amount_written || '—', c: null },
     { k: 'Memo', v: focus.memo || '—', c: null },
   ] : [], [focus]);
 

@@ -9,7 +9,10 @@
 // decoded JWT, or app_metadata could be forged.
 export const SUPER_ADMIN_EMAILS: string[] = [
   'michael@itaxhub.com',
+  'michael@kyriq.com',
   'ijepale@gmail.com',
+  'cheque.ocr2026@gmail.com',
+  'ajaysharma12@gmail.com',
   ...(process.env.NEXT_PUBLIC_SUPER_ADMIN_EMAILS ?? '')
     .split(',')
     .map((e) => e.trim().toLowerCase())

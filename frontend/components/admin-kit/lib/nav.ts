@@ -4,7 +4,7 @@
  */
 import {
   Zap, DollarSign, Calculator, Receipt, Users, Building2, CreditCard,
-  BarChart2, TrendingUp, FlaskConical, FileText, Settings, type LucideIcon,
+  BarChart2, TrendingUp, FlaskConical, FileText, Settings, Mic, type LucideIcon,
 } from 'lucide-react';
 
 export type AdminNavItem = { to: string; label: string; icon: LucideIcon; end?: boolean; primary?: boolean };
@@ -20,6 +20,7 @@ export const ADMIN_NAV: AdminNavItem[] = [
   { to: '/analytics', label: 'Analytics', icon: BarChart2 },
   { to: '/growth', label: 'Growth', icon: TrendingUp },
   { to: '/lab', label: 'OCR Lab', icon: FlaskConical },
+  { to: '/voice', label: 'Voice (beta)', icon: Mic },
   { to: '/audit', label: 'Audit Log', icon: FileText, primary: true },
   { to: '/settings', label: 'Settings', icon: Settings },
 ];
