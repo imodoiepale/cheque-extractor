@@ -213,6 +213,9 @@ async function main() {
           name: productName,
           description: `${plan.includedChecks.toLocaleString('en-US')} processed cheques per month, then $${plan.overage.toFixed(2)} per additional cheque.`,
           metadata: { kyriq_plan: plan.key },
+          // Stripe Managed Payments (on by default for this account) rejects
+          // Checkout for products without a tax code. Business-use SaaS.
+          tax_code: 'txcd_10103001',
         });
         console.log(`  created product  ${productName}  (${product.id})`);
       } else {

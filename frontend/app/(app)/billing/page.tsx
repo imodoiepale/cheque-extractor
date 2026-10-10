@@ -51,6 +51,13 @@ const PLANS = [
   { name: 'Firm',         monthly: 1299, annual: 14289, includedChecks: 10000, overage: 0.20, popular: false },
 ] as const;
 
+/** Display name -> Stripe plan key (keys are what lib/billing/plans.ts and the API use). */
+const PLAN_KEY: Record<(typeof PLANS)[number]['name'], 'essential' | 'professional' | 'scale'> = {
+  Starter: 'essential',
+  Professional: 'professional',
+  Firm: 'scale',
+};
+
 /** Billing facts with no source yet. Shown as pending, never as a value. */
 const PENDING_FIELDS = [
   'Payment status',
@@ -994,11 +1001,16 @@ export default function BillingPage() {
           <div>
             <GlassCardTitle className="text-base">Plans</GlassCardTitle>
             <p className="mt-0.5 text-xs text-ink-faint">
-              Published pricing. Checkout is not connected yet, so nothing here can be purchased
-              in-app.
+              {sub?.subscription?.stripeSubscriptionId
+                ? 'You are subscribed. Change plans from the Subscription card above.'
+                : 'Pick a plan to continue after your trial. Payment is handled securely by Stripe; access starts once Stripe confirms it.'}
             </p>
           </div>
-          <Badge tone="warning" size="sm">Checkout not built</Badge>
+          {sub?.stripe?.configured === false ? (
+            <Badge tone="warning" size="sm">Payments unavailable</Badge>
+          ) : (
+            <Badge tone="success" size="sm">Secure checkout by Stripe</Badge>
+          )}
         </div>
 
         <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -1031,9 +1043,38 @@ export default function BillingPage() {
                   <dd className="nums font-medium">${plan.overage.toFixed(2)} each</dd>
                 </div>
               </dl>
+              {!sub?.subscription?.stripeSubscriptionId && sub?.stripe?.configured !== false && (
+                <div className="mt-4 grid gap-2">
+                  <Button
+                    size="sm"
+                    variant={plan.popular ? 'primary' : 'secondary'}
+                    loading={busy === `checkout:${PLAN_KEY[plan.name]}`}
+                    disabled={!!busy}
+                    onClick={() => startCheckout(PLAN_KEY[plan.name])}
+                  >
+                    Subscribe monthly
+                  </Button>
+                  {sub?.stripe?.annualEnabled && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      loading={busy === `annual:${PLAN_KEY[plan.name]}`}
+                      disabled={!!busy}
+                      onClick={() => startAnnual(PLAN_KEY[plan.name])}
+                    >
+                      Pay annually (1 month free)
+                    </Button>
+                  )}
+                </div>
+              )}
             </GlassPanel>
           ))}
         </div>
+        {!sub?.subscription?.stripeSubscriptionId && actionError && (
+          <p role="alert" className="mt-3 rounded-tile border border-error-border bg-error-bg px-3 py-2 text-xs text-error-text">
+            {actionError}
+          </p>
+        )}
       </GlassCard>
 
       {/* Still unsourced, and shown only while that is true. */}
