@@ -21,7 +21,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const r = await fetch(`${VOICE_URL}/chat`, {
       method: 'POST',
       headers: { ...auth, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages, speak: req.body?.speak !== false }),
+      body: JSON.stringify({ messages, speak: req.body?.speak !== false, focus: req.body?.focus ?? null }),
     });
     const text = await r.text();
     res.status(r.status).setHeader('Content-Type', 'application/json').send(text || '{}');

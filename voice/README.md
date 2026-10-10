@@ -23,11 +23,21 @@ session before forwarding.
 | `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` | session check and data |
 | `OPENAI_API_KEY` | the agent (model `VOICE_MODEL`, default `gpt-4.1-mini`) |
 | `FISH_AUDIO_API_KEY`, `FISH_VOICE_ID` | spoken replies; without them the browser voice is used |
+| `FISH_MODEL` | Fish voice model, default `s2.1-pro` (or `s2-pro`, `s2.1-pro-free`) |
 | `VOICE_URL` (on the frontend) | where the proxy finds this service |
 
 ## Run
 
     cd voice && uvicorn app:app --port 3095
+
+## What it can do
+
+- **Look up**: find checks by payee, number, amount and date ranges, status; summarize matches; list issues.
+- **Show**: put a check on screen (image, extracted fields with confidence, match score); step through lists with next/previous.
+- **Propose**: approve one match, approve all exact matches, flag with a reason. The screen shows a confirmation card; only the user's click calls `/api/matches/...` under their own session and role.
+- **Report**: build a branded PDF (jsPDF, `frontend/lib/voice/report-pdf.ts`), download it, or email it to the signed-in user (`/api/voice/email-report`).
+
+The conversation design is `SCRIPT.md`, loaded as the system prompt.
 
 ## Next
 

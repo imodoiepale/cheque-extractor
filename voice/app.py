@@ -1,19 +1,23 @@
 """
-Kyriq Voice: a conversational agent over a firm's own reconciliation data.
+Kyriq Voice: a conversational reconciliation agent over a firm's own data.
 
-    POST /chat   {messages: [{role, content}], speak?: bool}
+    POST /chat   {messages: [{role, content}], speak?: bool, focus?: {check_number}}
                  Authorization: Bearer <user's Supabase access token>
-    ->           {reply, tools: [{name, args, rows}], audio: base64 mp3 | null}
+    ->           {reply, tools, actions, audio}
 
-Self-contained on purpose (own Dockerfile, no import from backend/), so it can
-run on Railway today and move to a VPS unchanged.
+Three kinds of tools:
+  LOOK UP  search_checks, get_check, summarize, list_issues. Read-only
+           PostgREST calls made with the CALLER's token, so RLS scopes them to
+           the caller's firm.
+  SHOW     show_check, show_list, next_check, previous_check. They only drive
+           the screen (actions returned to the browser).
+  PROPOSE  approve_match, approve_all_exact, flag_check, generate_report. They
+           change nothing here. The browser shows a confirmation card, and only
+           the user's click calls the app's own approve / flag / report routes
+           under the user's session and role. The agent can never mutate data.
 
-Isolation: every tool queries Supabase PostgREST with the CALLER's token and
-the anon key, never the service role, so row-level security (tenant_id =
-user_tenant_id()) decides what the agent can see. The tools are read-only;
-nothing here can approve, clear or change a check.
-
-Run locally:  uvicorn app:app --port 3095   (env: see README in this folder)
+Self-contained (own Dockerfile, no import from backend/) so it can run on
+Railway today and move to a VPS unchanged. Conversation design: SCRIPT.md.
 """
 from __future__ import annotations
 
@@ -21,7 +25,7 @@ import base64
 import json
 import os
 import time
-from typing import Any
+from typing import Any, Callable
 
 import requests
 from fastapi import FastAPI, HTTPException, Request
@@ -34,7 +38,8 @@ SB_ANON = os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY", "")
 MODEL = os.environ.get("VOICE_MODEL", "gpt-4.1-mini")
 FISH_KEY = os.environ.get("FISH_AUDIO_API_KEY", "")
 FISH_VOICE = os.environ.get("FISH_VOICE_ID", "")
-MAX_TOOL_ROUNDS = 4
+FISH_MODEL = os.environ.get("FISH_MODEL", "s2.1-pro")  # or s2-pro / s2.1-pro-free
+MAX_TOOL_ROUNDS = 5
 
 app = FastAPI(title="Kyriq Voice")
 app.add_middleware(
@@ -65,8 +70,17 @@ def _user(token: str) -> dict:
     return user
 
 
-# ── Tools: read-only, as the caller ────────────────────────────────────────
-CHECK_COLS = "check_number,payee,amount,check_date,status,confidence_summary,job_id"
+# ── Data access: read-only, as the caller ──────────────────────────────────
+CHECK_COLS = "id,check_id,job_id,check_number,payee,amount,check_date,status,confidence_summary"
+DETAIL_COLS = (
+    f"{CHECK_COLS},memo,bank_name,amount_written,payee_confidence,amount_confidence,"
+    "check_date_confidence,check_number_confidence,"
+    "matches(id,confidence_score,status,discrepancy_type,discrepancy_amount,flagged_reason)"
+)
+ISSUE_SELECT = (
+    "id,confidence_score,status,discrepancy_type,discrepancy_amount,flagged_reason,"
+    "checks(id,check_id,job_id,check_number,payee,amount,check_date)"
+)
 
 
 def _rest(token: str, path: str, params: dict[str, str]) -> list[dict]:
@@ -81,6 +95,13 @@ def _rest(token: str, path: str, params: dict[str, str]) -> list[dict]:
     return r.json()
 
 
+def _limit(n: Any, cap: int = 50) -> str:
+    try:
+        return str(max(1, min(int(n), cap)))
+    except (TypeError, ValueError):
+        return "10"
+
+
 def search_checks(token: str, payee: str | None = None, check_number: str | None = None,
                   amount_min: float | None = None, amount_max: float | None = None,
                   date_from: str | None = None, date_to: str | None = None,
@@ -88,7 +109,7 @@ def search_checks(token: str, payee: str | None = None, check_number: str | None
     """Builds the PostgREST filter from whatever the user asked for.
     ponytail: structured filters only, no free-form SQL. Upgrade path is a
     read-only Postgres role over tenant views with a statement_timeout."""
-    p: dict[str, str] = {"select": CHECK_COLS, "order": "check_date.desc.nullslast", "limit": str(max(1, min(int(limit), 50)))}
+    p: dict[str, str] = {"select": CHECK_COLS, "order": "check_date.desc.nullslast", "limit": _limit(limit)}
     if payee:
         p["payee"] = f"ilike.*{payee.replace('*', '')}*"
     if check_number:
@@ -110,11 +131,7 @@ def search_checks(token: str, payee: str | None = None, check_number: str | None
 
 
 def get_check(token: str, check_number: str) -> list[dict]:
-    return _rest(token, "checks", {
-        "select": f"{CHECK_COLS},memo,bank_name,matches(confidence_score,status,discrepancy_type,discrepancy_amount,flagged_reason)",
-        "check_number": f"eq.{check_number}",
-        "limit": "5",
-    })
+    return _rest(token, "checks", {"select": DETAIL_COLS, "check_number": f"eq.{check_number}", "limit": "5"})
 
 
 def summarize(token: str) -> list[dict]:
@@ -133,62 +150,173 @@ def summarize(token: str) -> list[dict]:
 
 
 def list_issues(token: str, kind: str = "discrepancy", limit: int = 10) -> list[dict]:
-    sel = "confidence_score,status,discrepancy_type,discrepancy_amount,flagged_reason,checks(check_number,payee,amount,check_date)"
-    p = {"select": sel, "limit": str(max(1, min(int(limit), 50))), "order": "confidence_score.asc"}
+    p = {"select": ISSUE_SELECT, "limit": _limit(limit), "order": "confidence_score.asc"}
     if kind == "low_confidence":
         p["confidence_score"] = "lt.90"
-    elif kind in ("discrepancy", "flagged", "unmatched", "pending"):
+    elif kind == "exact":
+        p["confidence_score"] = "gte.100"
+        p["order"] = "created_at.desc"
+    elif kind in ("discrepancy", "flagged", "unmatched", "pending", "matched", "approved"):
         p["status"] = f"eq.{kind}"
     return _rest(token, "matches", p)
 
 
-TOOLS = {"search_checks": search_checks, "get_check": get_check, "summarize": summarize, "list_issues": list_issues}
+# ── SHOW and PROPOSE: return actions for the browser, change nothing ───────
+class _Act:
+    """Collects the actions a turn produces; each tool call appends to it."""
+
+    def __init__(self) -> None:
+        self.items: list[dict] = []
+
+    def add(self, kind: str, **data: Any) -> dict:
+        self.items.append({"kind": kind, **data})
+        return {"ok": True, "shown_to_user": kind}
+
+
+def _check_card(token: str, check_number: str) -> dict | None:
+    rows = get_check(token, check_number)
+    return rows[0] if rows and "error" not in rows[0] else None
+
+
+def show_check(token: str, act: _Act, check_number: str) -> list[dict]:
+    card = _check_card(token, check_number)
+    if not card:
+        return [{"error": f"no check {check_number} in this firm"}]
+    act.add("show_check", check=card)
+    return [card]
+
+
+def show_list(token: str, act: _Act, kind: str = "discrepancy", limit: int = 20) -> list[dict]:
+    rows = list_issues(token, kind, limit)
+    if rows and "error" in rows[0]:
+        return rows
+    act.add("show_list", title=_LIST_TITLES.get(kind, kind), list_kind=kind, rows=rows)
+    return [{"count": len(rows), "first": rows[0] if rows else None}]
+
+
+def next_check(token: str, act: _Act) -> list[dict]:
+    return [act.add("nav", direction="next")]
+
+
+def previous_check(token: str, act: _Act) -> list[dict]:
+    return [act.add("nav", direction="previous")]
+
+
+def approve_match(token: str, act: _Act, check_number: str) -> list[dict]:
+    card = _check_card(token, check_number)
+    match = (card or {}).get("matches") or []
+    match = match[0] if isinstance(match, list) and match else (match or None)
+    if not card or not match:
+        return [{"error": f"check {check_number} has no match to approve"}]
+    act.add("confirm", action="approve_match", matchId=match["id"],
+            label=f"Approve check #{check_number} to {card.get('payee') or 'unknown payee'} for ${float(card.get('amount') or 0):,.2f} ({float(match.get('confidence_score') or 0):.0f}% match)")
+    return [{"proposed": True, "awaiting_user_confirmation": True}]
+
+
+def approve_all_exact(token: str, act: _Act) -> list[dict]:
+    exact = list_issues(token, "exact", 1000)
+    exact = [m for m in exact if "error" not in m and m.get("status") not in ("approved",)]
+    if not exact:
+        return [{"proposed": False, "reason": "no unapproved 100% matches"}]
+    act.add("confirm", action="approve_all_exact", minConfidence=100,
+            label=f"Approve all {len(exact)} exact (100%) matches together")
+    return [{"proposed": True, "count": len(exact), "awaiting_user_confirmation": True}]
+
+
+def flag_check(token: str, act: _Act, check_number: str, reason: str) -> list[dict]:
+    card = _check_card(token, check_number)
+    match = (card or {}).get("matches") or []
+    match = match[0] if isinstance(match, list) and match else (match or None)
+    if not match:
+        return [{"error": f"check {check_number} has no match to flag"}]
+    act.add("confirm", action="flag", matchId=match["id"], reason=reason[:200],
+            label=f"Flag check #{check_number}: {reason[:120]}")
+    return [{"proposed": True, "awaiting_user_confirmation": True}]
+
+
+_LIST_TITLES = {
+    "discrepancy": "Discrepancies", "flagged": "Flagged", "unmatched": "Unmatched", "pending": "Pending review",
+    "low_confidence": "Below 90% confidence", "exact": "Exact (100%) matches", "matched": "Matched", "approved": "Approved",
+}
+_REPORTS = {
+    "discrepancies": ("Discrepancy report", "discrepancy"),
+    "needs_attention": ("Needs-attention report", "low_confidence"),
+    "exact_matches": ("Exact-match report", "exact"),
+    "approved": ("Approved checks report", "approved"),
+    "flagged": ("Flagged checks report", "flagged"),
+}
+
+
+def generate_report(token: str, act: _Act, report: str = "needs_attention", email: bool = False) -> list[dict]:
+    """Rows come from the database; the browser renders the PDF (jsPDF) and,
+    on confirmation, emails it to the signed-in user only."""
+    title, kind = _REPORTS.get(report, _REPORTS["needs_attention"])
+    rows = list_issues(token, kind, 1000)
+    if rows and "error" in rows[0]:
+        return rows
+    summary = summarize(token)[0]
+    act.add("report", report=report, title=title, rows=rows, summary=summary, email=bool(email))
+    return [{"rows": len(rows), "title": title, "email": bool(email)}]
+
+
+Tool = Callable[..., list[dict]]
+READ_TOOLS: dict[str, Tool] = {"search_checks": search_checks, "get_check": get_check, "summarize": summarize, "list_issues": list_issues}
+ACT_TOOLS: dict[str, Tool] = {
+    "show_check": show_check, "show_list": show_list, "next_check": next_check, "previous_check": previous_check,
+    "approve_match": approve_match, "approve_all_exact": approve_all_exact, "flag_check": flag_check,
+    "generate_report": generate_report,
+}
+TOOLS: dict[str, Tool] = {**READ_TOOLS, **ACT_TOOLS}
+
+_KINDS = ["discrepancy", "flagged", "unmatched", "pending", "low_confidence", "exact", "matched", "approved"]
+
+
+def _fn(name: str, description: str, props: dict | None = None, required: list[str] | None = None) -> dict:
+    return {"type": "function", "function": {"name": name, "description": description, "parameters": {
+        "type": "object", "properties": props or {}, **({"required": required} if required else {})}}}
+
 
 TOOL_SCHEMAS = [
-    {"type": "function", "function": {
-        "name": "search_checks",
-        "description": "Find the firm's checks by any mix of payee (partial), check number, amount range, date range (YYYY-MM-DD) and review status.",
-        "parameters": {"type": "object", "properties": {
-            "payee": {"type": "string"}, "check_number": {"type": "string"},
-            "amount_min": {"type": "number"}, "amount_max": {"type": "number"},
-            "date_from": {"type": "string"}, "date_to": {"type": "string"},
-            "status": {"type": "string", "enum": ["pending_review", "approved", "rejected", "exported", "duplicate", "error"]},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 50}}}}},
-    {"type": "function", "function": {
-        "name": "get_check",
-        "description": "Full details of one check by its number, including its QuickBooks match score, status and any discrepancy.",
-        "parameters": {"type": "object", "properties": {"check_number": {"type": "string"}}, "required": ["check_number"]}}},
-    {"type": "function", "function": {
-        "name": "summarize",
-        "description": "Counts of the firm's matches by status, how many are exact (100%) and how many score below 90%.",
-        "parameters": {"type": "object", "properties": {}}}},
-    {"type": "function", "function": {
-        "name": "list_issues",
-        "description": "Matches that need attention: discrepancies, flagged, unmatched, pending, or low confidence (below 90%).",
-        "parameters": {"type": "object", "properties": {
-            "kind": {"type": "string", "enum": ["discrepancy", "flagged", "unmatched", "pending", "low_confidence"]},
-            "limit": {"type": "integer", "minimum": 1, "maximum": 50}}}}},
+    _fn("search_checks", "Find the firm's checks by any mix of payee (partial), check number, amount range, date range (YYYY-MM-DD) and review status.", {
+        "payee": {"type": "string"}, "check_number": {"type": "string"},
+        "amount_min": {"type": "number"}, "amount_max": {"type": "number"},
+        "date_from": {"type": "string"}, "date_to": {"type": "string"},
+        "status": {"type": "string", "enum": ["pending_review", "approved", "rejected", "exported", "duplicate", "error"]},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 50}}),
+    _fn("get_check", "Full details of one check by number: extracted fields with confidences, and its QuickBooks match score, status and discrepancy.",
+        {"check_number": {"type": "string"}}, ["check_number"]),
+    _fn("summarize", "Counts of the firm's matches by status, how many are exact (100%) and how many are below 90%."),
+    _fn("list_issues", "Matches by category: discrepancy, flagged, unmatched, pending, low_confidence (<90%), exact (100%), matched, approved.", {
+        "kind": {"type": "string", "enum": _KINDS}, "limit": {"type": "integer", "minimum": 1, "maximum": 50}}),
+    _fn("show_check", "Put one check on screen: its image and extracted fields. Use whenever the user wants to see, open, pull up or read a check.",
+        {"check_number": {"type": "string"}}, ["check_number"]),
+    _fn("show_list", "Put a list of checks on screen so the user can step through them with next/previous.", {
+        "kind": {"type": "string", "enum": _KINDS}, "limit": {"type": "integer", "minimum": 1, "maximum": 50}}),
+    _fn("next_check", "Move the on-screen list to the next check."),
+    _fn("previous_check", "Move the on-screen list to the previous check."),
+    _fn("approve_match", "PROPOSE approving one check's match. Shows a confirmation card; nothing changes unless the user confirms.",
+        {"check_number": {"type": "string"}}, ["check_number"]),
+    _fn("approve_all_exact", "PROPOSE approving every unapproved 100% match together. Shows a confirmation card; nothing changes unless the user confirms."),
+    _fn("flag_check", "PROPOSE flagging a check's match for review with a reason. Shows a confirmation card.",
+        {"check_number": {"type": "string"}, "reason": {"type": "string"}}, ["check_number", "reason"]),
+    _fn("generate_report", "Build a PDF report on screen (downloadable); with email=true, offer to email it to the signed-in user.", {
+        "report": {"type": "string", "enum": list(_REPORTS)}, "email": {"type": "boolean"}}),
 ]
 
-SYSTEM = (
-    "You are Kyriq Voice, a reconciliation assistant for a bookkeeping firm. Answer only from tool results; "
-    "never invent checks, amounts or counts. Replies are spoken aloud: keep them to two or three short sentences, "
-    "say amounts like 'twelve hundred eighty-four dollars and sixty cents' only when asked to read a check, otherwise "
-    "use plain numbers. You can look things up but cannot approve, clear or change anything; if asked to, say the "
-    "user can do it on the Review screen. If a tool returns an error, say you could not reach the data."
-)
+_SCRIPT = os.path.join(os.path.dirname(__file__), "SCRIPT.md")
+SYSTEM = open(_SCRIPT, encoding="utf-8").read() if os.path.exists(_SCRIPT) else "You are Kyriq Voice."
 
 
 # ── TTS ────────────────────────────────────────────────────────────────────
 def _speak(text: str) -> str | None:
-    if not FISH_KEY:
+    if not FISH_KEY or not text:
         return None  # the browser falls back to speechSynthesis
-    body: dict[str, Any] = {"text": text, "format": "mp3"}
+    body: dict[str, Any] = {"text": text, "format": "mp3", "latency": "balanced"}
     if FISH_VOICE:
         body["reference_id"] = FISH_VOICE
     try:
         r = requests.post("https://api.fish.audio/v1/tts", json=body,
-                          headers={"Authorization": f"Bearer {FISH_KEY}", "model": "s1"}, timeout=30)
+                          headers={"Authorization": f"Bearer {FISH_KEY}", "model": FISH_MODEL}, timeout=30)
         return base64.b64encode(r.content).decode() if r.status_code == 200 else None
     except requests.RequestException:
         return None
@@ -203,11 +331,52 @@ class Msg(BaseModel):
 class ChatIn(BaseModel):
     messages: list[Msg]
     speak: bool = True
+    focus: dict | None = None  # the check currently on screen, so "approve this one" works
 
 
 @app.get("/health")
 def health():
-    return {"ok": True, "llm": bool(_llm), "tts": bool(FISH_KEY)}
+    return {"ok": True, "llm": bool(_llm), "tts": bool(FISH_KEY), "tts_model": FISH_MODEL if FISH_KEY else None}
+
+
+def run_turn(token: str, body: ChatIn) -> dict:
+    if not _llm:
+        raise HTTPException(503, "OPENAI_API_KEY is not configured")
+    system = SYSTEM
+    if body.focus and body.focus.get("check_number"):
+        system += f"\n\nOn screen right now: check #{body.focus['check_number']}. 'This one', 'it' or 'that check' means this check."
+    # ponytail: history comes from the client (last 12 turns); persistent
+    # per-tenant memory (memory_entities / memory_edges in Supabase) is next.
+    msgs: list[dict[str, Any]] = [{"role": "system", "content": system}]
+    msgs += [{"role": m.role, "content": m.content[:2000]} for m in body.messages[-12:] if m.role in ("user", "assistant")]
+
+    act = _Act()
+    used: list[dict] = []
+    for _ in range(MAX_TOOL_ROUNDS):
+        try:
+            resp = _llm.chat.completions.create(model=MODEL, messages=msgs, tools=TOOL_SCHEMAS, temperature=0.3)
+        except Exception as e:  # quota, auth or network: say so instead of a 500
+            raise HTTPException(503, f"The AI provider is unavailable ({type(e).__name__}). Check the OpenAI key and credits.")
+        msg = resp.choices[0].message
+        if not msg.tool_calls:
+            reply = (msg.content or "").strip()
+            return {"reply": reply, "tools": used, "actions": act.items, "audio": _speak(reply) if body.speak else None}
+        msgs.append({"role": "assistant", "content": msg.content, "tool_calls": [tc.model_dump() for tc in msg.tool_calls]})
+        for tc in msg.tool_calls:
+            name = tc.function.name
+            try:
+                args = json.loads(tc.function.arguments or "{}")
+                if name in READ_TOOLS:
+                    result = READ_TOOLS[name](token, **args)
+                elif name in ACT_TOOLS:
+                    result = ACT_TOOLS[name](token, act, **args)
+                else:
+                    result = [{"error": "unknown tool"}]
+            except (TypeError, ValueError, KeyError) as e:
+                args, result = {}, [{"error": f"bad arguments: {e}"}]
+            used.append({"name": name, "args": args, "rows": len(result)})
+            msgs.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result[:25], default=str)})
+    return {"reply": "That took too many steps. Could you ask a narrower question?", "tools": used, "actions": act.items, "audio": None}
 
 
 @app.post("/chat")
@@ -217,32 +386,4 @@ def chat(body: ChatIn, request: Request):
         raise HTTPException(401, "Missing session")
     token = auth[7:]
     _user(token)
-    if not _llm:
-        raise HTTPException(503, "OPENAI_API_KEY is not configured")
-
-    # ponytail: history comes from the client (last 12 turns); persistent
-    # per-tenant memory (memory_entities / memory_edges in Supabase) is next.
-    msgs: list[dict[str, Any]] = [{"role": "system", "content": SYSTEM}]
-    msgs += [{"role": m.role, "content": m.content[:2000]} for m in body.messages[-12:] if m.role in ("user", "assistant")]
-
-    used: list[dict] = []
-    for _ in range(MAX_TOOL_ROUNDS):
-        try:
-            resp = _llm.chat.completions.create(model=MODEL, messages=msgs, tools=TOOL_SCHEMAS, temperature=0.2)
-        except Exception as e:  # quota, auth or network: say so instead of a 500
-            raise HTTPException(503, f"The AI provider is unavailable ({type(e).__name__}). Check the OpenAI key and credits.")
-        msg = resp.choices[0].message
-        if not msg.tool_calls:
-            reply = (msg.content or "").strip()
-            return {"reply": reply, "tools": used, "audio": _speak(reply) if body.speak else None}
-        msgs.append({"role": "assistant", "content": msg.content, "tool_calls": [tc.model_dump() for tc in msg.tool_calls]})
-        for tc in msg.tool_calls:
-            fn = TOOLS.get(tc.function.name)
-            try:
-                args = json.loads(tc.function.arguments or "{}")
-                result = fn(token, **args) if fn else [{"error": "unknown tool"}]
-            except (TypeError, ValueError) as e:
-                result = [{"error": f"bad arguments: {e}"}]
-            used.append({"name": tc.function.name, "args": args if fn else {}, "rows": result[:20]})
-            msgs.append({"role": "tool", "tool_call_id": tc.id, "content": json.dumps(result[:20], default=str)})
-    return {"reply": "That took too many lookups. Could you ask a narrower question?", "tools": used, "audio": None}
+    return run_turn(token, body)

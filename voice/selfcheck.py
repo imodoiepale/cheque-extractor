@@ -27,3 +27,22 @@ assert p["limit"] == "50"                                   # capped
 app.list_issues("tok", kind="low_confidence")
 assert seen["path"] == "matches" and seen["params"]["confidence_score"] == "lt.90"
 print("voice selfcheck: ok")
+
+# PROPOSE tools never write: they only append a confirm action for the browser.
+fake_card = [{"check_number": "1042", "payee": "Harbor", "amount": "2450.00",
+              "matches": [{"id": "m1", "confidence_score": 86}]}]
+app.get_check = lambda token, n: fake_card
+act = app._Act()
+app.approve_match("tok", act, "1042")
+assert act.items == [{"kind": "confirm", "action": "approve_match", "matchId": "m1",
+                      "label": "Approve check #1042 to Harbor for $2,450.00 (86% match)"}], act.items
+app.flag_check("tok", act, "1042", "amount looks wrong")
+assert act.items[-1]["action"] == "flag" and act.items[-1]["matchId"] == "m1"
+print("voice selfcheck: propose tools ok")
+
+# An action's own fields never overwrite its kind.
+app.list_issues = lambda token, kind="x", limit=10: [{"id": "m2"}]
+act = app._Act()
+app.show_list("tok", act, kind="discrepancy")
+assert act.items[0]["kind"] == "show_list" and act.items[0]["list_kind"] == "discrepancy", act.items
+print("voice selfcheck: actions ok")
