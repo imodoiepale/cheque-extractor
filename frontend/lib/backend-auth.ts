@@ -35,3 +35,33 @@ export async function backendAuthHeaders(
   }
   return { Authorization: `Bearer ${token}` };
 }
+
+/**
+ * backendAuthHeaders + tenant ownership of one job. The lookup runs as the
+ * caller (anon key + their token), so check_jobs RLS decides: a job of another
+ * firm is simply not found, and the proxy answers 404 before its service-role
+ * fallbacks (DB reads, storage redirects) ever run.
+ */
+export async function jobAccessHeaders(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  jobId: string | undefined
+): Promise<Record<string, string> | null> {
+  if (!jobId || !/^[A-Za-z0-9_-]{1,80}$/.test(jobId)) {
+    res.status(400).json({ error: 'Invalid job id' });
+    return null;
+  }
+  const headers = await backendAuthHeaders(req, res);
+  if (!headers) return null;
+
+  const asCaller = createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, {
+    cookies: { getAll: () => [], setAll: () => {} },
+    global: { headers },
+  });
+  const { data } = await asCaller.from('check_jobs').select('job_id').eq('job_id', jobId).maybeSingle();
+  if (!data) {
+    res.status(404).json({ error: 'Job not found' });
+    return null;
+  }
+  return headers;
+}

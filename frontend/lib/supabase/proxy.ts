@@ -34,10 +34,6 @@ export async function updateSession(request: NextRequest) {
 
   const { pathname } = request.nextUrl;
 
-  // Debug logging
-  const cookies = request.cookies.getAll();
-  const sbCookies = cookies.filter(c => c.name.startsWith('sb-'));
-  console.log(`[PROXY] ${pathname} | cookies: ${sbCookies.map(c => c.name).join(', ') || 'NONE'} | user: ${user?.email || 'NULL'} | error: ${authError?.message || 'none'}`);
 
   // Public routes - no auth required
   const publicRoutes = [

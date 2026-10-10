@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next'
-import { backendAuthHeaders } from '@/lib/backend-auth'
+import { jobAccessHeaders } from '@/lib/backend-auth'
 import { createClient } from '@supabase/supabase-js'
 
 const PYTHON_API = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090'
@@ -12,7 +12,7 @@ function getServiceClient() {
 }
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-    const auth = await backendAuthHeaders(req, res)
+    const auth = await jobAccessHeaders(req, res, String(req.query.id ?? ''))
     if (!auth) return
 
     const { id } = req.query

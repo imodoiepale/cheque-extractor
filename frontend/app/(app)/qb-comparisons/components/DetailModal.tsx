@@ -383,8 +383,7 @@ export const DetailModal: React.FC<DetailModalProps> = ({ row, onClose, onSave, 
                   if (ext.image_file?.startsWith('http')) return ext.image_file;
 
                   // Priority 4: Backend API endpoint (works even if local files are cleaned up)
-                  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090';
-                  return `${backendUrl}/api/checks/${ext.job_id}/${ext.check_id}/image`;
+                  return `/api/check-image/${ext.job_id}/${ext.check_id}`;
                 })()}
                 alt="Check"
                 className="max-h-96 w-full rounded-input object-contain shadow-contact"
