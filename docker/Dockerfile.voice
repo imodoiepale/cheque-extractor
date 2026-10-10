@@ -1,0 +1,8 @@
+FROM python:3.11-slim
+WORKDIR /app
+COPY voice/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY voice/ .
+ENV PORT=3095
+EXPOSE 3095
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT}"]

@@ -9,6 +9,7 @@ import {
   Scale,
   Users,
   Plug,
+  Mic,
 } from 'lucide-react';
 
 /**
@@ -45,6 +46,7 @@ export const NAV_GROUPS: { label: string | null; items: ShellNavItem[] }[] = [
       { href: '/upload', icon: Upload, label: 'Upload' },
       { href: '/history', icon: List, label: 'History' },
       { href: '/reports', icon: LayoutDashboard, label: 'Reports' },
+      { href: '/voice', icon: Mic, label: 'Voice (beta)' },
     ],
   },
   {
