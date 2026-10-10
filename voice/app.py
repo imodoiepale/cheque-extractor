@@ -38,7 +38,23 @@ SB_ANON = os.environ.get("NEXT_PUBLIC_SUPABASE_ANON_KEY", "")
 MODEL = os.environ.get("VOICE_MODEL", "gpt-4.1-mini")
 FISH_KEY = os.environ.get("FISH_AUDIO_API_KEY", "")
 FISH_VOICE = os.environ.get("FISH_VOICE_ID", "")
-FISH_MODEL = os.environ.get("FISH_MODEL", "s2.1-pro")  # or s2-pro / s2.1-pro-free
+FISH_MODEL = os.environ.get("FISH_MODEL", "s2.1-pro")  # s2.1-pro-free works without API credit
+
+# Curated Fish Audio voices users can pick from. Server-side allowlist: a
+# voice id from the client is only used if it is on this list. Celebrity
+# imitations from the public library are deliberately excluded.
+VOICES = [
+    {"id": "536d3a5e000945adb7038665781a4aca", "name": "Ethan", "gender": "male", "style": "Calm, clear, professional"},
+    {"id": "c5f56a6cc2ec4fa8920cb4c5889a3fb7", "name": "Slax", "gender": "male", "style": "Precise and measured"},
+    {"id": "bf322df2096a46f18c579d0baa36f41d", "name": "Adrian", "gender": "male", "style": "Deep, steady narrator"},
+    {"id": "0b74ead073f2474a904f69033535b98e", "name": "Calm", "gender": "male", "style": "Warm and gentle"},
+    {"id": "933563129e564b19a115bedd57b7406a", "name": "Sarah", "gender": "female", "style": "Soft and conversational"},
+    {"id": "0af969cba6c24e74b5600d6df78e8975", "name": "Narration", "gender": "female", "style": "Authoritative, documentary"},
+    {"id": "2a9605eeafe84974b5b20628d42c0060", "name": "Serene", "gender": "female", "style": "Calm, smooth, friendly"},
+    {"id": "e107ce68d2a64e928c3a674781ce9d56", "name": "Upbeat", "gender": "female", "style": "Bright and confident"},
+]
+_VOICE_IDS = {v["id"] for v in VOICES}
+DEFAULT_VOICE = FISH_VOICE if FISH_VOICE in _VOICE_IDS else VOICES[0]["id"]
 MAX_TOOL_ROUNDS = 5
 
 app = FastAPI(title="Kyriq Voice")
@@ -308,12 +324,11 @@ SYSTEM = open(_SCRIPT, encoding="utf-8").read() if os.path.exists(_SCRIPT) else 
 
 
 # ── TTS ────────────────────────────────────────────────────────────────────
-def _speak(text: str) -> str | None:
+def _speak(text: str, voice_id: str | None = None) -> str | None:
     if not FISH_KEY or not text:
         return None  # the browser falls back to speechSynthesis
-    body: dict[str, Any] = {"text": text, "format": "mp3", "latency": "balanced"}
-    if FISH_VOICE:
-        body["reference_id"] = FISH_VOICE
+    voice = voice_id if voice_id in _VOICE_IDS else DEFAULT_VOICE
+    body: dict[str, Any] = {"text": text[:1500], "format": "mp3", "latency": "balanced", "reference_id": voice}
     try:
         r = requests.post("https://api.fish.audio/v1/tts", json=body,
                           headers={"Authorization": f"Bearer {FISH_KEY}", "model": FISH_MODEL}, timeout=30)
@@ -332,11 +347,35 @@ class ChatIn(BaseModel):
     messages: list[Msg]
     speak: bool = True
     focus: dict | None = None  # the check currently on screen, so "approve this one" works
+    voice_id: str | None = None  # one of VOICES; anything else falls back to the default
 
 
 @app.get("/health")
 def health():
     return {"ok": True, "llm": bool(_llm), "tts": bool(FISH_KEY), "tts_model": FISH_MODEL if FISH_KEY else None}
+
+
+@app.get("/voices")
+def voices():
+    return {"voices": VOICES, "default": DEFAULT_VOICE, "tts": bool(FISH_KEY)}
+
+
+class SpeakIn(BaseModel):
+    voice_id: str
+
+
+@app.post("/speak")
+def speak(body: SpeakIn, request: Request):
+    """Voice preview for the picker. Fixed sample text, so it cannot be used as
+    a general text-to-speech endpoint on Kyriq's credit."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(401, "Missing session")
+    _user(auth[7:])
+    if body.voice_id not in _VOICE_IDS:
+        raise HTTPException(400, "Unknown voice")
+    name = next(v["name"] for v in VOICES if v["id"] == body.voice_id)
+    return {"audio": _speak(f"Hi, I'm {name}. You have three ninety-one exact matches ready, and thirty-seven that need a closer look.", body.voice_id)}
 
 
 def run_turn(token: str, body: ChatIn) -> dict:
@@ -360,7 +399,7 @@ def run_turn(token: str, body: ChatIn) -> dict:
         msg = resp.choices[0].message
         if not msg.tool_calls:
             reply = (msg.content or "").strip()
-            return {"reply": reply, "tools": used, "actions": act.items, "audio": _speak(reply) if body.speak else None}
+            return {"reply": reply, "tools": used, "actions": act.items, "audio": _speak(reply, body.voice_id) if body.speak else None}
         msgs.append({"role": "assistant", "content": msg.content, "tool_calls": [tc.model_dump() for tc in msg.tool_calls]})
         for tc in msg.tool_calls:
             name = tc.function.name

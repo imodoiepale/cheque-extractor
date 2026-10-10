@@ -46,3 +46,15 @@ act = app._Act()
 app.show_list("tok", act, kind="discrepancy")
 assert act.items[0]["kind"] == "show_list" and act.items[0]["list_kind"] == "discrepancy", act.items
 print("voice selfcheck: actions ok")
+
+# Voice allowlist: an unknown id never reaches Fish.
+assert len(app.VOICES) == 8 and len({v["id"] for v in app.VOICES}) == 8
+sent = {}
+app.FISH_KEY = "k"
+class _R: status_code = 200; content = b"mp3"
+app.requests.post = lambda url, json=None, headers=None, timeout=None: sent.update(json) or _R()
+app._speak("hello", "not-a-real-voice")
+assert sent["reference_id"] == app.DEFAULT_VOICE
+app._speak("hello", app.VOICES[5]["id"])
+assert sent["reference_id"] == app.VOICES[5]["id"]
+print("voice selfcheck: voices ok")

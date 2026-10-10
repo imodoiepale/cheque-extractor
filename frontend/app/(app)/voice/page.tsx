@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import {
-  Mic, MicOff, Send, Volume2, VolumeX, ChevronLeft, ChevronRight, Check, Flag, FileDown, Mail, X, Sparkles, Loader2,
+  Mic, MicOff, Send, Volume2, VolumeX, ChevronLeft, ChevronRight, Check, Flag, FileDown, Mail, X, Sparkles, Loader2, Play,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -37,6 +37,8 @@ type Action =
   | { kind: 'confirm'; action: 'approve_match' | 'approve_all_exact' | 'flag'; label: string; matchId?: string; minConfidence?: number; reason?: string }
   | { kind: 'report'; report: string; title: string; rows: IssueRow[]; summary: Record<string, any>; email: boolean };
 type Turn = { role: 'user' | 'assistant'; content: string };
+type VoiceOpt = { id: string; name: string; gender: 'male' | 'female'; style: string };
+const VOICE_KEY = 'kyriq.voice';
 type Phase = 'idle' | 'listening' | 'thinking' | 'speaking';
 type Pending = Extract<Action, { kind: 'confirm' }> & { state: 'open' | 'working' | 'done' | 'failed'; note?: string };
 type ReportCard = Extract<Action, { kind: 'report' }> & { state: 'ready' | 'working' | 'emailed' | 'failed'; note?: string };
@@ -62,11 +64,41 @@ export default function VoicePage() {
   const [single, setSingle] = useState<CheckCard | null>(null);
   const [pending, setPending] = useState<Pending[]>([]);
   const [reports, setReports] = useState<ReportCard[]>([]);
+  const [voices, setVoices] = useState<VoiceOpt[]>([]);
+  const [voiceId, setVoiceId] = useState<string>('');
+  const [previewing, setPreviewing] = useState(false);
   const recRef = useRef<Recognition | null>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   const focus: CheckCard | null = list ? list.rows[index] ?? null : single;
+
+  // Curated Fish Audio voices; the choice is a per-viewer convenience, kept in
+  // localStorage (wrapped: it can throw in private windows).
+  useEffect(() => {
+    fetch('/api/voice/voices').then((r) => (r.ok ? r.json() : null)).then((d) => {
+      if (!d?.voices) return;
+      setVoices(d.voices);
+      let saved = '';
+      try { saved = localStorage.getItem(VOICE_KEY) || ''; } catch { /* storage unavailable */ }
+      setVoiceId(d.voices.some((v: VoiceOpt) => v.id === saved) ? saved : d.default);
+    }).catch(() => {});
+  }, []);
+  function chooseVoice(id: string) {
+    setVoiceId(id);
+    try { localStorage.setItem(VOICE_KEY, id); } catch { /* storage unavailable */ }
+  }
+  async function previewVoice() {
+    if (!voiceId || previewing) return;
+    setPreviewing(true);
+    try {
+      const r = await fetch('/api/voice/speak', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ voice_id: voiceId }) });
+      const d = await r.json().catch(() => ({}));
+      if (d.audio) { audioRef.current?.pause(); const a = new Audio(`data:audio/mpeg;base64,${d.audio}`); audioRef.current = a; a.onended = () => setPreviewing(false); await a.play(); return; }
+      setError(d.detail || d.error || 'Voice preview is unavailable.');
+    } catch { setError('Voice preview is unavailable.'); }
+    setPreviewing(false);
+  }
   useEffect(() => endRef.current?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth' }), [turns, pending, reports, reduced]);
 
   const SR = typeof window !== 'undefined' ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition : null;
@@ -118,7 +150,7 @@ export default function VoicePage() {
       const r = await fetch('/api/voice/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ speak, messages: next, focus: focus ? { check_number: focus.check_number } : null }),
+        body: JSON.stringify({ speak, voice_id: voiceId || null, messages: next, focus: focus ? { check_number: focus.check_number } : null }),
       });
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.detail || data.error || `Voice service error ${r.status}`);
@@ -200,9 +232,26 @@ export default function VoicePage() {
               <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-300/90">Kyriq Voice · Beta</p>
               <h1 className="text-2xl font-bold tracking-tight">Reconcile out loud</h1>
             </div>
-            <button onClick={() => setSpeak((s) => !s)} className="press rounded-full border border-white/10 bg-white/5 p-2.5 text-white/80 hover:bg-white/10" aria-label={speak ? 'Mute spoken replies' : 'Turn on spoken replies'}>
-              {speak ? <Volume2 size={18} /> : <VolumeX size={18} />}
-            </button>
+            <div className="flex items-center gap-2">
+              {voices.length > 0 && (
+                <div className="flex items-center gap-1 rounded-full border border-white/10 bg-white/5 py-1 pl-3 pr-1">
+                  <label htmlFor="voice" className="sr-only">Voice</label>
+                  <select id="voice" value={voiceId} onChange={(e) => chooseVoice(e.target.value)} className="max-w-[170px] bg-transparent text-[13px] text-white/90 outline-none [&>optgroup]:bg-slate-900 [&>optgroup>option]:bg-slate-900">
+                    {(['female', 'male'] as const).map((g) => (
+                      <optgroup key={g} label={g === 'female' ? 'Female voices' : 'Male voices'}>
+                        {voices.filter((v) => v.gender === g).map((v) => <option key={v.id} value={v.id}>{v.name} · {v.style}</option>)}
+                      </optgroup>
+                    ))}
+                  </select>
+                  <button onClick={previewVoice} disabled={previewing} className="press grid h-7 w-7 place-items-center rounded-full bg-white/10 text-white hover:bg-white/20 disabled:opacity-50" aria-label="Preview this voice">
+                    {previewing ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}
+                  </button>
+                </div>
+              )}
+              <button onClick={() => setSpeak((s) => !s)} className="press rounded-full border border-white/10 bg-white/5 p-2.5 text-white/80 hover:bg-white/10" aria-label={speak ? 'Mute spoken replies' : 'Turn on spoken replies'}>
+                {speak ? <Volume2 size={18} /> : <VolumeX size={18} />}
+              </button>
+            </div>
           </header>
 
           <Orb phase={phase} reduced={!!reduced} onClick={toggleMic} disabled={!SR} />
