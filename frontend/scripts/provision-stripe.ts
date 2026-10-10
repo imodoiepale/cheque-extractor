@@ -165,6 +165,34 @@ async function findProductByName(name: string): Promise<any | null> {
   return (r?.data || []).find((p: any) => p.name === name) ?? null;
 }
 
+/**
+ * Metered prices must be backed by a Billing Meter (Stripe API 2025-03-31+).
+ * One meter for every plan: it sums the meter events lib/billing/stripe.ts
+ * sendMeterEvent() posts, keyed by stripe_customer_id with a numeric value
+ * (both are Stripe's default payload keys, so no mapping is needed).
+ */
+const METER_EVENT = (process.env.STRIPE_METER_EVENT_NAME || '').trim() || 'kyriq_checks_processed';
+
+async function findOrCreateMeter(): Promise<string> {
+  const r = await stripe(`/v1/billing/meters?limit=100&status=active`);
+  const found = (r?.data || []).find((m: any) => m.event_name === METER_EVENT);
+  if (found) {
+    console.log(`  reusing meter    ${METER_EVENT}  (${found.id})`);
+    return found.id;
+  }
+  if (!apply) {
+    console.log(`  would create     meter ${METER_EVENT}`);
+    return 'mtr_DRYRUN';
+  }
+  const m = await stripe('/v1/billing/meters', {
+    display_name: 'Kyriq processed checks',
+    event_name: METER_EVENT,
+    default_aggregation: { formula: 'sum' },
+  });
+  console.log(`  created meter    ${METER_EVENT}  (${m.id})`);
+  return m.id;
+}
+
 async function main() {
   await resolveKey();
 
@@ -173,6 +201,7 @@ async function main() {
   const lines: string[] = [];
   let created = 0;
   let reused = 0;
+  const meterId = await findOrCreateMeter();
 
   for (const plan of PLANS) {
     const productName = `Kyriq ${plan.name}`;
@@ -205,7 +234,7 @@ async function main() {
         body: {
           currency: 'usd',
           unit_amount_decimal: (plan.overage * 100).toFixed(4),
-          recurring: { interval: 'month', usage_type: 'metered' },
+          recurring: { interval: 'month', usage_type: 'metered', meter: meterId },
         },
       },
     ];
