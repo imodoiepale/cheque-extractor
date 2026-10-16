@@ -45,6 +45,9 @@ export type { ToastProps } from './toast';
 export { Skeleton, SkeletonText, SkeletonRows, skeletonVariants } from './skeleton';
 export type { SkeletonProps } from './skeleton';
 
+export { EmptyState, ErrorState, friendlyError } from './states';
+export type { EmptyStateProps, ErrorStateProps } from './states';
+
 export { KpiTile, kpiTileVariants } from './kpi-tile';
 export type { KpiTileProps } from './kpi-tile';
 

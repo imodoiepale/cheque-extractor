@@ -10,12 +10,13 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { DeleteConfirmModal } from '@/components/DeleteConfirmModal';
 import {
-  Button, IconButton, Dialog, GlassCard, KpiTile,
+  Button, IconButton, Dialog, GlassCard, KpiTile, EmptyState, ErrorState,
   Table, TableScroll, TableShell, Tbody, Td, Th, Thead, Tr,
 } from '@/components/ui';
 import ChequeDialog from './components/ChequeDialog';
 import DocumentSidebar from './components/DocumentSidebar';
 import ConfigureExtractionDialog from './components/ConfigureExtractionDialog';
+import { DashboardBodySkeleton } from './loading';
 
 // ── Types ──────────────────────────────────────────────────
 interface JobCheck {
@@ -81,6 +82,8 @@ export default function DashboardPage() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Load failure is separate from action errors: it replaces the body, they don't.
+  const [loadError, setLoadError] = useState<unknown>(null);
 
   // Selected job for detail view
   const [selectedJob, setSelectedJob] = useState<Job | null>(null);
@@ -196,11 +199,11 @@ export default function DashboardPage() {
       );
 
       setJobs(jobsList);
-      setError(null);
+      setLoadError(null);
     } catch (e: any) {
       console.error('[Dashboard] Error fetching jobs:', e);
-      setJobs([]);
-      setError(null); // Don't show error for empty results
+      // A failed fetch is not "no documents" — say so, with a retry.
+      setLoadError(e);
     } finally {
       setLoading(false);
     }
@@ -344,16 +347,15 @@ export default function DashboardPage() {
         <KpiTile tone="success" label="Completed" value={completedJobs} icon={<CheckCircle size={16} />} loading={loading} />
       </div>
 
-      {loading && (
-        <div className="flex items-center justify-center py-16">
-          <Loader2 className="animate-spin text-ink-faint" size={24} />
-        </div>
-      )}
+      {loading && <DashboardBodySkeleton />}
 
       {error && (
-        <div className="rounded-card border border-error-border bg-error-bg px-4 py-3 text-sm text-error-text">
-          {error}
-        </div>
+        <ErrorState surface="banner" title="That action didn’t go through" error={error}
+          action={<Button size="sm" variant="ghost" onClick={() => setError(null)}>Dismiss</Button>} />
+      )}
+
+      {!loading && loadError != null && (
+        <ErrorState title="We couldn’t load your documents" error={loadError} onRetry={fetchJobs} />
       )}
 
       {/* ── Duplicate Warning ──────────────────────── */}
@@ -556,15 +558,17 @@ export default function DashboardPage() {
       )}
 
       {/* ── Empty state ─────────────────────────────── */}
-      {!loading && jobs.length === 0 && !error && (
-        <GlassCard padding="none" className="p-16 text-center">
-          <FileText className="mx-auto mb-3 text-ink-faint/60" size={40} />
-          <h3 className="font-heading text-base font-semibold text-ink-strong">No documents yet</h3>
-          <p className="mb-5 mt-1 text-sm text-ink-body">Upload a PDF to get started</p>
-          <Link href="/upload" className="inline-flex">
-            <Button icon={<Upload size={14} />}>Upload PDF</Button>
-          </Link>
-        </GlassCard>
+      {!loading && jobs.length === 0 && loadError == null && (
+        <EmptyState
+          icon={<FileText />}
+          title="No documents yet"
+          description="Upload a bank statement or cheque PDF and Kyriq will find and read every cheque in it."
+          action={
+            <Link href="/upload" className="inline-flex">
+              <Button icon={<Upload size={14} />}>Upload PDF</Button>
+            </Link>
+          }
+        />
       )}
 
       {/* ══════════════════════════════════════════════

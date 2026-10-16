@@ -58,7 +58,7 @@ export const KpiTile = React.forwardRef<HTMLDivElement, KpiTileProps>(
       <div className="flex items-center justify-between gap-3">
         <p className="text-eyebrow text-ink-faint">{label}</p>
         {icon ? (
-          <span className="shrink-0 text-[color:var(--kpi-accent)]" aria-hidden>
+          <span className="kpi-icon shrink-0 text-[color:var(--kpi-accent)]" aria-hidden>
             {icon}
           </span>
         ) : null}
@@ -67,7 +67,7 @@ export const KpiTile = React.forwardRef<HTMLDivElement, KpiTileProps>(
       {loading ? (
         <Skeleton shape="heading" className="mt-1 w-24" />
       ) : (
-        <p className="nums font-heading text-3xl font-semibold text-ink-strong">{value}</p>
+        <p className="kpi-value nums font-heading text-3xl font-semibold text-ink-strong">{value}</p>
       )}
 
       <div className="flex items-baseline gap-2">

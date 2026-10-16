@@ -27,7 +27,9 @@ import {
   Th,
   Thead,
   Tr,
+  buttonVariants,
 } from '@/components/ui';
+import { cn } from '@/lib/utils';
 import {
   areaFade,
   AXIS_TICK,
@@ -457,7 +459,7 @@ export default function FirmDashboardPage() {
           </div>
           {/* A file input styled as the primary pill. `Button` cannot wrap an
               <input type=file>, so the label carries the same variant classes. */}
-          <label className="press inline-flex min-h-tap cursor-pointer items-center justify-center gap-2 rounded-full border border-brand-dark/40 bg-gradient-to-r from-brand to-brand-dark px-4 text-sm font-semibold text-white shadow-brand-glow hover:from-brand-light hover:to-brand">
+          <label className={cn(buttonVariants({ variant: 'primary' }), 'cursor-pointer')}>
             <input
               type="file"
               accept=".qbo,.ofx,.qfx"

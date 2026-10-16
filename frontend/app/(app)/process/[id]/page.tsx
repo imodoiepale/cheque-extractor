@@ -11,7 +11,9 @@ import {
 import {
   Badge, Button, Dialog, GlassCard, GlassCardTitle, GlassPanel, IconButton, KpiTile, StatusPill, Tabs,
   Table, TableScroll, TableShell, Tbody, Td, Th, Thead, Tr, type StatusKey,
+  EmptyState, ErrorState, Skeleton, buttonVariants,
 } from '@/components/ui';
+import Link from 'next/link';
 import { cn } from '@/lib/utils';
 
 type ViewMode = 'card' | 'table';
@@ -127,6 +129,7 @@ export default function ProcessingPage() {
   }, [handleKeyDown]);
 
   const [reExtracting, setReExtracting] = useState(false);
+  const [reExtractError, setReExtractError] = useState<unknown>(null);
 
   const handleExport = (format: string) => {
     window.open(`/api/jobs/${jobId}/export?format=${format}`, '_blank');
@@ -135,6 +138,7 @@ export default function ProcessingPage() {
 
   const handleReExtract = async (force: boolean = true) => {
     setReExtracting(true);
+    setReExtractError(null);
     try {
       const res = await fetch('/api/start-extraction', {
         method: 'POST',
@@ -145,6 +149,7 @@ export default function ProcessingPage() {
       window.location.href = `/process/${jobId}?methods=ai`;
     } catch (e: any) {
       console.error('Re-extract error:', e);
+      setReExtractError(e);
       setReExtracting(false);
     }
   };
@@ -166,7 +171,11 @@ export default function ProcessingPage() {
             {isComplete ? 'Extraction Results' : 'Processing Cheques'}
           </h1>
           <p className="mt-1 flex items-center gap-2 text-sm text-ink-body">
-            <span className="truncate">{jobData?.pdf_name || 'Uploading...'}</span>
+            {jobData ? (
+              <span className="truncate">{jobData.pdf_name || 'Untitled document'}</span>
+            ) : (
+              <Skeleton shape="line" className="w-48" />
+            )}
             {jobData?.doc_format && <Badge tone="brand" size="sm">{jobData.doc_format}</Badge>}
           </p>
         </div>
@@ -213,10 +222,17 @@ export default function ProcessingPage() {
 
       {/* ── Error ───────────────────────────────────────────── */}
       {error && (
-        <div className="rounded-card border border-error-border bg-error-bg px-4 py-3 text-error-text">
-          <p className="font-medium">Processing Error</p>
-          <p className="mt-1 text-sm">{error}</p>
-        </div>
+        <ErrorState
+          surface="banner"
+          title="Processing stopped"
+          error={error}
+          retryLabel="Run extraction again"
+          onRetry={() => handleReExtract(true)}
+          action={<Link href="/upload" className={buttonVariants({ variant: 'ghost', size: 'sm' })}>Upload another</Link>}
+        />
+      )}
+      {reExtractError != null && !error && (
+        <ErrorState surface="banner" title="Couldn’t restart extraction" error={reExtractError} onRetry={() => handleReExtract(missingCount === 0)} />
       )}
 
       {/* ── Stats row ───────────────────────────────────────── */}
@@ -577,11 +593,17 @@ export default function ProcessingPage() {
 
       {/* ── No results ──────────────────────────────────────── */}
       {isComplete && checks.length === 0 && !error && (
-        <GlassCard padding="none" className="p-12 text-center">
-          <ImageIcon className="mx-auto mb-4 text-ink-faint/60" size={48} />
-          <h3 className="font-heading text-lg font-semibold text-ink-strong">No Cheques Found</h3>
-          <p className="mt-1 text-sm text-ink-body">No cheques were detected in this document.</p>
-        </GlassCard>
+        <EmptyState
+          icon={<ImageIcon />}
+          title="No cheques found"
+          description="Kyriq didn’t detect any cheques in this document. If it does contain cheques, try a clearer scan or run extraction again."
+          action={
+            <>
+              <Button size="sm" icon={<RefreshCw size={14} />} loading={reExtracting} onClick={() => handleReExtract(true)}>Run again</Button>
+              <Link href="/upload" className={buttonVariants({ variant: 'secondary', size: 'sm' })}>Upload another</Link>
+            </>
+          }
+        />
       )}
 
       {/* ══════════════════════════════════════════════════════

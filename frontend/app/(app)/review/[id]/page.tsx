@@ -1,5 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
-import { redirect } from 'next/navigation';
+import Link from 'next/link';
+import { FileSearch } from 'lucide-react';
+import { EmptyState, buttonVariants } from '@/components/ui';
 import CheckImageViewer from './components/CheckImageViewer';
 import FieldEditor from './components/FieldEditor';
 import ApprovalActions from './components/ApprovalActions';
@@ -7,24 +9,38 @@ import ComparisonPanel from './components/ComparisonPanel';
 import ValidationWarnings from './components/ValidationWarnings';
 import AuditHistory from './components/AuditHistory';
 
-export default async function ReviewPage({ params }: { params: { id: string } }) {
+// Next 16: route params are a Promise. Reading `params.id` synchronously gave
+// `undefined`, so every review silently bounced to the dashboard.
+export default async function ReviewPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
   const supabase = await createClient();
 
   const { data: check, error } = await supabase
     .from('checks')
     .select('*')
-    .eq('id', params.id)
-    .single();
+    .eq('id', id)
+    .maybeSingle();
 
-  if (error || !check) {
-    redirect('/dashboard');
+  // A real query failure goes to the (app) error boundary, which has a retry.
+  if (error) throw error;
+  if (!check) {
+    return (
+      <div className="mx-auto max-w-xl p-6" data-tone="brand">
+        <EmptyState
+          icon={<FileSearch />}
+          title="This cheque isn’t here"
+          description="It may have been deleted, or it belongs to another company. Pick a document from your dashboard to keep reviewing."
+          action={<Link href="/dashboard" className={buttonVariants({ size: 'sm' })}>Back to dashboard</Link>}
+        />
+      </div>
+    );
   }
 
   // Get audit logs
   const { data: auditLogs } = await supabase
     .from('audit_logs')
     .select('*')
-    .eq('check_id', params.id)
+    .eq('check_id', id)
     .order('created_at', { ascending: false });
 
   return (

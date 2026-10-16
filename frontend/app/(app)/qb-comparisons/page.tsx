@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Settings, Loader2, AlertCircle, RefreshCw, Upload, Wrench } from 'lucide-react';
-import { Badge, Button, Dialog, GlassCard, Toast } from '@/components/ui';
+import { Badge, Button, Dialog, ErrorState, GlassCard, Toast, friendlyError } from '@/components/ui';
 import { applyFixesToQB, computeCorrections } from './utils/fixDiscrepancy';
 import { QBCompanySwitcher } from '@/components/QBCompanySwitcher';
 import Link from 'next/link';
@@ -303,7 +303,7 @@ export default function QBComparisonsPage() {
       if (result.errors.length > 0) console.warn('Fix-All errors:', result.errors);
       await refreshData();
     } catch (e: any) {
-      showToast('error', e?.message || 'Fix-All failed');
+      showToast('error', friendlyError(e));
     } finally {
       setFixingAll(false);
       setFixAllProgress(null);
@@ -349,11 +349,11 @@ export default function QBComparisonsPage() {
           showToast('success', `Synced ${count} QB transactions ✓`);
         }
       } else {
-        showToast('error', data.error || `Sync failed (${res.status})`);
+        showToast('error', friendlyError(data.error || `Sync failed (${res.status})`));
       }
     } catch (err: any) {
       console.error('❌ Auto-sync failed:', err);
-      showToast('error', err.message || 'Sync failed');
+      showToast('error', friendlyError(err));
     } finally {
       setSyncing(false);
     }
@@ -624,7 +624,7 @@ export default function QBComparisonsPage() {
       }
       await doVouchLocal(row);
     } catch (err: any) {
-      showToast('error', err.message || 'Failed to create in QB');
+      showToast('error', friendlyError(err));
     } finally {
       setVouchingId(null);
       setVouchingToQB(false);
@@ -711,11 +711,13 @@ export default function QBComparisonsPage() {
         await refreshData();
         setShowDeleteAllModal(false);
       } else {
-        const error = await response.json();
+        const error = await response.json().catch(() => ({}));
         console.error('Failed to delete all QB entries:', error);
+        showToast('error', friendlyError(error.error || `Delete failed (${response.status})`));
       }
     } catch (err) {
       console.error('Failed to delete all QB entries:', err);
+      showToast('error', friendlyError(err));
     } finally {
       setDeletingAllQB(false);
     }
@@ -724,15 +726,9 @@ export default function QBComparisonsPage() {
   if (error) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center p-6">
-        <GlassCard padding="lg" className="max-w-md text-center" reveal>
-          <h1 className="font-heading text-2xl font-semibold text-error-text">
-            Error Loading Data
-          </h1>
-          <p className="mt-2 text-sm text-ink-body">{error}</p>
-          <Button className="mt-5" onClick={() => window.location.reload()}>
-            Retry
-          </Button>
-        </GlassCard>
+        <div className="w-full max-w-md">
+          <ErrorState title="We couldn’t load your comparisons" error={error} onRetry={refreshData} />
+        </div>
       </div>
     );
   }
@@ -981,6 +977,7 @@ export default function QBComparisonsPage() {
           vouchingId={vouchingId}
           onDeleteQBEntry={handleDeleteQBEntry}
           deletingQBEntry={deletingQBEntry}
+          loading={loading && comparisonData.length === 0}
           footer={
             <Pagination
               currentPage={currentPage}

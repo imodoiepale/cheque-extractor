@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import {
-  Badge, Button, GlassCard, GlassCardTitle, GlassPanel, KpiTile, Skeleton,
+  Badge, Button, ErrorState, friendlyError, GlassCard, GlassCardTitle, GlassPanel, KpiTile, Skeleton,
 } from '@/components/ui';
 import { cn } from '@/lib/utils';
 
@@ -485,21 +485,8 @@ export default function BillingPage() {
           </div>
         </GlassCard>
       ) : subError ? (
-        <GlassCard padding="md">
-          <div className="flex items-start gap-3 rounded-tile border border-warning-border bg-warning-bg px-4 py-3">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning-text" aria-hidden />
-            <div className="text-sm text-warning-text">
-              <p className="font-semibold">Billing state unavailable</p>
-              <p className="mt-1 text-xs">
-                <code className="rounded bg-warning-bg px-1">GET /api/billing/subscription</code>{' '}
-                failed: {subError}
-              </p>
-              <p className="mt-1 text-xs">
-                No payment figure is shown rather than a blank that would read as nothing owed.
-              </p>
-            </div>
-          </div>
-        </GlassCard>
+        /* No payment figure rather than a blank that would read as nothing owed. */
+        <ErrorState surface="banner" title="Billing state unavailable" error={subError} onRetry={fetchSubscription} />
       ) : sub?.subscription?.stripeSubscriptionId ? (
         <GlassCard padding="md">
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -684,7 +671,7 @@ export default function BillingPage() {
               role="alert"
               className="mt-3 rounded-tile border border-error-border bg-error-bg px-3 py-2 text-xs text-error-text"
             >
-              {actionError}
+              {friendlyError(actionError)}
             </p>
           )}
           {actionNote && (
@@ -754,22 +741,8 @@ export default function BillingPage() {
             <Skeleton shape="text" className="w-full" />
           </div>
         ) : trialError ? (
-          /* No data is not zero data. Say which call failed and why. */
-          <div className="mt-3 flex items-start gap-3 rounded-tile border border-warning-border bg-warning-bg px-4 py-3">
-            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning-text" aria-hidden />
-            <div className="text-sm text-warning-text">
-              <p className="font-semibold">Usage state unavailable</p>
-              <p className="mt-1 text-xs">
-                <code className="rounded bg-warning-bg px-1">GET /api/usage/trial-status</code> failed:{' '}
-                {trialError}
-              </p>
-              <p className="mt-1 text-xs">
-                The usage-ledger migrations have not been applied to this database, so there is no
-                allowance to report. No figure is shown rather than a zero that would read as
-                &quot;nothing used&quot;.
-              </p>
-            </div>
-          </div>
+          /* No data is not zero data: no figure rather than a zero reading as "nothing used". */
+          <ErrorState surface="banner" className="mt-3" title="Usage state unavailable" error={trialError} onRetry={fetchTrial} />
         ) : (
           <>
             <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -890,9 +863,7 @@ export default function BillingPage() {
       </div>
 
       {usageError && (
-        <p role="alert" className="rounded-card border border-error-border bg-error-bg px-4 py-3 text-sm text-error-text">
-          {usageError}
-        </p>
+        <ErrorState surface="banner" title="Usage figures unavailable" error={usageError} onRetry={fetchData} />
       )}
 
       {/* ── Estimated-cost warning, kept verbatim in meaning ───────── */}

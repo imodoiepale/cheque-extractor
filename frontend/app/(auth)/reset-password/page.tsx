@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { AlertCircle, CheckCircle, Lock } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { Button, Field, GlassCard, Input } from '@/components/ui';
+import { Button, Field, GlassCard, Input, friendlyError } from '@/components/ui';
 
 /**
  * Set a new password.
@@ -54,7 +54,7 @@ export default function ResetPasswordPage() {
         router.push('/login');
       }, 3000);
     } catch (err: any) {
-      setFormError(err.message);
+      setFormError(friendlyError(err));
     } finally {
       setLoading(false);
     }

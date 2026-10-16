@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { Sheet } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -7,7 +8,8 @@ import { Button } from '@/components/ui/button';
 interface DeleteConfirmModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onConfirm: () => void;
+  /** May be async: the button stays pending until it settles, then the sheet closes. */
+  onConfirm: () => unknown;
   title: string;
   message: string;
   confirmText?: string;
@@ -33,6 +35,7 @@ export function DeleteConfirmModal({
   confirmText = 'Delete',
   cancelText = 'Cancel',
 }: DeleteConfirmModalProps) {
+  const [pending, setPending] = useState(false);
   return (
     <Sheet
       open={isOpen}
@@ -57,15 +60,21 @@ export function DeleteConfirmModal({
           <Button
             variant="destructive"
             block
-            onClick={() => {
-              onConfirm();
-              onClose();
+            loading={pending}
+            onClick={async () => {
+              setPending(true);
+              try {
+                await onConfirm();
+              } finally {
+                setPending(false);
+                onClose();
+              }
             }}
           >
             {confirmText}
           </Button>
           {/* Separate group: backing out is not one of the actions. */}
-          <Button variant="ghost" block onClick={onClose}>
+          <Button variant="ghost" block onClick={onClose} disabled={pending}>
             {cancelText}
           </Button>
         </div>

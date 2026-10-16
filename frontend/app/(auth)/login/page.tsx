@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { AlertCircle } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { Button, Field, GlassCard, Input, Skeleton } from '@/components/ui';
+import { Button, Field, GlassCard, Input, Skeleton, friendlyError } from '@/components/ui';
 
 /**
  * Sign in.
@@ -72,7 +72,7 @@ function LoginForm() {
       // Use window.location for full page reload to ensure session is set
       window.location.href = redirectTo;
     } catch (err: any) {
-      setError(err.message);
+      setError(friendlyError(err));
     } finally {
       setLoading(false);
     }

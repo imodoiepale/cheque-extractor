@@ -825,3 +825,126 @@
     animation: none !important;
   }
 }
+
+/* ===========================================================================
+   Ledger skin — the signed-in app and auth. Set by data-skin="ledger" on
+   the (app) and (auth) layouts; the landing page keeps the glass look.
+   Editorial finance, not bubbly SaaS: paper canvas, hairlines over shadows,
+   tight radii, ink-black primary action, indigo kept for focus and selection
+   only, a serif for page titles, tabular numbers everywhere.
+   =========================================================================== */
+[data-skin='ledger'] {
+  /* Palette is the logo's: indigo #6366f1, emerald #10b981, and the app
+     tile's navy #1e1b4b. Neutrals are cooled toward that navy. */
+  --paper: 230 25% 97.5%;
+  --app-bg: var(--paper);
+  --surface-sunken: 230 20% 94.5%;
+  --ink-strong: 244 40% 12%;
+  --ink: 244 40% 12%;
+  --ink-body: 235 14% 30%;
+  --ink-soft: 235 10% 38%;
+  --ink-faint: 235 8% 47%;
+
+  --glass-card-bg: hsl(0 0% 100%);
+  --glass-panel-bg: hsl(var(--paper));
+  --glass-modal-bg: hsl(0 0% 100%);
+  --glass-chrome-bg: hsl(var(--paper) / 0.94);
+  --glass-toast-bg: hsl(0 0% 100%);
+  --glass-selected-bg: hsl(0 0% 100%);
+  --glass-border: rgba(30, 27, 75, 0.1);
+  --glass-hairline: rgba(30, 27, 75, 0.08);
+
+  --shadow-glass: 0 1px 0 rgba(30, 27, 75, 0.03);
+  --shadow-glass-hover: 0 1px 0 rgba(30, 27, 75, 0.04), 0 6px 16px -8px rgba(30, 27, 75, 0.14);
+  --shadow-glass-panel: none;
+  --shadow-glass-modal: 0 1px 0 rgba(30, 27, 75, 0.04), 0 24px 48px -16px rgba(30, 27, 75, 0.24);
+  --shadow-glass-sheet: 0 -12px 40px -12px rgba(30, 27, 75, 0.22);
+  --shadow-glass-toast: 0 12px 32px -12px rgba(30, 27, 75, 0.24);
+  --shadow-glass-selected: 0 0 0 1px hsl(var(--brand-deep));
+  --shadow-brand-glow: none;
+  --shadow-danger-glow: none;
+  --shadow-inner-track: inset 0 0 0 1px rgba(30, 27, 75, 0.06);
+
+  --radius-input: 6px;
+  --radius-btn: 6px;
+  --radius-tile: 8px;
+  --radius-card: 10px;
+  --radius-modal: 12px;
+
+  /* Shell: the app tile's navy, solid, no blur, no glow. */
+  --shell-bg: hsl(244 47% 20%);
+  --shell-bg-fallback: hsl(244 47% 20%);
+  --shell-solid: 244 47% 20%;
+  --shell-text: 230 40% 97%;
+  --shell-text-muted: 234 30% 78%;
+  --shell-active-text: 0 0% 100%;
+  --glass-border-dark: rgba(255, 255, 255, 0.07);
+  --glass-hairline-dark: rgba(255, 255, 255, 0.07);
+
+  --font-heading-weight: 600;
+  background-color: hsl(var(--paper));
+  font-feature-settings: 'tnum' 1, 'cv11' 1;
+}
+
+/* Surfaces: opaque paper, no frosted blur. */
+[data-skin='ledger'] :is(.glass-card, .glass-chrome, .glass-modal, .glass-toast, .glass-shell, .glass-surface, .glass-veil) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+[data-skin='ledger'] .glass-shell { box-shadow: none; }
+[data-skin='ledger'] .glass-selected { border-color: hsl(var(--brand-deep)); }
+[data-skin='ledger'] .hover-lift:hover { transform: none; }
+
+/* Page titles: an editorial serif; everything else stays the grotesk. */
+[data-skin='ledger'] h1 {
+  font-family: var(--font-serif), Georgia, 'Times New Roman', serif;
+  font-weight: 400;
+  letter-spacing: -0.012em;
+}
+
+/* Buttons: squared-off, flat. Primary is the logo indigo (deep enough for
+   white text at AA), with no gradient and no glow. */
+[data-skin='ledger'] .btn { border-radius: var(--radius-btn); letter-spacing: -0.005em; }
+[data-skin='ledger'] .btn-primary,
+[data-skin='ledger'] .btn-primary:hover {
+  background: hsl(var(--brand-dark));
+  border-color: hsl(var(--brand-dark));
+  box-shadow: none;
+}
+[data-skin='ledger'] .btn-primary:hover { background: hsl(var(--brand-deep)); }
+[data-skin='ledger'] .btn-destructive,
+[data-skin='ledger'] .btn-destructive:hover {
+  background: hsl(var(--error-text));
+  border-color: hsl(var(--error-text));
+  box-shadow: none;
+}
+
+/* Sidebar: the logo's emerald marks the active row instead of a glow. */
+[data-skin='ledger'] .sidebar-item.active {
+  background-image: none;
+  background-color: rgba(255, 255, 255, 0.08);
+  box-shadow: inset 2px 0 0 hsl(var(--emerald));
+}
+
+[data-skin='ledger'] h1 { font-size: clamp(1.75rem, 1.2rem + 1.2vw, 2.25rem); line-height: 1.1; }
+/* KPI figures read like a statement: serif numerals, a quiet label, no colour chips. */
+[data-skin='ledger'] .kpi-value {
+  font-family: var(--font-serif), Georgia, serif;
+  font-weight: 400;
+  font-size: 2.25rem;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+}
+[data-skin='ledger'] .kpi-icon { color: hsl(var(--ink-faint)); opacity: 0.7; }
+
+/* Tables: status lives in the accent rule and the pill, not a tint across
+   every cell — a page of pink rows reads as an alarm, not a ledger. */
+[data-skin='ledger'] tr:is([class*='bg-error-bg'], [class*='bg-warning-bg'], [class*='bg-success-bg']):not(:hover) {
+  background-color: transparent;
+}
+[data-skin='ledger'] tr:hover { background-color: hsl(var(--surface-sunken) / 0.7); }
+/* Segmented controls: the chosen segment matches the primary action. */
+[data-skin='ledger'] [aria-pressed='true'].bg-brand {
+  background-color: hsl(var(--brand-dark));
+  box-shadow: none;
+}

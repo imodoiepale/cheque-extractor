@@ -32,6 +32,7 @@ import {
   Th,
   Thead,
   Tr,
+  friendlyError,
 } from '@/components/ui';
 import { cn } from '@/lib/utils';
 
@@ -711,12 +712,18 @@ function UploadPageInner() {
     }
   };
 
+  const [extractingAll, setExtractingAll] = useState(false);
   const handleExtractAll = async () => {
     const analyzedJobs = jobEntries.filter((j) => j.status === 'analyzed' && j.result);
     if (analyzedJobs.length === 0) return;
-    await Promise.allSettled(
-      analyzedJobs.map((job) => handleStartExtraction(job.id))
-    );
+    setExtractingAll(true);
+    try {
+      await Promise.allSettled(
+        analyzedJobs.map((job) => handleStartExtraction(job.id))
+      );
+    } finally {
+      setExtractingAll(false);
+    }
   };
 
   // ── Step indicator helpers ─────────────────────────────────
@@ -812,7 +819,7 @@ function UploadPageInner() {
           className="flex items-center gap-2 border-error-border bg-error-bg/50"
         >
           <AlertCircle size={14} className="shrink-0 text-error-text" aria-hidden />
-          <span className="flex-1 text-sm text-ink-body">{error}</span>
+          <span className="flex-1 text-sm text-ink-body">{friendlyError(error)}</span>
           <IconButton aria-label="Dismiss error" size="icon-sm" onClick={() => setError(null)}>
             <X size={14} />
           </IconButton>
@@ -1392,6 +1399,7 @@ function UploadPageInner() {
                 <Button
                   size="sm"
                   onClick={handleExtractAll}
+                  loading={extractingAll}
                   icon={<Play size={12} />}
                   className="shrink-0"
                 >

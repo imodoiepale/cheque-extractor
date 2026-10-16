@@ -18,6 +18,7 @@ import {
     Input,
     Select,
     Skeleton,
+    ErrorState,
     TabPanel,
     Tabs,
     type TabItem,
@@ -108,6 +109,7 @@ function SettingsPageContent() {
     const [previewData, setPreviewData] = useState<any>(null)
     const [loadingPreview, setLoadingPreview] = useState(false)
     const [loadingSettings, setLoadingSettings] = useState(true)
+    const [settingsError, setSettingsError] = useState<unknown>(null)
     const [mounted, setMounted] = useState(false)
     const [credentialsExist, setCredentialsExist] = useState(false)
 
@@ -249,9 +251,13 @@ function SettingsPageContent() {
                 if (data.qboConnected && !data.companyName) {
                     fetchQBCompanyInfo()
                 }
+                setSettingsError(null)
+            } else {
+                throw new Error(`Integration status failed (${response.status})`)
             }
         } catch (error) {
             console.error('Failed to fetch integration status:', error)
+            setSettingsError(error)
         } finally {
             setLoadingSettings(false)
         }
@@ -676,6 +682,10 @@ function SettingsPageContent() {
 
             {/* ── Integrations ────────────────────────── */}
             <TabPanel value="integrations" active={activeTab} className="space-y-5">
+                {settingsError != null && !loadingSettings && (
+                    <ErrorState surface="banner" title="Couldn’t load your QuickBooks connection" error={settingsError}
+                        onRetry={() => { setLoadingSettings(true); return fetchIntegrationStatus() }} />
+                )}
                 {/* QuickBooks Online */}
                 <GlassCard padding="lg" className="space-y-4">
                     <div>
@@ -688,6 +698,13 @@ function SettingsPageContent() {
                         </p>
                     </div>
 
+                    {loadingSettings ? (
+                        <GlassPanel tone="sunken" radius="tile" padding="md" className="space-y-3" aria-busy>
+                            <Skeleton shape="text" className="w-36" />
+                            <Skeleton shape="line" className="w-56" />
+                            <Skeleton shape="pill" className="h-9 w-40" />
+                        </GlassPanel>
+                    ) : (
                     <GlassPanel tone="sunken" radius="tile" padding="md">
                         <div className="flex flex-wrap items-start justify-between gap-4">
                             <div className="min-w-0 flex-1">
@@ -746,7 +763,7 @@ function SettingsPageContent() {
                                     </Button>
                                 )}
                                 {qboConnected ? (
-                                    <Button variant="destructive" size="sm" onClick={handleQBODisconnect}>
+                                    <Button variant="secondary" size="sm" className="text-error-text" onClick={handleQBODisconnect}>
                                         Disconnect
                                     </Button>
                                 ) : (
@@ -767,6 +784,7 @@ function SettingsPageContent() {
                             </div>
                         </div>
                     </GlassPanel>
+                    )}
 
                     {/* Connection Diagnostics */}
                     {qbConfigured && (

@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
+import { Inter, Instrument_Serif } from 'next/font/google'
 import './globals.css'
 import ToastProvider from '@/components/providers/ToastProvider'
 import { AmbientBackground } from '@/components/ui/ambient-background'
@@ -13,6 +13,14 @@ const inter = Inter({
   subsets: ['latin'],
   weight: ['400', '500', '600', '700'],
   variable: '--font-inter',
+  display: 'swap',
+})
+
+// Page titles in the signed-in app (Ledger skin). Used only by `h1` there.
+const serif = Instrument_Serif({
+  subsets: ['latin'],
+  weight: '400',
+  variable: '--font-serif',
   display: 'swap',
 })
 
@@ -51,7 +59,7 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en" className={inter.variable}>
+    <html lang="en" className={`${inter.variable} ${serif.variable}`}>
       <body>
         {/* Glass needs something behind it to refract. Mounted once, here. */}
         <AmbientBackground />

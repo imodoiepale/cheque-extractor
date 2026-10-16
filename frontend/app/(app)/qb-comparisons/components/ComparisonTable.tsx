@@ -4,6 +4,7 @@ import {
   Badge,
   StatusPill,
   Table,
+  Skeleton,
   TableEmpty,
   TableScroll,
   TableShell,
@@ -70,6 +71,8 @@ interface ComparisonTableProps {
   /** Rendered inside the table's glass shell, below the scroll region, so the
    *  pagination bar does not become a second stacked surface. */
   footer?: React.ReactNode;
+  /** First load: skeleton rows in the real grid, never a false "no records". */
+  loading?: boolean;
 }
 
 const SortIcon: React.FC<{ field: SortField; sortField: SortField; sortDirection: SortDirection }> = ({
@@ -118,6 +121,7 @@ export const ComparisonTable: React.FC<ComparisonTableProps> = ({
   onDeleteQBEntry,
   deletingQBEntry,
   footer,
+  loading,
 }) => {
   const paginatedData = useMemo(() => {
     const startIndex = (currentPage - 1) * itemsPerPage;
@@ -203,7 +207,15 @@ export const ComparisonTable: React.FC<ComparisonTableProps> = ({
           </Thead>
 
           <Tbody>
-            {paginatedData.length === 0 ? (
+            {loading ? (
+              Array.from({ length: 8 }).map((_, r) => (
+                <Tr key={`sk-${r}`} aria-hidden>
+                  {Array.from({ length: 16 }).map((__, c) => (
+                    <Td key={c}><Skeleton shape="line" className="w-full min-w-[2.5rem]" /></Td>
+                  ))}
+                </Tr>
+              ))
+            ) : paginatedData.length === 0 ? (
               <TableEmpty
                 colSpan={16}
                 title="No matching records"

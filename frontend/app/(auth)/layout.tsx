@@ -9,7 +9,7 @@ export default function AuthLayout({
   return (
     // No gradient of its own: the ambient mesh in app/layout.tsx is the page
     // background, and the auth card glass refracts it.
-    <div className="min-h-screen flex flex-col">
+    <div data-skin="ledger" className="min-h-screen flex flex-col">
       {/* Minimal nav */}
       <div className="px-6 py-4">
         <Link href="/" className="inline-flex items-center gap-2.5 group press">

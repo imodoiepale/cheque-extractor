@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils';
  */
 export const buttonVariants = cva(
   [
-    'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full',
+    'btn inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-full',
     'font-sans font-semibold select-none',
     'transition-[transform,box-shadow,background-color,border-color,color,opacity]',
     'duration-tap ease-settle',
@@ -39,7 +39,7 @@ export const buttonVariants = cva(
          * -on-fill pair stays at 4.5:1.
          */
         primary:
-          'bg-gradient-to-r from-brand-dark to-brand-deep text-white border border-brand-deep/40 shadow-brand-glow hover:from-brand-deep hover:to-brand-deep',
+          'btn-primary bg-gradient-to-r from-brand-dark to-brand-deep text-white border border-brand-deep/40 shadow-brand-glow hover:from-brand-deep hover:to-brand-deep',
         /** Light glass pill. The default for anything that is not the one action. */
         secondary:
           'glass-card text-ink-strong hover:bg-white/85 shadow-contact',
@@ -53,7 +53,7 @@ export const buttonVariants = cva(
          * tints and status marks — just not behind white text.
          */
         destructive:
-          'bg-gradient-to-r from-error-dark to-error-text text-white border border-error-text/40 shadow-danger-glow hover:from-error-text hover:to-error-text',
+          'btn-destructive bg-gradient-to-r from-error-dark to-error-text text-white border border-error-text/40 shadow-danger-glow hover:from-error-text hover:to-error-text',
         /** Text-only affordance inside dense chrome. */
         link: 'text-brand-deep underline-offset-2 hover:underline',
       },

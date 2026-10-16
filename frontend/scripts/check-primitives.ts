@@ -20,6 +20,7 @@ import { buttonVariants } from '../components/ui/button';
 import { glassCardVariants, glassPanelVariants } from '../components/ui/glass-card';
 import { badgeVariants } from '../components/ui/badge';
 import { tdVariants, thVariants } from '../components/ui/table';
+import { friendlyError } from '../components/ui/states';
 
 const require = createRequire(import.meta.url);
 
@@ -370,3 +371,14 @@ console.log('  ok  glass fallbacks, motion tokens and state utilities all presen
 }
 
 console.log('\nall primitive checks passed');
+
+/* --- friendlyError: raw errors never reach the screen verbatim ------------ */
+{
+
+  assert.match(friendlyError(new TypeError('Failed to fetch')), /could not reach Kyriq/);
+  assert.match(friendlyError('Database error saving new user'), /server had a problem/);
+  assert.match(friendlyError('GET /api/billing/subscription failed: {"x":1}'), /Something went wrong/);
+  assert.equal(friendlyError('Invalid login credentials'), 'Invalid login credentials');
+  assert.match(friendlyError(undefined), /Something went wrong/);
+  console.log('  ok  friendlyError maps network, server and raw API errors');
+}

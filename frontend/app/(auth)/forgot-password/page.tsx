@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { AlertCircle, ArrowLeft, CheckCircle, Mail } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { Button, Field, GlassCard, Input } from '@/components/ui';
+import { Button, Field, GlassCard, Input, friendlyError } from '@/components/ui';
 
 /**
  * Request a password-reset link.
@@ -35,7 +35,7 @@ export default function ForgotPasswordPage() {
 
       setSuccess(true);
     } catch (err: any) {
-      setError(err.message);
+      setError(friendlyError(err));
     } finally {
       setLoading(false);
     }

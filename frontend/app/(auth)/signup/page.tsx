@@ -4,7 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { AlertCircle, ArrowRight, Mail, Shield, Zap } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { Badge, Button, Field, GlassCard, GlassPanel, Input } from '@/components/ui';
+import { Badge, Button, Field, GlassCard, GlassPanel, Input, friendlyError } from '@/components/ui';
 
 /**
  * Signup — CHECKLIST section 6.
@@ -100,7 +100,7 @@ export default function SignupPage() {
       }
       setSentTo(values.email);
     } catch (err: any) {
-      setFormError(err.message);
+      setFormError(friendlyError(err));
     } finally {
       setLoading(false);
     }

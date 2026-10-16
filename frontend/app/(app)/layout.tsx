@@ -43,7 +43,7 @@ export default function AppLayout({
       {/* No background of its own: the shell and the pages sit over the
           ambient mesh mounted in app/layout.tsx. Glass needs something to
           refract — painting a flat hex here is what made it read as grey. */}
-      <div className="min-h-screen flex">
+      <div data-skin="ledger" className="min-h-screen flex">
         {/* Shell chrome: dark true glass, heaviest blur tier. Nothing inside
             it may carry a backdrop-filter of its own (rule 2). */}
         <aside className="w-60 glass-shell border-r text-shell-text hidden md:flex flex-col fixed left-0 top-0 h-screen">
