@@ -938,6 +938,31 @@ def extract_with_openai(img_path):
                 "fields": _empty_fields(), "processing_time_ms": int((time.time() - t0) * 1000)}
 
 
+def gemini_text(prompt, png_bytes, max_tokens=16):
+    """One short Gemini answer about a PNG, or None (no keys, quota, error).
+    Same endpoint, model and header auth as extract_with_gemini; used where a
+    single word is wanted, not a field extraction."""
+    payload = {
+        "contents": [{"parts": [
+            {"inline_data": {"mime_type": "image/png", "data": base64.b64encode(png_bytes).decode("utf-8")}},
+            {"text": prompt},
+        ]}],
+        "generationConfig": {"temperature": 0.0, "maxOutputTokens": max_tokens},
+    }
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+    for key in GEMINI_KEYS:
+        try:
+            resp = requests.post(url, json=payload, timeout=30, headers={"x-goog-api-key": key})
+            if resp.status_code in (403, 429):
+                continue
+            resp.raise_for_status()
+            return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        except Exception as e:
+            print(f"    gemini_text failed: {type(e).__name__}")
+    return None
+
+
 def extract_with_gemini(img_path, key=None):
     """Call Gemini Flash 2.0 API with image. Tries all keys, then falls back to OpenAI.
     
@@ -1192,6 +1217,7 @@ class CheckExtractorApp:
         # contour path never has them.
         self.page_captions = {}
         self.captions_by_id = {}
+        self.pdf_meta = None   # pdf_pages.read() output, for page_kinds
 
         os.makedirs(f"{output_dir}/images", exist_ok=True)
 
@@ -1250,7 +1276,8 @@ class CheckExtractorApp:
         embedded = {}
         if pdf_pages is not None:
             try:
-                for pg, page in zip(pdf_pages.read(self.pdf_path), self.pages):
+                self.pdf_meta = pdf_pages.read(self.pdf_path)
+                for pg, page in zip(self.pdf_meta, self.pages):
                     boxes, captions = pdf_pages.cheque_boxes(pg, page.width, page.height)
                     if boxes:
                         embedded[pg["index"]] = (boxes, captions)

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import type { PageKind } from '@/lib/document-kind'
 
 export interface CheckResult {
     check_id: string
@@ -32,6 +33,7 @@ export interface JobData {
     status: string
     pdf_name: string
     doc_format: string | null
+    page_kinds?: PageKind[] | null
     total_pages: number
     total_checks: number
     checks: CheckResult[]

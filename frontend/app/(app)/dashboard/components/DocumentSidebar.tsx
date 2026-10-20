@@ -3,13 +3,14 @@
 import { FileText, CheckCircle, Clock, AlertCircle, Loader2 } from 'lucide-react';
 import { Badge, GlassCard, STATUS_TONES, type StatusKey } from '@/components/ui';
 import { cn } from '@/lib/utils';
-import { KIND_LABEL, type DocumentKind } from '@/lib/document-kind';
+import { KIND_LABEL, summarizeKinds, type DocumentKind, type PageKind } from '@/lib/document-kind';
 
 interface Job {
   job_id: string;
   status: string;
   pdf_name: string;
   doc_kind?: DocumentKind | null;
+  page_kinds?: PageKind[] | null;
   total_pages: number;
   total_checks: number;
   created_at: string;
@@ -127,7 +128,7 @@ export default function DocumentSidebar({
                       size="sm"
                       className="px-1.5 py-0 text-[9px]"
                     >
-                      {KIND_LABEL[job.doc_kind]}
+                      {summarizeKinds(job.page_kinds, job.total_checks) ?? KIND_LABEL[job.doc_kind]}
                     </Badge>
                   ) : null}
                   <StatusIcon status={job.status} />

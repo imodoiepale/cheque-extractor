@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { classifyDocument, type DocumentKind } from '../lib/document-kind';
+import { classifyDocument, summarizeKinds, type DocumentKind, type PageKind } from '../lib/document-kind';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const script = path.join(root, 'backend', 'doc_kind.py');
@@ -23,15 +23,16 @@ const python = process.env.PYTHON || (process.platform === 'win32' ? 'python' : 
 const run = spawnSync(python, ['-I', script, '--samples'], { encoding: 'utf8' });
 assert.equal(run.status, 0, `python failed: ${run.stderr || run.error?.message}`);
 
-type Sample = { total_pages: number; total_checks: number; checks_per_page: number[]; kind: DocumentKind };
+type Sample = { total_pages: number; total_checks: number; checks_per_page: number[]; page_kinds?: PageKind[]; kind: DocumentKind };
 const samples: Sample[] = JSON.parse(run.stdout);
-assert.equal(samples.length, 4, 'expected the four sample signal sets');
+assert.equal(samples.length, 5, 'expected the five sample signal sets');
 
 for (const s of samples) {
   const ts = classifyDocument({
     totalPages: s.total_pages,
     totalCheques: s.total_checks,
     chequesPerPage: s.checks_per_page,
+    pageKinds: s.page_kinds,
   }).kind;
   assert.equal(
     ts,
@@ -46,4 +47,11 @@ assert.deepEqual(
   new Set<DocumentKind>(['bank-statement', 'cheque-sheet', 'single-cheque', 'no-cheques'])
 );
 
-console.log('check-doc-kind-parity: TS and Python agree on all 4 samples');
+// summarizeKinds mirrors backend/page_kinds.py summarize(); the strings are what Overview shows.
+assert.equal(summarizeKinds(['other', 'statement', 'cheque-images'], 227), 'Statement + 227 cheque images');
+assert.equal(summarizeKinds(['statement', 'statement'], 0), 'Statement only');
+assert.equal(summarizeKinds(['other', 'cheque-images'], 1), '1 cheque image');
+assert.equal(summarizeKinds(['other'], 0), 'No statement or cheques found');
+assert.equal(summarizeKinds(null, 5), null);
+
+console.log('check-doc-kind-parity: TS and Python agree on all 5 samples');

@@ -6,6 +6,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import DropzoneUpload from './components/DropzoneUpload';
 import MultiFileQueue, { type QueueRow } from './components/MultiFileQueue';
 import BatchSegregation from './components/BatchSegregation';
+import type { PageKind } from '@/lib/document-kind';
 import PageSelectGrid, {
   defaultPageSelection,
   selectedRange,
@@ -50,6 +51,7 @@ interface AnalyzeResult {
   pdf_name: string;
   file_size: number;
   doc_format: string;
+  page_kinds?: PageKind[] | null;
   total_pages: number;
   total_checks: number;
   pages: PageInfo[];
@@ -913,6 +915,7 @@ function UploadPageInner() {
                         totalPages: e.result.total_pages,
                         totalCheques: e.result.total_checks,
                         chequesPerPage: (e.result.pages ?? []).map((pg) => pg.checks_on_page ?? 0),
+                        pageKinds: e.result.page_kinds ?? null,
                       }
                     : null,
                 }))}

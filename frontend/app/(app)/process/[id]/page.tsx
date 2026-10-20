@@ -15,6 +15,7 @@ import {
 } from '@/components/ui';
 import Link from 'next/link';
 import { cn } from '@/lib/utils';
+import { summarizeKinds } from '@/lib/document-kind';
 
 type ViewMode = 'card' | 'table';
 
@@ -195,6 +196,10 @@ export default function ProcessingPage() {
               <Skeleton shape="line" className="w-48" />
             )}
             {jobData?.doc_format && <Badge tone="brand" size="sm">{jobData.doc_format}</Badge>}
+            {(() => {
+              const summary = summarizeKinds(jobData?.page_kinds, jobData?.total_checks ?? 0);
+              return summary ? <Badge tone="outline" size="sm">{summary}</Badge> : null;
+            })()}
           </p>
         </div>
         {isComplete && checks.length > 0 && (

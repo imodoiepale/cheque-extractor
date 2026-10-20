@@ -16,12 +16,16 @@ STATEMENT_MIN_PAGES = 4
 KINDS = ("cheque-sheet", "bank-statement", "single-cheque", "no-cheques")
 
 
-def classify_document(total_pages, total_checks, checks_per_page=None):
+def classify_document(total_pages, total_checks, checks_per_page=None, page_kinds=None):
     """Return one of KINDS. Mirrors classifyDocument() in document-kind.ts."""
     pages = max(0, int(total_pages or 0))
     cheques = max(0, int(total_checks or 0))
     per_page = list(checks_per_page or [])
 
+    # Page kinds (backend/page_kinds.py) read the statement's own text, so a
+    # transaction page anywhere settles it, even with no cheque images at all.
+    if any(k in ("statement", "both") for k in (page_kinds or [])):
+        return "bank-statement"
     if cheques == 0:
         return "no-cheques"
     if pages == 1 and cheques <= 2:
@@ -55,16 +59,20 @@ SAMPLES = [
     {"total_pages": 5, "total_checks": 100, "checks_per_page": [20] * 5},
     {"total_pages": 1, "total_checks": 1, "checks_per_page": [1]},
     {"total_pages": 12, "total_checks": 0, "checks_per_page": [0] * 12},
+    # A statement whose cheque images are on a separate upload: page kinds
+    # alone make it a statement, where counts alone would say no-cheques.
+    {"total_pages": 5, "total_checks": 0, "checks_per_page": [0] * 5,
+     "page_kinds": ["other", "statement", "statement", "statement", "other"]},
 ]
 
 if __name__ == "__main__":
     if "--samples" in sys.argv:
         print(json.dumps([
-            {**s, "kind": classify_document(s["total_pages"], s["total_checks"], s["checks_per_page"])}
+            {**s, "kind": classify_document(s["total_pages"], s["total_checks"], s["checks_per_page"], s.get("page_kinds"))}
             for s in SAMPLES
         ]))
     else:
-        kinds = [classify_document(s["total_pages"], s["total_checks"], s["checks_per_page"]) for s in SAMPLES]
-        assert kinds == ["bank-statement", "cheque-sheet", "single-cheque", "no-cheques"], kinds
+        kinds = [classify_document(s["total_pages"], s["total_checks"], s["checks_per_page"], s.get("page_kinds")) for s in SAMPLES]
+        assert kinds == ["bank-statement", "cheque-sheet", "single-cheque", "no-cheques", "bank-statement"], kinds
         assert checks_per_page_from_manifest(3, [("a", "p", 1), ("b", "p", 1), ("c", "p", 3)]) == [2, 0, 1]
         print("doc_kind self-check OK")

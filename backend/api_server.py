@@ -45,6 +45,7 @@ from pydantic import BaseModel
 from PIL import Image as PILImage
 import hashlib
 from doc_kind import classify_document, checks_per_page_from_manifest
+import page_kinds as _page_kinds
 
 from check_extractor import CheckExtractorApp
 from usage_rules import ledger_idempotency_key, is_billable
@@ -356,13 +357,41 @@ def _supabase_rpc(fn_name: str, params: dict = None):
 
 
 def _insert_check_job(row: dict):
-    """check_jobs insert that still lands on a database without migration 044:
-    if the row with doc_kind is refused, retry without it rather than lose the
-    job (that is how rows lost their owner before, see batch_id below)."""
+    """check_jobs insert that still lands on a database without migrations 044
+    (doc_kind) or 046 (page_kinds): if the row is refused, retry without the
+    newer columns rather than lose the job (that is how rows lost their owner
+    before, see batch_id below)."""
     out = _supabase_insert("check_jobs", row)
-    if out is None and "doc_kind" in row:
-        out = _supabase_insert("check_jobs", {k: v for k, v in row.items() if k != "doc_kind"})
+    if out is None and ("doc_kind" in row or "page_kinds" in row):
+        out = _supabase_insert("check_jobs", {k: v for k, v in row.items() if k not in ("doc_kind", "page_kinds")})
     return out
+
+
+def _compute_page_kinds(app_ext, manifest):
+    """Per-page kinds for a freshly analysed PDF (backend/page_kinds.py).
+    Rules read the PDF text layer; Gemini is asked only for pages with no text
+    and no cheque boxes. Never raises: [] means 'unknown', and the caller
+    falls back to the count-based doc_kind."""
+    try:
+        meta = getattr(app_ext, "pdf_meta", None)
+        if not meta:
+            return []
+        per_page = checks_per_page_from_manifest(len(app_ext.pages), manifest)
+
+        def ask(idx):
+            import io
+            buf = io.BytesIO()
+            thumb = app_ext.pages[idx].copy()
+            thumb.thumbnail((900, 900))
+            thumb.save(buf, format="PNG")
+            from check_extractor import gemini_text
+            answer = gemini_text(_page_kinds.AI_PROMPT, buf.getvalue())
+            return (answer or "").strip().lower().strip(".'\" ")
+
+        return _page_kinds.classify_pages(meta, per_page, ai=ask)
+    except Exception as e:
+        print(f"  page_kinds failed (non-fatal): {type(e).__name__}: {e}")
+        return []
 
 
 def _job_from_row(row: dict) -> dict:
@@ -399,6 +428,7 @@ def _job_from_row(row: dict) -> dict:
         "file_size": row.get("file_size"),
         "doc_format": row.get("doc_format"),
         "doc_kind": row.get("doc_kind"),
+        "page_kinds": row.get("page_kinds"),
         "total_pages": row.get("total_pages", 0),
         "total_checks": row.get("total_checks", 0),
         "checks": checks,
@@ -1058,9 +1088,11 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
         jobs[job_id]["checks"] = checks
 
         # ── Create Supabase DB row (one row per PDF job) ─────────
+        jobs[job_id]["page_kinds"] = _compute_page_kinds(app_ext, manifest)
         jobs[job_id]["doc_kind"] = classify_document(
             jobs[job_id]["total_pages"], len(checks),
             checks_per_page_from_manifest(jobs[job_id]["total_pages"], manifest),
+            jobs[job_id]["page_kinds"],
         )
         db_row = _insert_check_job({
             "job_id": job_id,
@@ -1068,6 +1100,7 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
             "status": "detecting",
             "doc_format": jobs[job_id]["doc_format"],
             "doc_kind": jobs[job_id]["doc_kind"],
+            "page_kinds": jobs[job_id]["page_kinds"] or None,
             "total_pages": jobs[job_id]["total_pages"],
             "total_checks": len(checks),
             "checks_data": json.dumps([]),
@@ -1491,9 +1524,11 @@ async def upload_analyze(
 
         # Same verdict the upload page computes (frontend/lib/document-kind.ts),
         # persisted so History can tell a statement from a sheet of cheques.
+        page_kinds = _compute_page_kinds(app_ext, manifest)
         doc_kind = classify_document(
             len(app_ext.pages), len(manifest),
             checks_per_page_from_manifest(len(app_ext.pages), manifest),
+            page_kinds,
         )
 
         # Store in memory
@@ -1506,6 +1541,7 @@ async def upload_analyze(
             "file_hash": file_hash,
             "doc_format": doc_format,
             "doc_kind": doc_kind,
+            "page_kinds": page_kinds,
             "total_pages": len(app_ext.pages),
             "total_checks": len(manifest),
             "checks": checks,
@@ -1546,6 +1582,7 @@ async def upload_analyze(
             "status": "analyzed",
             "doc_format": doc_format,
             "doc_kind": doc_kind,
+            "page_kinds": page_kinds or None,
             "total_pages": len(app_ext.pages),
             "total_checks": len(manifest),
             "file_size": file_size,
@@ -1602,6 +1639,8 @@ async def upload_analyze(
             "file_size": file_size,
             "doc_format": doc_format,
             "doc_kind": doc_kind,
+            "page_kinds": page_kinds,
+            "page_summary": _page_kinds.summarize(page_kinds, len(manifest)) if page_kinds else None,
             "total_pages": len(app_ext.pages),
             "total_checks": len(manifest),
             "pages": pages_info,
@@ -2300,6 +2339,7 @@ def list_jobs(request: Request, limit: int = 50, offset: int = 0, status: str = 
                     "pdf_name": db_job.get("pdf_name", ""),
                     "doc_format": db_job.get("doc_format"),
                     "doc_kind": db_job.get("doc_kind"),
+                    "page_kinds": db_job.get("page_kinds"),
                     "total_pages": db_job.get("total_pages", 0),
                     "total_checks": db_job.get("total_checks", 0),
                     "checks": checks_data,

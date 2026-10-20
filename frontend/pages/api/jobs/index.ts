@@ -133,6 +133,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 file_size: job.file_size,
                 doc_format: job.doc_format,
                 doc_kind: job.doc_kind ?? null,
+                page_kinds: job.page_kinds ?? null,
                 total_pages: job.total_pages,
                 total_checks: job.total_checks,
                 checks: checks,

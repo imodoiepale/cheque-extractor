@@ -30,11 +30,32 @@
 
 export type DocumentKind = 'cheque-sheet' | 'bank-statement' | 'single-cheque' | 'no-cheques';
 
+/** What one page is, from backend/page_kinds.py (text layer first, AI for the rest). */
+export type PageKind = 'statement' | 'cheque-images' | 'both' | 'other';
+
 export interface DocumentSignals {
   totalPages: number;
   totalCheques: number;
   /** Cheques found on each page, in page order. */
   chequesPerPage: number[];
+  /** Per-page kinds when the backend produced them; a transaction page settles it. */
+  pageKinds?: PageKind[] | null;
+}
+
+/**
+ * "Statement + 227 cheque images" — the one line Overview and the process page
+ * show. Mirrors summarize() in backend/page_kinds.py.
+ */
+export function summarizeKinds(pageKinds: PageKind[] | null | undefined, totalCheques: number): string | null {
+  if (!pageKinds || pageKinds.length === 0) return null;
+  const kinds = new Set(pageKinds);
+  const hasStatement = kinds.has('statement') || kinds.has('both');
+  const hasImages = kinds.has('cheque-images') || kinds.has('both') || totalCheques > 0;
+  const images = `${totalCheques} cheque image${totalCheques === 1 ? '' : 's'}`;
+  if (hasStatement && hasImages) return `Statement + ${images}`;
+  if (hasStatement) return 'Statement only';
+  if (hasImages) return images;
+  return 'No statement or cheques found';
 }
 
 export interface DocumentVerdict {
@@ -75,6 +96,16 @@ export function classifyDocument(s: DocumentSignals): DocumentVerdict {
   const pages = Math.max(0, s.totalPages || 0);
   const cheques = Math.max(0, s.totalCheques || 0);
   const perPage = s.chequesPerPage ?? [];
+
+  // A transaction page anywhere settles it, even with no cheque images at all.
+  if (s.pageKinds?.some((k) => k === 'statement' || k === 'both')) {
+    const summary = summarizeKinds(s.pageKinds, cheques);
+    return {
+      kind: 'bank-statement',
+      confidence: 'high',
+      reason: summary ?? 'Transaction pages found',
+    };
+  }
 
   if (cheques === 0) {
     return {
