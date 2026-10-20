@@ -14,9 +14,14 @@ CREATE TABLE IF NOT EXISTS qb_entries (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Add columns to integrations table if they don't exist
+-- Add columns to integrations table if they don't exist.
+-- On a fresh database the table does not exist yet (it is created further down,
+-- with these same columns), so only touch it when it is already there.
 DO $$
 BEGIN
+  IF to_regclass('public.integrations') IS NULL THEN
+    RETURN;
+  END IF;
   IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'integrations' AND column_name = 'qb_client_id') THEN
     ALTER TABLE integrations ADD COLUMN qb_client_id TEXT;
   END IF;
@@ -35,6 +40,7 @@ END $$;
 ALTER TABLE qb_entries ENABLE ROW LEVEL SECURITY;
 
 -- Service role can manage qb_entries
+DROP POLICY IF EXISTS "Service role can manage qb_entries" ON qb_entries;
 CREATE POLICY "Service role can manage qb_entries"
   ON qb_entries
   FOR ALL

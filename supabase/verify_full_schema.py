@@ -16,10 +16,11 @@ byte (the live schema was partly built by hand), or anything about Supabase
 Auth/Storage services themselves. See the "drift" section of the README note
 printed at the end.
 """
+import os
 import re
-import shutil
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 
 import psycopg
@@ -121,7 +122,7 @@ def run(conn_uri, label):
         try:
             c.execute(sql)
         except psycopg.Error as e:
-            diag = e.diagnostic
+            diag = e.diag
             print(f"FAIL ({label}): {diag.severity}: {diag.message_primary}")
             if diag.message_detail:
                 print(f"  detail: {diag.message_detail}")
@@ -137,6 +138,40 @@ def run(conn_uri, label):
             return False
     print(f"ok   ({label})")
     return True
+
+
+def locate_failure(admin_uri):
+    """After the one-shot run fails, replay migration by migration in a fresh
+    database, twice, and list EVERY file that errors (pass 1: empty database,
+    pass 2: already applied, which is the idempotency test). Errors do not stop
+    the survey, so later failures may be knock-on effects of earlier ones."""
+    sql = FULL.read_text(encoding="utf-8")
+    pieces = re.split(r"^-- =+\n-- (\d{3}_[^\n]*\.sql)\n-- =+\n", sql, flags=re.M)
+    # pieces = [header, name1, body1, name2, body2, ...]; the last body ends with COMMIT;
+    dbname = "loc_" + uuid.uuid4().hex[:8]
+    with psycopg.connect(admin_uri, autocommit=True) as c:
+        c.execute(f'CREATE DATABASE "{dbname}"')
+    uri = admin_uri.rsplit("/", 1)[0] + "/" + dbname
+    try:
+        with psycopg.connect(uri, autocommit=True) as c:
+            c.execute(SHIM)
+            for label in ("pass 1, empty database", "pass 2, already applied"):
+                print(f"  -- {label}")
+                failed = 0
+                for name, body in zip(pieces[1::2], pieces[2::2]):
+                    body = re.sub(r"\n*COMMIT;\s*$", "\n", body)
+                    try:
+                        c.execute(body)
+                    except psycopg.Error as e:
+                        failed += 1
+                        d = e.diag
+                        extra = " | ".join(x for x in (d.message_detail, d.context and d.context.strip().splitlines()[-1]) if x)
+                        print(f"  FAIL {name}: {d.message_primary}" + (f"  [{extra}]" if extra else ""))
+                if not failed:
+                    print("  all migrations applied cleanly")
+    finally:
+        with psycopg.connect(admin_uri, autocommit=True) as c:
+            c.execute(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)')
 
 
 def check(conn_uri):
@@ -162,14 +197,21 @@ def main():
         sys.exit("FULL_SCHEMA.sql missing: run python supabase/build_full_schema.py first")
     import pgserver
     install_fake_extensions()
-    tmp = Path(tempfile.mkdtemp(prefix="kyriq_schema_check_"))
+    # initdb is slow (minutes on some machines), so the cluster is kept between
+    # runs and each run gets a brand-new empty database inside it.
+    base = Path(os.environ.get("KYRIQ_PG_DIR") or Path(tempfile.gettempdir()) / "kyriq_schema_check_pg")
+    srv = pgserver.get_server(base, cleanup_mode="stop")
+    admin_uri = srv.get_uri()
+    dbname = "chk_" + uuid.uuid4().hex[:8]
+    with psycopg.connect(admin_uri, autocommit=True) as c:
+        c.execute(f'CREATE DATABASE "{dbname}"')
+    uri = admin_uri.rsplit("/", 1)[0] + "/" + dbname
     try:
-        srv = pgserver.get_server(tmp / "pg", cleanup_mode="delete")
-        uri = srv.get_uri()
         with psycopg.connect(uri, autocommit=True) as c:
             c.execute(SHIM)
         ok = run(uri, "first run, empty database") and run(uri, "second run, idempotent")
         if not ok:
+            locate_failure(admin_uri)
             sys.exit(1)
         bad = check(uri)
         if bad:
@@ -177,7 +219,8 @@ def main():
             sys.exit(1)
         print("FULL_SCHEMA.sql: clean rebuild, idempotent, expected objects present")
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        with psycopg.connect(admin_uri, autocommit=True) as c:
+            c.execute(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)')
 
 
 if __name__ == "__main__":
