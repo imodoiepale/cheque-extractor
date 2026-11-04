@@ -71,8 +71,6 @@
       </div>
     </div>
     <div class="profile-divider"></div>
-    <button id="btn-qb-disconnect" class="btn-profile-disconnect">Disconnect this company</button>
-    <div class="profile-divider"></div>
     <button id="btn-profile-logout" class="btn-profile-logout">Sign out</button>
   </div>
 
@@ -193,6 +191,11 @@
     </button>
     <button id="btn-qb-reconnect" class="btn-qb-reconnect" title="Re-authenticate with QuickBooks Online">Reconnect</button>
 
+    <div id="usage-block" class="usage-block" role="alert" style="display:none;">
+      <span id="usage-block-msg"></span>
+      <button id="btn-choose-plan" class="btn-sm btn-primary">Choose a plan</button>
+    </div>
+
     <!-- Connection status + usage meter + open-QB (client list item 7) -->
     <div class="company-bar-status">
       <span id="qb-status" class="qb-status" title="QuickBooks connection">Not connected</span>
@@ -204,6 +207,7 @@
         <div class="usage-meter-track"><div id="usage-meter-fill" class="usage-meter-fill"></div></div>
       </div>
       <button id="btn-open-qb" class="btn-open-qb" title="Open QuickBooks on the active company">Open QuickBooks</button>
+      <button id="btn-qb-disconnect" class="btn-qb-disconnect" title="Disconnect this company from Kyriq">Disconnect</button>
     </div>
   </div>
 

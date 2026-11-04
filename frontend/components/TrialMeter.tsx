@@ -67,7 +67,7 @@ export default function TrialMeter() {
 
   return (
     <Link
-      href="/settings?tab=billing"
+      href="/billing"
       aria-label={label}
       title={label}
       className="flex h-9 shrink-0 items-center gap-2 rounded-pill border border-glass-border bg-surface/80 px-2.5 press hover:bg-surface"
@@ -75,7 +75,9 @@ export default function TrialMeter() {
       <span className="text-[11px] font-medium leading-none text-ink-soft">Trial</span>
 
       {over ? (
-        <span className={`text-[11px] font-semibold leading-none ${tone.text}`}>Ended</span>
+        <span className={`text-[11px] font-semibold leading-none ${tone.text}`}>
+          {status.blockReason === 'realm_trial_already_used' ? 'Used' : 'Ended'}
+        </span>
       ) : (
         <>
           {/* Numbers first: the bar is the glance, the digits are the answer. */}

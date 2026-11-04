@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { getActiveAccountName } from '@/components/AccountSwitcher';
 import { Settings, Loader2, AlertCircle, RefreshCw, Upload, Wrench, CheckCircle } from 'lucide-react';
 import { Badge, Button, ConfirmDialog, Dialog, ErrorState, Toast, friendlyError } from '@/components/ui';
 import { applyFixToQB, applyFixesToQB, computeCorrections } from './utils/fixDiscrepancy';
@@ -381,6 +382,14 @@ export default function QBComparisonsPage() {
     });
     return Array.from(accounts).sort();
   }, [qbEntries]);
+
+  // The account picked in the top bar decides what this page shows.
+  useEffect(() => {
+    setSelectedAccount(getActiveAccountName() || 'all');
+    const onChange = (e: Event) => setSelectedAccount((e as CustomEvent).detail?.name || 'all');
+    window.addEventListener('kyriq_account_changed', onChange);
+    return () => window.removeEventListener('kyriq_account_changed', onChange);
+  }, [setSelectedAccount]);
 
   // Load vouched status on mount
   useEffect(() => {

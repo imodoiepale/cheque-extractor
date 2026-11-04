@@ -26,6 +26,14 @@ let _tenantIdCache = null; // { userId, tenantId, cachedAt }
  * Fields can be a plain string, a number, or an object like { value: "...", confidence: 0.9 }.
  * Falls back to null — never returns [object Object].
  */
+// Our APIs and FastAPI return errors in several shapes, and `detail` may be an
+// object or a list. Always hand the panel a sentence, never [object Object].
+function apiErrorText(body, fallback) {
+  const d = body?.detail;
+  if (typeof d === 'string') return d;
+  return d?.message || body?.message || (typeof body?.error === 'string' && body.error) || fallback;
+}
+
 function safeStr(f) {
   if (f == null) return null;
   if (typeof f === 'string') return f.trim() || null;
@@ -1217,13 +1225,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (!qbAuthHost) return { error: 'No frontend or backend URL configured' };
           log('OPEN_QB_AUTH: fetching Intuit auth URL from', qbAuthHost);
           try {
-            const apiRes = await fetch(`${qbAuthHost}/api/qbo/auth?source=extension`, {
-              headers: { 'Authorization': `Bearer ${s.access_token}`, 'Content-Type': 'application/json' }
+            const get = (token) => fetch(`${qbAuthHost}/api/qbo/auth?source=extension`, {
+              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
             });
-            const data = await apiRes.json();
+            let apiRes = await get(s.access_token);
+            if (apiRes.status === 401 && s.refresh_token) {
+              // Stale access token: refresh once and retry.
+              const refreshed = await supabaseAuth('token?grant_type=refresh_token', { refresh_token: s.refresh_token }).catch(() => null);
+              if (refreshed?.access_token) { await saveSession(refreshed); apiRes = await get(refreshed.access_token); }
+            }
+            const data = await apiRes.json().catch(() => ({}));
             if (!apiRes.ok || !data.authUrl) {
-              logErr('OPEN_QB_AUTH: error from ' + qbAuthHost, data.error || data.detail || data.message);
-              return { error: data.detail || data.error || data.message || `Server returned ${apiRes.status}` };
+              const why = apiErrorText(data, `Server returned ${apiRes.status}`);
+              logErr('OPEN_QB_AUTH: error from ' + qbAuthHost, why);
+              return { error: why };
             }
             log('OPEN_QB_AUTH: opening Intuit OAuth page', data.authUrl);
             await chrome.tabs.create({ url: data.authUrl });
@@ -1375,7 +1390,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               if (refreshed?.access_token) { await saveSession(refreshed); res = await post(refreshed.access_token); }
             }
             const body = await res.json().catch(() => ({}));
-            if (!res.ok) return { error: body.error || `Disconnect failed (${res.status})` };
+            if (!res.ok) return { error: apiErrorText(body, `Disconnect failed (${res.status})`) };
             log('DISCONNECT_QB: disconnected', { realmId: msg.realmId || 'all' });
             return { success: true };
           } catch (e) {
@@ -1840,7 +1855,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             });
             const data = await res.json();
             // 409 = same file uploaded before; the backend explains it in `message`.
-            if (!res.ok) return { error: data.detail || data.error || data.message || `Upload failed (${res.status})`, duplicate: !!data.duplicate, previousUploadedAt: data.previous_last_uploaded_at || data.previous_uploaded_at || null };
+            if (!res.ok) return { error: apiErrorText(data, `Upload failed (${res.status})`), blocked: res.status === 402, blockReason: data.detail?.reason || data.reason || null, duplicate: !!data.duplicate, previousUploadedAt: data.previous_last_uploaded_at || data.previous_uploaded_at || null };
             log('UPLOAD_DOCUMENT success', { job_id: data.job_id });
             return { success: true, job_id: data.job_id, job: data };
           } catch (e) {
