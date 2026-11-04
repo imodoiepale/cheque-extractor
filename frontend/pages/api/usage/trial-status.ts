@@ -53,6 +53,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   return res.status(200).json({
     tenantId: ctx.tenantId,
+    role: ctx.role,
     plan: s.plan ?? null,
     subscriptionStatus: s.subscription_status ?? null,
 

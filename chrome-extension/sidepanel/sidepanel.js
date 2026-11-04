@@ -3192,6 +3192,13 @@ async function refreshUsageMeter() {
   } catch (e) {
     dbg(`Usage fetch threw: ${e?.message || e}`, 'warn');
   }
+  // Connecting companies is admin-only on the server. Hide the buttons only when
+  // the role is known, so a failed fetch can't lock an admin out of them.
+  const notAdmin = !!usage?.role && usage.role !== 'admin';
+  for (const id of ['#btn-qb-disconnect', '#btn-qb-reconnect']) {
+    const b = $(id);
+    if (b) b.style.display = notAdmin ? 'none' : '';
+  }
   usageBlockReason = usage && usage.processingAllowed === false ? (usage.blockReason || 'disabled') : null;
   const blockEl = $('#usage-block');
   if (blockEl) {

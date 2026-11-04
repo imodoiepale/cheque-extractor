@@ -230,11 +230,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if (memo)           entryPatch.memo         = memo;
     if (amountNum != null) entryPatch.amount    = String(amountNum);
     if (Object.keys(entryPatch).length > 0) {
-      await supabase
+      // Intuit ids repeat across companies: only this company's row.
+      let entryUpdate = supabase
         .from('qb_entries')
         .update(entryPatch)
         .eq('intuit_id', txnId)
         .eq('qb_type', txnType);
+      if (realmId) entryUpdate = entryUpdate.eq('realm_id', realmId);
+      await entryUpdate;
     }
 
     const updatedEntity = writeParsed?.[txnType] || writeParsed?.[Object.keys(writeParsed)[0]] || {};

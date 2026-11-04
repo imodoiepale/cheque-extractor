@@ -27,9 +27,11 @@ export default async function handler(
     const supabase = createAuthenticatedClient(req);
 
     // Try to fetch stored entries from qb_entries table
-    const { data: entries, error: dbError } = await supabase
-      .from('qb_entries')
-      .select('*')
+    // Only the selected company's rows, plus file imports ('' has no company).
+    const realmId = typeof req.query.realmId === 'string' ? req.query.realmId : '';
+    let query = supabase.from('qb_entries').select('*');
+    if (realmId) query = query.in('realm_id', [realmId, '']);
+    const { data: entries, error: dbError } = await query
       .order('date', { ascending: false })
       .limit(5000);
 
