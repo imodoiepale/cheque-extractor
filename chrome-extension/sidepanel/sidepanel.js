@@ -1654,6 +1654,25 @@ function setUploadStatus(state, title, msg = '', actions = []) {
   $('#progress-spinner')?.classList.toggle('done', state !== 'loading');
 }
 
+// Same wording as the app (frontend/lib/usage-block.ts).
+function blockReasonMessage(reason) {
+  if (reason === 'trial_check_limit_reached') return 'Your free trial has used all 250 checks. Your history stays available.';
+  if (reason === 'trial_expired') return 'Your 14-day free trial has ended. Your history stays available.';
+  if (reason === 'realm_trial_already_used') return 'This QuickBooks company has already used its free trial. Choose a plan to continue. Your history stays available.';
+  return 'Processing is disabled for this account. Your history stays available.';
+}
+
+function openBilling() {
+  chrome.tabs.create({ url: 'https://kyriq.com/billing' });
+}
+
+function showPlanPrompt(reason, back) {
+  setUploadStatus('warn', 'Choose a plan to keep processing', blockReasonMessage(reason), [
+    { label: 'Choose a plan', primary: true, onClick: openBilling },
+    back,
+  ]);
+}
+
 function fmtUploadDate(iso) {
   if (!iso) return 'previously';
   const d = new Date(iso);
@@ -1695,6 +1714,11 @@ async function runExtraction(opts = {}) {
   const retry = { label: 'Try again', primary: true, onClick: () => runExtraction(opts) };
   const back  = { label: 'Back', onClick: () => setUploadStep(1) };
 
+  // Fresh check, so someone who just paid is not held up by an old answer.
+  // If it can't be read, the server still enforces the block on upload.
+  await refreshUsageMeter();
+  if (usageBlockReason) { showPlanPrompt(usageBlockReason, back); return; }
+
   // ── Duplicate check (skipped once the user chose to upload again) ──
   if (!confirmReupload) {
     setUploadStatus('loading', 'Checking your documents');
@@ -1733,6 +1757,11 @@ async function runExtraction(opts = {}) {
   if (uploadRes?.duplicate) {
     appendLog(`Server: ${uploadRes.error}`, 'err');
     showDuplicate(file.name, fmtUploadDate(uploadRes.previousUploadedAt));
+    return;
+  }
+  if (uploadRes?.blocked) {
+    appendLog(`Upload blocked: ${uploadRes.blockReason || 'plan'}`, 'err');
+    showPlanPrompt(uploadRes.blockReason, back);
     return;
   }
   if (uploadRes?.error || !uploadRes?.job_id) {
@@ -2510,18 +2539,21 @@ function bindEvents() {
   $('#btn-ext-options')?.addEventListener('click', () => chrome.runtime.openOptionsPage());
 
   // ── Disconnect QB (profile panel) ──
+  $('#btn-choose-plan')?.addEventListener('click', openBilling);
   $('#btn-qb-disconnect')?.addEventListener('click', async () => {
-    hide('#profile-panel');
     const active = connections.find(c => c.is_active);
-    const name = active?.company_name || 'this company';
+    // Without a company the server would disconnect every one of them.
+    if (!active?.realm_id) { alert('Choose a company to disconnect first.'); return; }
+    const name = active.company_name || 'this company';
     if (!confirm(`Disconnect ${name} from Kyriq? You can connect it, or another company, again at any time.`)) return;
     dbg('Disconnecting QB...');
     showLoading('Disconnecting QuickBooks...');
-    const res = await sendMsg({ type: 'DISCONNECT_QB', realmId: active?.realm_id });
+    const res = await sendMsg({ type: 'DISCONNECT_QB', realmId: active.realm_id }, 45000);
     hideLoading();
-    if (res?.error) {
-      dbg(`Disconnect QB error: ${res.error}`, 'error');
-      alert(`Could not disconnect QuickBooks: ${res.error}`);
+    if (!res || res.error) {
+      const why = res?.error || 'Kyriq did not answer in time. Reopen this panel to check whether it went through.';
+      dbg(`Disconnect QB error: ${why}`, 'error');
+      alert(`Could not disconnect QuickBooks: ${why}`);
       return;
     }
     connections = [];
@@ -2538,7 +2570,9 @@ function bindEvents() {
     if (res?.success) {
       dbg('QB OAuth tab opened — complete auth and return here', 'success');
     } else {
-      dbg(`QB reconnect error: ${res?.error || 'unknown'}`, 'error');
+      const why = res?.error || 'Kyriq did not answer in time. Try again.';
+      dbg(`QB reconnect error: ${why}`, 'error');
+      alert(`Could not reconnect QuickBooks: ${why}`);
     }
   });
 
@@ -3146,6 +3180,7 @@ function setQbStatus(state, label) {
  * report different numbers. Stays hidden when the figure is unknown rather
  * than showing a made-up allowance.
  */
+let usageBlockReason = null;
 async function refreshUsageMeter() {
   const wrap = $('#usage-meter');
   if (!wrap) return;
@@ -3156,6 +3191,13 @@ async function refreshUsageMeter() {
     if (res?.error) dbg(`Usage fetch: ${res.error}`, 'warn');
   } catch (e) {
     dbg(`Usage fetch threw: ${e?.message || e}`, 'warn');
+  }
+  usageBlockReason = usage && usage.processingAllowed === false ? (usage.blockReason || 'disabled') : null;
+  const blockEl = $('#usage-block');
+  if (blockEl) {
+    blockEl.style.display = usageBlockReason ? '' : 'none';
+    const msg = $('#usage-block-msg');
+    if (msg) msg.textContent = usageBlockReason ? blockReasonMessage(usageBlockReason) : '';
   }
   if (!usage) { wrap.style.display = 'none'; return; }
 

@@ -7,6 +7,7 @@ import DropzoneUpload from './components/DropzoneUpload';
 import MultiFileQueue, { type QueueRow } from './components/MultiFileQueue';
 import BatchSegregation from './components/BatchSegregation';
 import type { PageKind } from '@/lib/document-kind';
+import { blockReasonMessage } from '@/lib/usage-block';
 import PageSelectGrid, {
   defaultPageSelection,
   selectedRange,
@@ -105,12 +106,9 @@ const EXTRACTION_METHODS = ['ai'] as const;
 /** The upload was blocked by the trial or billing gate — never fall back past this. */
 class ProcessingBlocked extends Error {
   constructor(public readonly detail: Record<string, any>) {
-    const parts: string[] = [];
-    if (detail?.reason === 'trial_expired') parts.push('Your 14-day trial has ended.');
-    else if (detail?.reason === 'trial_check_limit_reached') parts.push('You have used all 250 trial cheques.');
-    else if (detail?.reason) parts.push('Processing is currently paused.');
-    if (typeof detail?.checksRemaining === 'number') parts.push(`${detail.checksRemaining} cheques remaining.`);
-    super(parts.join(' ') || detail?.message || 'Processing is not available on your plan right now.');
+    // The proxy's gate sends a flat body; the backend's nests it under `detail`.
+    const reason = detail?.reason ?? detail?.detail?.reason;
+    super(reason ? blockReasonMessage(reason) : detail?.message || 'Processing is not available on your plan right now.');
     this.name = 'ProcessingBlocked';
   }
 }

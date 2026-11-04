@@ -12,6 +12,7 @@ import { cn } from '@/lib/utils';
 import { useSpelling } from '@/hooks/useSpelling';
 import { useQueryClient } from '@tanstack/react-query';
 import { qk } from '@/lib/queries';
+import { blockReasonMessage } from '@/lib/usage-block';
 
 /**
  * Billing & usage.
@@ -453,6 +454,8 @@ export default function BillingPage() {
 
   /* Trial meter numbers, only ever derived when we actually have them. */
   const allowance = trial?.planCheckAllowance ?? trial?.trialCheckLimit ?? null;
+  // This firm never had a trial clock, so its days and remaining figures mean nothing.
+  const trialUsedElsewhere = trial?.blockReason === 'realm_trial_already_used';
   const usedPct =
     allowance && allowance > 0
       ? Math.min(100, Math.max(0, (trial!.checksUsedThisPeriod / allowance) * 100))
@@ -763,16 +766,18 @@ export default function BillingPage() {
                   {trial?.plan || 'Trial'}
                 </p>
                 <p className="mt-0.5 text-[11px] text-ink-faint capitalize">
-                  {trial?.subscriptionStatus || 'no subscription'}
+                  {trialUsedElsewhere ? 'Trial already used' : trial?.subscriptionStatus || 'no subscription'}
                 </p>
               </GlassPanel>
               <GlassPanel tone="plain" radius="tile" padding="sm">
                 <p className="text-eyebrow text-ink-faint">Days left</p>
                 <p className="nums mt-1 text-sm font-semibold text-ink-strong">
-                  {trial?.daysRemaining ?? '-'}
+                  {trialUsedElsewhere ? '-' : trial?.daysRemaining ?? '-'}
                 </p>
                 <p className="mt-0.5 text-[11px] text-ink-faint">
-                  {trial?.trialEndsAt
+                  {trialUsedElsewhere
+                    ? 'no trial on this company'
+                    : trial?.trialEndsAt
                     ? new Date(trial.trialEndsAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
                     : 'not on a trial'}
                 </p>
@@ -788,10 +793,12 @@ export default function BillingPage() {
               <GlassPanel tone="plain" radius="tile" padding="sm">
                 <p className="text-eyebrow text-ink-faint">Remaining</p>
                 <p className="nums mt-1 text-sm font-semibold text-ink-strong">
-                  {trial?.checksRemaining == null ? 'Unlimited' : whole(trial.checksRemaining)}
+                  {trialUsedElsewhere ? '-' : trial?.checksRemaining == null ? 'Unlimited' : whole(trial.checksRemaining)}
                 </p>
                 <p className="mt-0.5 text-[11px] text-ink-faint">
-                  {trial?.billingPeriodEnd
+                  {trialUsedElsewhere
+                    ? 'choose a plan'
+                    : trial?.billingPeriodEnd
                     ? `resets ${new Date(trial.billingPeriodEnd).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`
                     : 'no period set'}
                 </p>
@@ -822,7 +829,7 @@ export default function BillingPage() {
 
             {trial?.blockReason && (
               <p role="alert" className="mt-3 rounded-tile border border-error-border bg-error-bg px-3 py-2 text-xs text-error-text">
-                Processing is blocked: {trial.blockReason}
+                {blockReasonMessage(trial.blockReason)}
               </p>
             )}
             {trial?.isComped && trial.compReason && (

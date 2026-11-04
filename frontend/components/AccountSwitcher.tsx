@@ -26,6 +26,7 @@ import { ChevronDown, Check, CreditCard, Landmark, Loader2, RefreshCw } from 'lu
  * the popover is opaque. Rows are a local plain pill, never a Button variant.
  */
 const STORAGE_KEY = 'kyriq_active_account';
+const NAME_KEY = 'kyriq_active_account_name';
 
 const TRIGGER =
   'flex items-center gap-2 h-9 px-2.5 rounded-pill text-left press max-w-[15rem] ' +
@@ -42,6 +43,8 @@ const ROW =
 export interface QbAccount {
   id: string;
   name: string;
+  /** What qb_entries.account holds: sub-accounts read "Parent:Child". */
+  fullName?: string;
   accountType: string;
   accountSubType: string | null;
   currentBalance: number | null;
@@ -53,6 +56,16 @@ export function getActiveAccount(): string {
   if (typeof window === 'undefined') return '';
   try {
     return localStorage.getItem(STORAGE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+/** The selected account as it reads on qb_entries, for pages that filter by it. */
+export function getActiveAccountName(): string {
+  if (typeof window === 'undefined') return '';
+  try {
+    return localStorage.getItem(NAME_KEY) || '';
   } catch {
     return '';
   }
@@ -134,15 +147,27 @@ export default function AccountSwitcher() {
   }, []);
 
   const select = useCallback((id: string) => {
+    const acct = accounts.find((a) => a.id === id);
+    const name = acct ? acct.fullName || acct.name : '';
     setActiveId(id);
     try {
       localStorage.setItem(STORAGE_KEY, id);
+      localStorage.setItem(NAME_KEY, name);
     } catch {
       /* ignore — the filter is a convenience, not state anything depends on */
     }
     setOpen(false);
-    window.dispatchEvent(new CustomEvent('kyriq_account_changed', { detail: { account: id } }));
-  }, []);
+    window.dispatchEvent(new CustomEvent('kyriq_account_changed', { detail: { account: id, name } }));
+  }, [accounts]);
+
+  // Re-apply the saved choice once accounts load: this clears an account left
+  // over from another company, and fills in the name for selections saved
+  // before the name was stored.
+  useEffect(() => {
+    if (!realmId || !accountsQ.data || !activeId) return;
+    const acct = accounts.find((a) => a.id === activeId);
+    if (!acct || getActiveAccountName() !== (acct.fullName || acct.name)) select(acct ? activeId : '');
+  }, [realmId, accountsQ.data, accounts, activeId, select]);
 
   const grouped = useMemo(
     () =>

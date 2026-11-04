@@ -322,7 +322,10 @@ export function intelligentMatch(extractions: CheckExtraction[], qbEntries: Quic
   // Phase 3: Unmatched QB entries
   qbEntries.forEach(qb => {
     if (matchedQbIds.has(qb.id)) return;
-    
+    // A deposit with no number (an opening balance, say) is not a missing cheque.
+    // A cheque without a number still shows: that one is a real issue.
+    if (qb.qb_type === 'Deposit' && !qb.checkNumber.trim()) return;
+
     rows.push({
       id: `qb-${qb.id}`,
       checkNumber: qb.checkNumber,
