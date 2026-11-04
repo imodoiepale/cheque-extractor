@@ -55,7 +55,9 @@ export const qk = {
   trialStatus: ['trial-status'] as const,
   // Not keyed by realm: the realm arrives after first render and a realm key
   // fetched the entries twice. A company switch invalidates this key instead.
-  quickbooksEntries: (_realmId?: string | null) => ['quickbooks-entries'] as const,
+  // Without a company this is the prefix, which invalidates every company's rows.
+  quickbooksEntries: (realmId?: string | null) =>
+    (realmId ? ['quickbooks-entries', realmId] : ['quickbooks-entries']) as readonly string[],
   integrations: ['integrations'] as const,
   matches: ['matches'] as const,
 };
@@ -105,7 +107,10 @@ export function useTrialStatus() {
 export function useQuickbooksEntries(realmId: string | null | undefined) {
   return useQuery({
     queryKey: qk.quickbooksEntries(realmId),
-    queryFn: () => apiFetch<{ entries?: any[] }>('/api/quickbooks/entries').then((d) => d.entries || []),
+    queryFn: () =>
+      apiFetch<{ entries?: any[] }>(
+        `/api/quickbooks/entries${realmId ? `?realmId=${encodeURIComponent(realmId)}` : ''}`
+      ).then((d) => d.entries || []),
   });
 }
 

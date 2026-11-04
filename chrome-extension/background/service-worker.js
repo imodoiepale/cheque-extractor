@@ -34,6 +34,14 @@ function apiErrorText(body, fallback) {
   return d?.message || body?.message || (typeof body?.error === 'string' && body.error) || fallback;
 }
 
+// qb_entries filter: the active company's rows plus file imports (''). Without
+// an active company, no filter, as the caller is reading the tenant's rows.
+async function activeRealmFilter(tenantId) {
+  const conns = await supabaseRequest(`qb_connections?tenant_id=eq.${tenantId}&is_active=eq.true&select=realm_id&limit=1`).catch(() => []);
+  const realm = conns?.[0]?.realm_id;
+  return realm ? `&realm_id=in.("",${realm})` : '';
+}
+
 function safeStr(f) {
   if (f == null) return null;
   if (typeof f === 'string') return f.trim() || null;
@@ -923,7 +931,9 @@ async function pullQBTransactions() {
 
     // ── 1. qb_entries (primary — matching reads from here) ────────────────────
     const allQBEntries = allTxns.map(t => ({
-      id:           t.txn_id,
+      // Same id as /api/qbo/pull-checks: Intuit ids repeat across companies.
+      id:           `${t.txn_id}:${t.realm_id}:${t.tenant_id}`,
+      realm_id:     t.realm_id,
       intuit_id:    t.txn_id.split('-').slice(1).join('-'),
       tenant_id:    t.tenant_id,
       qb_type:      t.txn_type,
@@ -997,7 +1007,7 @@ async function runFullMatch(extractedChecks) {
 
   // qb_entries is the canonical source (561+ records). qb_transactions is empty (extension-only legacy store).
   const entries = await supabaseRequest(
-    `qb_entries?tenant_id=eq.${tenantId}&select=id,intuit_id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc&limit=5000`,
+    `qb_entries?tenant_id=eq.${tenantId}&realm_id=in.("",${realmId})&select=id,intuit_id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc&limit=5000`,
     { method: 'GET' }
   ).catch(() => []);
 
@@ -1634,7 +1644,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           let entries;
           try {
             entries = await supabaseRequest(
-              `qb_entries?tenant_id=eq.${tenantIdQb}&select=id,intuit_id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc&limit=5000`
+              `qb_entries?tenant_id=eq.${tenantIdQb}${await activeRealmFilter(tenantIdQb)}&select=id,intuit_id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc&limit=5000`
             );
           } catch (fetchErr) {
             logErr('GET_QB_TXNS: supabase fetch failed', fetchErr);
@@ -2316,7 +2326,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // encodeURIComponent the query so spaces and special chars don't break the PostgREST filter
           const safeQuery = encodeURIComponent(msg.query || '');
           const results = await supabaseRequest(
-            `qb_entries?tenant_id=eq.${tid2}&or=(payee.ilike.%25${safeQuery}%25,check_number.ilike.%25${safeQuery}%25)&order=date.desc&limit=20`
+            `qb_entries?tenant_id=eq.${tid2}${await activeRealmFilter(tid2)}&or=(payee.ilike.%25${safeQuery}%25,check_number.ilike.%25${safeQuery}%25)&order=date.desc&limit=20`
           ).catch(() => []);
           return { results: results || [] };
         }
@@ -2450,7 +2460,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
           const [entries, approvedChecks] = await Promise.all([
             supabaseRequest(
-              `qb_entries?tenant_id=eq.${tenantId}&select=id,intuit_id,check_number,date,amount,payee,qb_type&limit=5000`
+              `qb_entries?tenant_id=eq.${tenantId}${await activeRealmFilter(tenantId)}&select=id,intuit_id,check_number,date,amount,payee,qb_type&limit=5000`
             ).catch(() => []),
             supabaseRequest(
               `checks?tenant_id=eq.${tenantId}&status=eq.approved&select=check_number,amount,check_date&limit=5000`
@@ -2534,7 +2544,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
             // Fetch the qb_entry to get check_number / amount for cross-joining
             const entries = await supabaseRequest(
-              `qb_entries?tenant_id=eq.${tenantId}&intuit_id=eq.${intuitId}&select=intuit_id,check_number,amount,payee,account,memo,date,qb_type&limit=1`
+              `qb_entries?tenant_id=eq.${tenantId}${await activeRealmFilter(tenantId)}&intuit_id=eq.${intuitId}&select=intuit_id,check_number,amount,payee,account,memo,date,qb_type&limit=1`
             ).catch(() => []);
             const entry = (entries || [])[0];
             if (!entry) return { match: localHit || null };

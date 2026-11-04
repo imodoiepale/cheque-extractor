@@ -918,7 +918,7 @@ export default async function handler(
 
         } else {
 
-          // Clear old QB entries for this tenant before storing new ones
+          // Clear old QB entries for this company before storing new ones
 
           await supabase
 
@@ -926,7 +926,8 @@ export default async function handler(
 
             .delete()
 
-            .eq('tenant_id', tenantId);
+            .eq('tenant_id', tenantId)
+            .in('realm_id', [token.connection.realmId, '']);
 
           
 
@@ -940,7 +941,10 @@ export default async function handler(
 
               filteredEntries.map(e => ({
 
-                id: e.id,
+                // Intuit ids repeat across companies, and this id is the table's primary key.
+                id: `${e.id}:${token.connection.realmId}:${tenantId}`,
+
+                realm_id: token.connection.realmId,
 
                 intuit_id: e.intuit_id || null,
 

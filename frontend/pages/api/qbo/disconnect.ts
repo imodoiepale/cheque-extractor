@@ -94,8 +94,10 @@ export default async function handler(
       }
     }
 
-    // Clear stored QB entries so stale data doesn't persist (re-pulled on next sync).
-    const { error: deleteError } = await supabase.from('qb_entries').delete().eq('tenant_id', tenantId);
+    // Clear this company's stored entries so stale data doesn't persist (re-pulled on next sync).
+    let entriesDelete = supabase.from('qb_entries').delete().eq('tenant_id', tenantId);
+    if (realmId) entriesDelete = entriesDelete.eq('realm_id', realmId);
+    const { error: deleteError } = await entriesDelete;
     if (deleteError) console.warn('Failed to clear qb_entries (non-critical):', deleteError);
 
     let delQuery = supabase.from('qb_connections').delete().eq('tenant_id', tenantId);
@@ -113,6 +115,17 @@ export default async function handler(
       .select('id, realm_id, company_name, access_token, refresh_token, token_expires_at, is_active')
       .eq('tenant_id', tenantId)
       .order('connected_at', { ascending: false });
+    // A trial block is tied to the company that caused it. Once that company is
+    // gone the firm isn't using anyone else's trial; reconnecting it blocks again.
+    const service = createServiceClient();
+    const { data: tenant } = await service.from('tenants').select('trial_blocked_realm_id').eq('id', tenantId).maybeSingle();
+    if (tenant?.trial_blocked_realm_id && !remaining?.some((c: any) => c.realm_id === tenant.trial_blocked_realm_id)) {
+      await service
+        .from('tenants')
+        .update({ trial_blocked_reason: null, trial_blocked_realm_id: null, trial_blocked_at: null })
+        .eq('id', tenantId);
+    }
+
     const next = remaining?.find((c: any) => c.is_active) || remaining?.[0] || null;
     if (next && !next.is_active) {
       await supabase.from('qb_connections').update({ is_active: true }).eq('id', next.id);
