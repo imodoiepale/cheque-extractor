@@ -292,9 +292,19 @@ let _accountFilter    = ''; // account name to filter matches + QB txns ('' = al
 let _matchSourceFilter = ''; // qb_source filter on Matches tab ('' = all)
 
 // ── QB endpoint-missing banner (kyriq.com not yet deployed) ─
+// A connection problem stays on screen until the next pull, so routine status
+// messages and an earlier banner's hide timer can't remove it.
+let _qbBannerHeld = false;
+let _bannerHideTimer = null;
+function holdBanner() {
+  _qbBannerHeld = true;
+  clearTimeout(_bannerHideTimer);
+}
+
 function showQBEndpointMissingBanner(msg) {
   const banner = $('#match-banner');
   if (!banner) return;
+  holdBanner();
   banner.innerHTML = `
     <span>${escHtml(msg || 'Token refresh endpoint not found — please deploy the latest frontend build.')}</span>
     <a id="btn-qb-deploy-link" href="https://kyriq.com/settings" target="_blank" class="btn-sm btn-qb" style="margin-left:8px;padding:3px 10px;font-size:11px;">Open Web App</a>`;
@@ -307,6 +317,7 @@ function showQBReconnectBanner(msg) {
   setQbStatus('stale');
   const banner = $('#match-banner');
   if (!banner) return;
+  holdBanner();
   banner.innerHTML = `
     <span>${escHtml(msg || 'QuickBooks authorization expired.')}</span>
     <button id="btn-qb-reconnect-banner" class="btn-sm btn-qb" style="margin-left:8px;padding:3px 10px;font-size:11px;">Reconnect QB</button>`;
@@ -447,6 +458,8 @@ async function handleQBOAuthComplete(msg) {
     renderCompanySelect();
     const sync = loadChecksIntoMatches({ pull: true, force: true });
     showView('main');
+    setQbStatus('connected');
+    refreshUsageMeter();
     await sync;
     dbg('QB auto-connect flow complete', 'success');
   } catch (e) {
@@ -714,6 +727,7 @@ function handlePullResult(pullRes, where) {
     dbg(`QB token expired (${where}) — reconnect required`, 'error');
     return true;
   }
+  if (!pullRes.error) setQbStatus('connected'); // clears a stale "Reconnect" once the token recovers
   _cachedQB = null; // QB Data tab shows fresh data next time
   dbg(`QB sync (${where}): ${pullRes.count || 0} transactions`);
   if (pullRes.partialErrors?.length) {
@@ -743,6 +757,7 @@ async function loadChecksIntoMatches({ pull = false, force = false } = {}) {
         renderMatches();
       }
     }
+    if (pull) _qbBannerHeld = false; // this pull decides whether the problem is still there
     updateMatchesBanner('syncing', pull ? 'Syncing QuickBooks…' : 'Refreshing…');
     const [res, pullRes] = await Promise.all([
       sendMsg({ type: 'GET_CHECKS', force }).catch(e => ({ checks: [], error: e?.message })),
@@ -792,7 +807,9 @@ async function loadChecksIntoMatches({ pull = false, force = false } = {}) {
 
 function updateMatchesBanner(state, count) {
   const banner = $('#match-banner');
-  if (!banner) return;
+  if (!banner || _qbBannerHeld) return;
+  clearTimeout(_bannerHideTimer);
+  banner.className = 'match-banner'; // routine status must not inherit an earlier warning's style
   if (state === 'syncing') {
     banner.textContent = count || 'Syncing…';
     banner.style.display = '';
@@ -1466,7 +1483,8 @@ function showBanner(msg, type = 'warn', autoHideMs = 8000) {
   banner.style.removeProperty('background');
   banner.style.removeProperty('color');
   banner.style.display = '';
-  if (autoHideMs > 0) setTimeout(() => { if (banner) banner.style.display = 'none'; }, autoHideMs);
+  clearTimeout(_bannerHideTimer);
+  if (autoHideMs > 0) _bannerHideTimer = setTimeout(() => { banner.style.display = 'none'; }, autoHideMs);
 }
 function showWarningBanner(msg) { showBanner(msg, 'warn', 8000); }
 function showSuccessBanner(msg) { showBanner(msg, 'success', 6000); }
