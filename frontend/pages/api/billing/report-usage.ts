@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { sendMeterEvent, stripeConfig, StripeError } from '@/lib/billing/stripe';
 import { cronAuthorised, isMissingSchema, service } from '@/lib/billing/service';
+import { splitUsage, type NotBilled, type UsageDecision, type UsageRow } from '@/lib/billing/usage-split';
 
 /**
  * POST /api/billing/report-usage   (cron / operator)
@@ -10,8 +11,10 @@ import { cronAuthorised, isMissingSchema, service } from '@/lib/billing/service'
  * state."
  *
  * Reads usage_ledger rows with stripe_event_id IS NULL (migration 027 has a
- * partial index for exactly this query), sends one meter event per row, then
- * stamps the row. Exactly-once comes from two independent places:
+ * partial index for exactly this query). The overage price is a flat rate with
+ * no free tier, so only cheques above the plan allowance are sent. The rest are
+ * stamped 'included', 'trial' or 'comp' and never reach Stripe (usage-split.ts).
+ * Exactly-once for the rows that are sent comes from two independent places:
  *
  *   * Stripe's `identifier` is the ledger row id, so a re-send of the same row
  *     is deduplicated at Stripe.
@@ -27,6 +30,8 @@ import { cronAuthorised, isMissingSchema, service } from '@/lib/billing/service'
  * money, so it is not left open to anyone who finds the path.
  */
 const DEFAULT_LIMIT = 500;
+const PAGE = 1000;
+const STAMP_CHUNK = 200;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   // GET is allowed because Vercel Cron invokes a route with GET; POST stays for
@@ -47,12 +52,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const limit = Math.min(Number(req.body?.limit) || DEFAULT_LIMIT, 2000);
   const svc = service();
 
-  // Only tenants Stripe knows about. Trial and comp usage is recorded in the
-  // ledger but has nothing to meter against, and reporting it would invoice a
-  // firm that never subscribed.
+  // Only tenants Stripe knows about. Usage from before a firm subscribed stays
+  // unstamped until then, and is stamped 'trial' here rather than billed.
   const { data: tenants, error: tenantError } = await svc
     .from('tenants')
-    .select('id, stripe_customer_id, subscription_status')
+    .select('id, stripe_customer_id, plan_check_allowance, subscription_started_at')
     .not('stripe_customer_id', 'is', null);
 
   if (tenantError) {
@@ -63,6 +67,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const customerByTenant = new Map<string, string>();
+  const tenantById = new Map((tenants || []).map((t) => [t.id, t]));
   for (const t of tenants || []) {
     if (t.stripe_customer_id) customerByTenant.set(t.id, t.stripe_customer_id);
   }
@@ -72,7 +77,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   const { data: rows, error: ledgerError } = await svc
     .from('usage_ledger')
-    .select('id, tenant_id, quantity, occurred_at')
+    .select('id, tenant_id, quantity, occurred_at, billing_period_start')
     .is('stripe_event_id', null)
     .in('tenant_id', [...customerByTenant.keys()])
     .order('occurred_at', { ascending: true })
@@ -87,21 +92,64 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   let reported = 0;
   let failed = 0;
+  let held = 0;
   const errors: string[] = [];
 
-  // ponytail: one HTTP call per ledger row. Ceiling — at 10,000 cheques a month
-  // that is 10,000 calls, which is fine on a nightly run and is NOT fine if it
-  // ever runs per-request. Upgrade path: aggregate per tenant per hour and use
-  // `<tenant>:<hour>` as the identifier, which keeps Stripe-side dedup.
+  // Decide for each tenant first, counting everything already used in the
+  // affected periods. A tenant that can't be read is skipped, never billed blind.
+  const decisions = new Map<string, UsageDecision>();
+  for (const tenantId of new Set((rows || []).map((r) => r.tenant_id))) {
+    const pending = (rows || []).filter((r) => r.tenant_id === tenantId);
+    const periods = [...new Set(pending.map((r) => r.billing_period_start))];
+    const tenant = tenantById.get(tenantId);
+
+    const periodRows: UsageRow[] = [];
+    let loadError: string | null = null;
+    for (let from = 0; !loadError; from += PAGE) {
+      const { data, error } = await svc
+        .from('usage_ledger')
+        .select('id, quantity, occurred_at, billing_period_start, stripe_event_id')
+        .eq('tenant_id', tenantId)
+        .in('billing_period_start', periods)
+        .order('id')
+        .range(from, from + PAGE - 1);
+      if (error) loadError = error.message;
+      periodRows.push(...(data || []));
+      if ((data || []).length < PAGE) break;
+    }
+    const { data: grants, error: grantError } = await svc
+      .from('comp_grants')
+      .select('starts_at, expires_at, revoked_at')
+      .eq('tenant_id', tenantId);
+
+    if (loadError || grantError) {
+      failed += pending.length;
+      errors.push(`${tenantId}: ${loadError || grantError?.message}`);
+      continue;
+    }
+
+    const inBatch = new Set(pending.map((r) => r.id));
+    const split = splitUsage(periodRows, {
+      allowance: tenant?.plan_check_allowance ?? null,
+      subscriptionStartedAt: tenant?.subscription_started_at ?? null,
+      compGrants: grants || [],
+    });
+    for (const d of split) if (inBatch.has(d.id)) decisions.set(d.id, d);
+  }
+
+  // ponytail: one HTTP call per billed cheque. Ceiling — fine on a nightly run,
+  // NOT fine if it ever runs per-request. Upgrade path: aggregate per tenant per
+  // hour and use `<tenant>:<hour>` as the identifier, which keeps Stripe-side dedup.
   for (const row of rows || []) {
     const customerId = customerByTenant.get(row.tenant_id);
-    if (!customerId) continue;
+    const decision = decisions.get(row.id);
+    if (!customerId || decision?.action !== 'meter') continue;
 
     try {
       const event = await sendMeterEvent({
         customerId,
         identifier: row.id,
-        value: row.quantity ?? 1,
+        value: decision.units,
         occurredAt: row.occurred_at ? new Date(row.occurred_at) : undefined,
         config: cfg,
       });
@@ -132,8 +180,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
   }
 
+  // Not billed: marked so they aren't read again. No stripe_reported_at, because
+  // nothing went to Stripe. A failed stamp is retried by the next run.
+  const notBilled: Record<NotBilled, string[]> = { included: [], trial: [], comp: [] };
+  for (const d of decisions.values()) {
+    if (d.action === 'stamp') notBilled[d.stamp].push(d.id);
+    if (d.action === 'hold') held += 1;
+  }
+  for (const [stamp, ids] of Object.entries(notBilled)) {
+    for (let i = 0; i < ids.length; i += STAMP_CHUNK) {
+      const { error } = await svc
+        .from('usage_ledger')
+        .update({ stripe_event_id: stamp })
+        .in('id', ids.slice(i, i + STAMP_CHUNK))
+        .is('stripe_event_id', null);
+      if (error) {
+        console.error(`[billing/report-usage] could not stamp ${stamp}:`, error.message);
+        errors.push(`${stamp}: ${error.message}`);
+      }
+    }
+  }
+  if (held > 0) console.error(`[billing/report-usage] ${held} rows held: tenant has no plan allowance`);
+
   return res.status(failed > 0 ? 207 : 200).json({
     reported,
+    included: notBilled.included.length,
+    notBillable: notBilled.trial.length + notBilled.comp.length,
+    held,
     failed,
     pending: (rows || []).length,
     stripeEnv: cfg.env,
