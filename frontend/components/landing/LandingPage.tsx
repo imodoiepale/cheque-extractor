@@ -638,6 +638,12 @@ export function Pricing() {
               <Link href={CTA_HREF} className={cn(buttonVariants({ variant: 'primary', size: 'md', block: true }))}>
                 {CTA_LABEL}
               </Link>
+              <Link
+                href={`${CTA_HREF}?subscribe=${p.tier}`}
+                className={cn('mt-3 text-center text-[13px] font-semibold hover:underline', p.popular ? 'text-shell-text' : 'text-brand-deep')}
+              >
+                Skip the trial and subscribe monthly
+              </Link>
             </div>
           ))}
         </div>

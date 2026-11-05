@@ -1,10 +1,11 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   Receipt, FileText, CreditCard, Calendar, Zap, TrendingUp, AlertCircle, Clock, ExternalLink,
 } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { isPlanTier } from '@/lib/pricing';
 import {
   Badge, Button, ErrorState, friendlyError, GlassCard, GlassCardTitle, GlassPanel, KpiTile, Skeleton,
 } from '@/components/ui';
@@ -359,6 +360,23 @@ export default function BillingPage() {
       if (!url) throw new Error('Stripe did not return a checkout URL.');
       window.location.href = url;
     });
+
+  // Signed up to pay rather than trial. Cleared before checkout, so abandoning
+  // Stripe or hitting an error leaves an ordinary trial, not a redirect loop.
+  const subscribeHandled = useRef(false);
+  useEffect(() => {
+    if (!sub || subscribeHandled.current) return;
+    subscribeHandled.current = true;
+    (async () => {
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+      const tier = session?.user?.user_metadata?.subscribe_plan;
+      if (!isPlanTier(tier)) return;
+      await supabase.auth.updateUser({ data: { subscribe_plan: null } });
+      if (!sub.subscription?.stripeSubscriptionId && sub.stripe?.configured !== false) startCheckout(tier);
+    })().catch((e) => setActionError(e?.message || 'Could not start checkout.'));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once, when the subscription first loads
+  }, [sub]);
 
   const startAnnual = (plan: string) =>
     run(`annual:${plan}`, async () => {
@@ -777,7 +795,7 @@ export default function BillingPage() {
                 <p className="mt-0.5 text-[11px] text-ink-faint">
                   {trialUsedElsewhere
                     ? 'no trial on this company'
-                    : trial?.trialEndsAt
+                    : trial?.trialEndsAt && trial.daysRemaining != null
                     ? new Date(trial.trialEndsAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
                     : 'not on a trial'}
                 </p>

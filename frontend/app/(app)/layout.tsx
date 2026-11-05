@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import Image from 'next/image';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import UserProfile from '@/components/UserProfile';
 import QBProviderWrapper from '@/components/QBProviderWrapper';
 import ShellTopBar from '@/components/ShellTopBar';
@@ -14,11 +14,20 @@ import { useEffect, useState } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { apiFetch, makeAppQueryClient, qk } from '@/lib/queries';
 import { useRealtimeInvalidate } from '@/hooks/useRealtimeTable';
+import { createClient } from '@/lib/supabase/client';
+import { isPlanTier } from '@/lib/pricing';
 
 /** App-wide live refresh: job rows and QB connections, one socket topic each. */
 function LiveSync() {
+  const router = useRouter();
   useRealtimeInvalidate('check_jobs', undefined, [qk.jobs]);
   useRealtimeInvalidate('qb_connections', undefined, [qk.qbConnections]);
+  // Signed up to pay rather than trial: Billing starts checkout and clears this.
+  useEffect(() => {
+    createClient().auth.getSession().then(({ data: { session } }) => {
+      if (isPlanTier(session?.user?.user_metadata?.subscribe_plan)) router.replace('/billing');
+    }).catch(() => {});
+  }, [router]);
   // Welcome email on first sign-in instead of the next daily cron. Server-side
   // sends are keyed once per firm, so the flag only saves a request.
   useEffect(() => {
