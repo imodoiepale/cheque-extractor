@@ -23,9 +23,9 @@
         <span id="user-chip-text"></span>
         <svg width="10" height="10" viewBox="0 0 10 6" fill="none" style="flex-shrink:0;opacity:0.6"><path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
       </button>
-      <button id="btn-debug" class="icon-btn" title="Debug console" aria-label="Debug console"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg></button>
     </div>
   </header>
+  <div id="activity-bar" class="activity-bar" aria-hidden="true"></div>
 
   <!-- Profile dropdown -->
   <div id="profile-panel" class="profile-panel" style="display:none;">
@@ -72,17 +72,6 @@
     </div>
     <div class="profile-divider"></div>
     <button id="btn-profile-logout" class="btn-profile-logout">Sign out</button>
-  </div>
-
-  <!-- ═══════════════════════════════════════════
-       DEBUG PANEL (collapsed by default)
-  ═══════════════════════════════════════════ -->
-  <div id="debug-panel" style="display:none;">
-    <div class="debug-header">
-      <span>Console</span>
-      <button id="btn-debug-clear" class="debug-clear">Clear</button>
-    </div>
-    <div id="debug-log" class="debug-log"></div>
   </div>
 
   <!-- ═══════════════════════════════════════════
