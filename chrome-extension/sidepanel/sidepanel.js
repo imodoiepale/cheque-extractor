@@ -159,12 +159,20 @@ function fmtSize(bytes) {
 function fmtTs() {
   return new Date().toISOString().slice(11, 19);
 }
+// The loader under the header runs while any request is in flight.
+let _requestsInFlight = 0;
+function trackRequest(delta) {
+  _requestsInFlight += delta;
+  $('#activity-bar')?.classList.toggle('is-active', _requestsInFlight > 0);
+}
 function sendMsg(msg, timeoutMs = 10000) {
+  trackRequest(1);
   return new Promise((resolve) => {
     let settled = false;
     const settle = (val) => {
       if (settled) return;
       settled = true;
+      trackRequest(-1);
       resolve(val ?? null);
     };
     const timer = setTimeout(() => {
@@ -200,25 +208,12 @@ function barColor(pct) {
   return 'red';
 }
 
-// ── Debug logging ─────────────────────────────────────────────
+// ── Debug logging (browser DevTools only) ─────────────────────
 function dbg(msg, type = 'info') {
-  const ts = fmtTs();
-  console.log(`[Kyriq UI ${ts}] ${msg}`);
-  const log = $('#debug-log');
-  if (!log) return;
-  const line = document.createElement('div');
-  line.className = `debug-line ${type}`;
-  line.innerHTML = `<span class="ts">${ts}</span>${escHtml(msg)}`;
-  log.appendChild(line);
-  log.scrollTop = log.scrollHeight;
+  const write = type === 'error' ? console.error : type === 'warn' ? console.warn : console.log;
+  write(`[Kyriq UI ${fmtTs()}] ${msg}`);
 }
 
-// Show the debug panel — used during approval flows so the user sees
-// real-time feedback from the QB content script.
-function ensureDebugPanelOpen() {
-  const panel = $('#debug-panel');
-  if (panel && panel.style.display === 'none') panel.style.display = '';
-}
 function escHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
@@ -413,9 +408,9 @@ chrome.runtime.onMessage.addListener((msg) => {
     // happening on the page (e.g. row matching, click results) in the
     // sidepanel debug panel.
     case 'KYRIQ_CONTENT_LOG': {
-      ensureDebugPanelOpen();
       const prefix = msg.page ? `[${msg.page}] ` : '[QB] ';
       dbg(prefix + (msg.msg || ''), msg.level || 'info');
+      if (msg.level === 'error' || msg.notify) showWarningBanner(msg.msg || 'QuickBooks reported a problem.');
       return;
     }
   }
@@ -495,7 +490,7 @@ function spellText(text) {
 }
 function respellNode(root) {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
-    acceptNode: n => n.parentElement?.closest('script,style,textarea,input,#debug-panel') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
+    acceptNode: n => n.parentElement?.closest('script,style,textarea,input') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT,
   });
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
     if (!/che(?:ck|que)/i.test(n.nodeValue)) continue;
@@ -1301,7 +1296,7 @@ async function runBulkApprove(idxs) {
   let ok = 0, fail = 0;
   await runWithLimit(idxs, 3, async i => { (await approveAndClear(i)) ? ok++ : fail++; });
   renderMatches();
-  if (fail) showWarningBanner(`Approved ${ok}; ${fail} could not be approved — see the console.`);
+  if (fail) showWarningBanner(`Approved ${ok}; ${fail} could not be approved. Please review them and try again.`);
   else showSuccessBanner(`Approved ${ok} clean match${ok === 1 ? '' : 'es'}.`);
 }
 
@@ -1312,7 +1307,6 @@ async function approveAndClear(idx) {
     return false;
   }
 
-  ensureDebugPanelOpen();
   const checkId = match.check?.id;
   const jobId   = match.check?.job_id;
   const label   = match.check?.payee || match.qbTxn?.payee || `match[${idx}]`;
@@ -1416,7 +1410,6 @@ async function autoApproveCleared() {
 function fixDiscrepancyInQB(idx) {
   const match = matches[idx];
   if (!match || !match.qbTxn) return;
-  ensureDebugPanelOpen();
 
   const refNo = match.qbTxn.doc_number || match.check?.check_number || null;
   const ocrAmount = parseFloat(match.check?.amount);
@@ -2435,13 +2428,6 @@ function renderHistoryList(hist) {
 function bindEvents() {
 
   // ── Debug panel ──
-  $('#btn-debug').addEventListener('click', () => {
-    const p = $('#debug-panel');
-    p.style.display = p.style.display === 'none' || !p.style.display ? 'flex' : 'none';
-    if (p.style.display !== 'none') p.style.flexDirection = 'column';
-  });
-  $('#btn-debug-clear').addEventListener('click', () => { $('#debug-log').innerHTML = ''; });
-
   // ── Auth tab toggle ──
   $$('.auth-tab').forEach(tab => {
     tab.addEventListener('click', () => {

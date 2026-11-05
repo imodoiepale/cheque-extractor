@@ -1001,7 +1001,7 @@ function passesAutoApprove(rules, score, result) {
 }
 
 async function runFullMatch(extractedChecks) {
-  const { tenantId, realmId } = await getActiveConnection();
+  const { tenantId, realm_id: realmId } = await getActiveConnection();
   const session = await getSession();
   const autoRules = await getAutoApproveRules();
 

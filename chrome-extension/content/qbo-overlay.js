@@ -73,11 +73,10 @@
     }
   }
 
-  // Pipe a one-line log up to the sidepanel debug panel so the user can see
-  // approval/click activity without opening the page DevTools console.
-  function pipeToSidepanel(msg, level = 'info') {
+  // Send a one-line log to the side panel. `notify` also shows it to the user.
+  function pipeToSidepanel(msg, level = 'info', notify = false) {
     const page = getPageType();
-    safeSendMessage({ type: 'KYRIQ_CONTENT_LOG', msg, level, page }).catch(() => {});
+    safeSendMessage({ type: 'KYRIQ_CONTENT_LOG', msg, level, page, notify }).catch(() => {});
   }
 
   /** Wait for an element matching `selector` to appear in the DOM. */
@@ -366,7 +365,11 @@
 
     // Reconcile: one code path ticks everything approved (incl. this one),
     // so two clickers can never race and toggle a row back off.
-    if (pt === 'reconcile') { await autoTickReconcile(true); return; }
+    if (pt === 'reconcile') {
+      _tickedThisPage.delete(`${normNum(newTxn.doc_number)}|${normAmt(newTxn.amount)}`);
+      await autoTickReconcile(true);
+      return;
+    }
 
     const lookup = buildLookup([newTxn]);
     let cleared  = 0;
@@ -851,10 +854,19 @@
     await autoTickReconcile();
   }
 
+  // Rows ticked or seen ticked on this page, so a row the user unticks by hand
+  // stays unticked. A new approval and navigation both release their keys.
+  const _tickedThisPage = new Set();
+  function reconcileRowKey(row) {
+    const amount = normAmt((row.cells[8]?.textContent || '').replace(/[$,()]/g, '').trim())
+                || normAmt((row.cells[9]?.textContent || '').replace(/[$,()]/g, '').trim());
+    return `${normNum(row.cells[3]?.textContent.trim())}|${amount}`;
+  }
+
   // Tick the cleared "C" on every reconcile row Kyriq approved. No UI: the
   // human approval already happened in Kyriq. Never unticks, never touches a
   // row that is already cleared. Safe to call repeatedly (60 s refresh +
-  // KYRIQ_APPROVAL_ADDED) because cleared rows are skipped.
+  // KYRIQ_APPROVAL_ADDED) because each row is only ever clicked once.
   let _autoTickInFlight = false;
   async function autoTickReconcile(forceRefresh = false) {
     if (getPageType() !== 'reconcile' || _autoTickInFlight) return;
@@ -869,7 +881,7 @@
     const seenTxnIds = new Set();
 
     for (const row of allRows) {
-      if (isAlreadyCleared(row)) continue; // already checked — skip
+      if (isAlreadyCleared(row)) { _tickedThisPage.add(reconcileRowKey(row)); continue; }
       const txn = matchReconcileRow(row, lookup);
       if (!txn) continue;
       const key = txn.intuit_id || `${txn.doc_number}|${txn.amount}`;
@@ -889,16 +901,20 @@
     const matchedFinal = pageAccount ? accountScoped : matched;
     log(`Reconcile: ${allRows.length} rows found, ${lookup.list.length} approved, ${matchedFinal.length} to clear`);
 
-    let cleared = 0;
-    for (const { row } of matchedFinal) {
-      if (isAlreadyCleared(row)) continue; // re-check: React may have re-rendered
-      const target = findClearedCheckbox(row);
-      if (!target) continue;
-      target.click();
-      if (target.tagName === 'INPUT') target.dispatchEvent(new Event('change', { bubbles: true }));
-      cleared++;
+    const { confirmed, unconfirmed } = await globalThis.kyriqTickRows(
+      matchedFinal.map(m => reconcileRowKey(m.row)),
+      {
+        clicked: _tickedThisPage,
+        findButton: key => findReconcilePageRows()
+          .find(r => reconcileRowKey(r) === key)
+          ?.querySelector('button[data-testid="clear-state-cell"]') || null,
+      }
+    );
+    if (confirmed.length) pipeToSidepanel(`Reconcile: ticked C on ${confirmed.length} Kyriq-approved row(s)`, 'success');
+    if (unconfirmed.length) {
+      const refs = unconfirmed.map(k => `#${k.split('|')[0] || k}`).join(', ');
+      pipeToSidepanel(`QuickBooks didn't confirm the C tick on ${refs}. Please check ${unconfirmed.length === 1 ? 'it' : 'them'} on the Reconcile page.`, 'warn', true);
     }
-    if (cleared) pipeToSidepanel(`Reconcile: ticked C on ${cleared} Kyriq-approved row(s)`, 'success');
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -1327,6 +1343,7 @@
     if (location.href !== _lastUrl) {
       _lastUrl = location.href;
       _currentPage = null; // reset so next navigation re-runs automation
+      _tickedThisPage.clear();
       clearTimeout(_navDebounceTimer); // cancel any in-flight nav timer
       _navDebounceTimer = setTimeout(() => {
         _navDebounceTimer = null;
