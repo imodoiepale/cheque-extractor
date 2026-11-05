@@ -34,7 +34,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { buttonVariants } from '@/components/ui';
-import { KyriqIcon, KyriqIconWhite, KyriqLogo } from './KyriqMark';
+import { KyriqIconWhite, KyriqLogo } from './KyriqMark';
 import { WaitlistForm } from './WaitlistForm';
 // Rise is the ON-MOUNT entrance used above the fold. Reveal is the
 // ON-SCROLL one for everything below it, where a mount-time keyframe has
@@ -220,7 +220,7 @@ function Hero() {
       <Image src="/landing/hero-match-sculpture-4k-v1.webp" alt="" fill priority sizes="100vw" className="object-cover object-[68%_center] sm:object-center opacity-60" aria-hidden />
       <div aria-hidden className="absolute inset-0 bg-gradient-to-b from-surface via-surface/90 to-surface/70 lg:bg-gradient-to-r lg:from-surface lg:via-surface/95 lg:to-surface/20" />
 
-      <div className="relative max-w-7xl mx-auto grid lg:grid-cols-[0.9fr_1.1fr] gap-12 xl:gap-20 items-center">
+      <div className="relative max-w-7xl mx-auto grid grid-cols-1 gap-12 xl:gap-16">
         <div className="text-left">
           <Rise>
             <span className="inline-flex items-center gap-2 px-4 py-1.5 mb-7 rounded-full bg-surface/80 backdrop-blur-xl border border-brand-tint text-xs font-semibold text-brand-deep tracking-wide shadow-contact">
@@ -266,105 +266,25 @@ function Hero() {
         </div>
 
         <Rise>
-          <div className="relative rounded-card lg:translate-y-8 lg:mt-0 mt-4">
+          <div className="relative rounded-card">
             <div aria-hidden className="absolute -inset-8 rounded-modal bg-brand/10 blur-3xl" />
             <BorderBeam size={300} duration={12} />
-            <div className="relative rounded-card overflow-hidden shadow-glass-modal border border-glass-hairline bg-surface/95 backdrop-blur-xl">
-              <MatchReviewMock />
+            <div tabIndex={0} aria-label="Screenshot of the Kyriq QuickBooks comparisons page" className="relative rounded-card overflow-x-auto shadow-glass-modal border border-glass-hairline bg-surface">
+              {/* Wide table: phones scroll it sideways so the text stays readable. */}
+              <Image
+                src="/landing/quickbooks-comparisons-real.webp"
+                alt="The Kyriq QuickBooks comparisons page, showing 15 uploaded checks compared with QuickBooks: 14 matched and 1 mismatch, each with Approve and Review actions"
+                width={2376}
+                height={1062}
+                priority
+                sizes="(max-width: 1280px) 100vw, 1280px"
+                className="block h-auto w-full min-w-[820px]"
+              />
             </div>
           </div>
         </Rise>
       </div>
     </section>
-  );
-}
-
-/** The Match & Review screen from the redesign. A still, deliberately flat. */
-function MatchReviewMock() {
-  const rows = [
-    { n: '1041', up: 'Northstar Office', upDate: '08/12/26', qb: 'Northstar Office', qbDate: '08/12/26', amt: '$1,284.60', score: 100 },
-    { n: '1042', up: 'Harbor Supply', upDate: '08/14/26', qb: 'Harbor Supply', qbDate: '08/13/26', amt: '$2,450.00', score: 86 },
-    { n: '1043', up: 'Willow Creek', upDate: '08/15/26', qb: 'Willow Creek LLC', qbDate: '08/15/26', amt: '$675.25', score: 78 },
-  ];
-  const tabs = [
-    { l: 'All Checks', n: 428, active: true },
-    { l: '100% Matches', n: 391 },
-    { l: 'Needs Attention', n: 37 },
-  ];
-  return (
-    <div className="text-left">
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-6 py-4 border-b border-glass-hairline">
-        <div className="flex items-center gap-3">
-          <KyriqIcon size={28} className="rounded-lg" />
-          <div>
-            <div className="text-[15px] font-bold text-ink-strong">Match &amp; Review</div>
-            <div className="text-[11px] text-ink-faint">Sample reconciliation</div>
-          </div>
-        </div>
-        <span className="text-[11px] font-semibold text-success-text bg-success-bg px-2.5 py-1 rounded-full">Every check stays visible</span>
-      </div>
-
-      <div className="flex gap-1.5 px-4 sm:px-6 pt-4 overflow-x-auto">
-        {tabs.map((t) => (
-          <span
-            key={t.l}
-            className={cn(
-              'whitespace-nowrap text-[11px] sm:text-xs font-semibold px-3 py-1.5 rounded-full border',
-              t.active ? 'bg-brand text-white border-brand' : 'bg-surface text-ink-soft border-glass-hairline'
-            )}
-          >
-            {t.l} <span className="nums opacity-80">{t.n}</span>
-          </span>
-        ))}
-      </div>
-
-      <div className="px-4 sm:px-6 py-4">
-        <div className="hidden sm:grid grid-cols-[1fr_1fr_64px_88px] gap-3 px-3 pb-2 text-eyebrow text-ink-faint">
-          <span>Uploaded check</span>
-          <span>QuickBooks check</span>
-          <span className="text-center">Score</span>
-          <span className="text-right">Action</span>
-        </div>
-        <div className="space-y-1.5">
-          {rows.map((r) => {
-            const exact = r.score === 100;
-            return (
-              <div
-                key={r.n}
-                className="grid grid-cols-[1fr_auto] sm:grid-cols-[1fr_1fr_64px_88px] items-center gap-3 rounded-input border border-glass-hairline bg-surface px-3 py-2.5 shadow-contact"
-              >
-                <div className="min-w-0">
-                  <div className="text-xs font-semibold text-ink-strong truncate">#{r.n} · {r.up}</div>
-                  <div className="text-[11px] text-ink-faint nums">{r.upDate} · {r.amt}</div>
-                </div>
-                <div className="hidden sm:block min-w-0">
-                  <div className="text-xs font-semibold text-ink-body truncate">#{r.n} · {r.qb}</div>
-                  <div className="text-[11px] text-ink-faint nums">{r.qbDate} · {r.amt}</div>
-                </div>
-                <span className={cn('hidden sm:block text-center text-xs font-bold nums', exact ? 'text-success-text' : 'text-warning-text')}>
-                  {r.score}%
-                </span>
-                <span
-                  className={cn(
-                    'justify-self-end text-[11px] font-semibold px-3 py-1 rounded-full',
-                    exact ? 'bg-success text-white' : 'bg-brand-wash text-brand-deep'
-                  )}
-                >
-                  {exact ? 'Approve' : 'Review'}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-6 py-3 bg-surface-sunken border-t border-glass-hairline">
-        <span className="text-xs text-ink-soft">
-          <span className="font-bold text-ink-strong nums">391</span> exact matches ready
-        </span>
-        <span className="text-xs font-semibold bg-brand text-white px-4 py-2 rounded-full shadow-brand-glow">Approve all 100% matches</span>
-      </div>
-    </div>
   );
 }
 

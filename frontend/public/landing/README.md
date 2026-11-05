@@ -12,7 +12,7 @@ body copy, navigation, pricing, controls, and accessibility labels in HTML.
 | Asset | Dimensions | Intended use |
 | --- | ---: | --- |
 | `hero-match-sculpture-4k-v1.webp` | 3840 x 2160 | Hero ambient background |
-| `match-review-dashboard-4k-v1.webp` | 3840 x 2160 | Hero product showcase |
+| `quickbooks-comparisons-real.webp` | 2376 x 1062 | Hero product screenshot, the real app with demo data |
 | `workflow-background-4k-v1.webp` | 3840 x 2160 | How-it-works section background |
 | `firms-background-4k-v1.webp` | 3840 x 2160 | Accounting-firms section background |
 | `quickbooks-extension-4k-v1.webp` | 3840 x 2160 | Chrome extension showcase |
