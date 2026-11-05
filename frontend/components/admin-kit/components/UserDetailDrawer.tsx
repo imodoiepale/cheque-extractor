@@ -476,7 +476,7 @@ export function UserDetailDrawer({ userId, open, onClose, onActionComplete }: Us
                     <AlertDialogHeader>
                       <AlertDialogTitle className="text-ink-strong">Delete this account?</AlertDialogTitle>
                       <AlertDialogDescription className="text-ink-soft">
-                        This action cannot be undone. All user data will be permanently deleted.
+                        This permanently removes the login and the firm&apos;s data, and cannot be undone. Accounts with teammates, a live subscription, billing history or a QuickBooks trial claim are refused and should be suspended instead.
                       </AlertDialogDescription>
                     </AlertDialogHeader>
                     <AlertDialogFooter>

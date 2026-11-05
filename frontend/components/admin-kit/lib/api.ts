@@ -21,7 +21,10 @@ export async function callEdgeFn<T = unknown>(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`${name}: ${res.status} ${text}`);
+    let message = '';
+    try { message = JSON.parse(text)?.error; } catch { /* not JSON */ }
+    // Handlers write `error` for people to read; anything else keeps the technical detail.
+    throw new Error(typeof message === 'string' && message ? message : `${name}: ${res.status} ${text}`);
   }
 
   return res.json() as Promise<T>;
