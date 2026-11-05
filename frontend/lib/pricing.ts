@@ -37,6 +37,10 @@ export interface Plan {
   extra?: string;
 }
 
+export function isPlanTier(value: unknown): value is Plan['tier'] {
+  return PLANS.some((p) => p.tier === value);
+}
+
 export const PLANS: Plan[] = [
   { tier: 'essential', name: 'Starter', monthly: 249, annual: 2739, allowance: 1200, overage: '0.20' },
   { tier: 'professional', name: 'Professional', monthly: 649, annual: 7139, allowance: 4500, overage: '0.20', popular: true, extra: 'Priority support' },

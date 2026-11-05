@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { AlertCircle, ArrowRight, Mail, Shield, Zap } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { PLANS, isPlanTier } from '@/lib/pricing';
 import { Badge, Button, Field, GlassCard, GlassPanel, Input, friendlyError } from '@/components/ui';
 
 /**
@@ -11,8 +12,9 @@ import { Badge, Button, Field, GlassCard, GlassPanel, Input, friendlyError } fro
  *
  * First name, last name, firm name, work email, a password of at least EIGHT
  * characters, and a REQUIRED terms-and-privacy consent. No plan picker: the
- * trial is the only thing being started here, and the plan is chosen later in
- * billing.
+ * plan is chosen in billing. The one exception is ?subscribe=<tier> from the
+ * pricing page. It is saved on the account so the person goes straight to
+ * checkout at first sign-in, on whichever device they confirm their email.
  *
  * Email confirmation is on in supabase/config.toml, so a successful signUp
  * returns no session. Sending the user to /dashboard would bounce them
@@ -42,8 +44,14 @@ export default function SignupPage() {
   const [formError, setFormError] = useState('');
   const [loading, setLoading] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
+  const [subscribeTo, setSubscribeTo] = useState<(typeof PLANS)[number] | null>(null);
 
-  const set = (name: Exclude<FieldName, 'consent'>) => (e: React.ChangeEvent<HTMLInputElement>) => {
+  useEffect(() => {
+    const tier = new URLSearchParams(window.location.search).get('subscribe');
+    if (isPlanTier(tier)) setSubscribeTo(PLANS.find((p) => p.tier === tier) ?? null);
+  }, []);
+
+  const set =(name: Exclude<FieldName, 'consent'>) => (e: React.ChangeEvent<HTMLInputElement>) => {
     setValues((v) => ({ ...v, [name]: e.target.value }));
     // Correcting a field stops it shouting before the next submit.
     setErrors((prev) => (prev[name] ? { ...prev, [name]: undefined } : prev));
@@ -85,6 +93,7 @@ export default function SignupPage() {
             full_name: `${values.firstName.trim()} ${values.lastName.trim()}`.trim(),
             company_name: values.firmName.trim(),
             terms_accepted_at: new Date().toISOString(),
+            ...(subscribeTo ? { subscribe_plan: subscribeTo.tier } : {}),
           },
         },
       });
@@ -118,7 +127,9 @@ export default function SignupPage() {
         <h1 className="font-heading text-2xl font-semibold text-ink-strong">Confirm your email</h1>
         <p className="mt-2 text-sm text-ink-body">
           We sent a confirmation link to <strong className="text-ink-strong">{sentTo}</strong>.
-          Click it to verify your address, your 14-day trial starts then.
+          {subscribeTo
+            ? `Click it to verify your address, then sign in and we'll take you to secure checkout for the ${subscribeTo.name} plan.`
+            : 'Click it to verify your address, your 14-day trial starts then.'}
         </p>
         <GlassPanel tone="sunken" radius="input" padding="sm" className="mt-5 text-left">
           <p className="text-xs text-ink-body">
@@ -139,10 +150,13 @@ export default function SignupPage() {
     <GlassCard padding="none" className="p-6 sm:p-8">
       <div className="mb-7 text-center">
         <Badge tone="brand" size="sm" className="mb-3">
-          <Zap size={12} aria-hidden /> 14-day free trial &middot; No credit card required
+          <Zap size={12} aria-hidden />{' '}
+          {subscribeTo
+            ? `${subscribeTo.name} plan · $${subscribeTo.monthly.toLocaleString('en-US')} per month`
+            : <>14-day free trial &middot; No credit card required</>}
         </Badge>
         <h1 className="font-heading text-2xl font-semibold text-ink-strong sm:text-3xl">
-          Start your free trial
+          {subscribeTo ? 'Create your account' : 'Start your free trial'}
         </h1>
         <p className="mt-1.5 text-sm text-ink-body">
           Reconcile cheques against QuickBooks in minutes, not days.
@@ -274,7 +288,11 @@ export default function SignupPage() {
         </div>
 
         <Button type="submit" block loading={loading} icon={<ArrowRight size={16} />}>
-          {loading ? 'Creating account…' : 'Create Account and Start Trial'}
+          {loading
+            ? 'Creating account…'
+            : subscribeTo
+            ? 'Create Account and Continue to Payment'
+            : 'Create Account and Start Trial'}
         </Button>
       </form>
 
