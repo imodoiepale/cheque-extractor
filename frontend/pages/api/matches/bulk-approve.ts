@@ -51,15 +51,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     // One QuickBooks transaction clears one cheque. When two cheques (a repeated
     // image, a double presentment) point at the same QB transaction, or one is
     // already approved against it, none of them is bulk-approved: a person picks.
+    // Counted across every live match for the tenant, not just this selection, so
+    // approving one copy by id cannot slip past its sibling outside the request.
     const txnIds = [...new Set((candidates || []).map((m: any) => m.qb_txn_id).filter(Boolean))];
-    const { data: taken } = txnIds.length
+    const { data: claims, error: claimErr } = txnIds.length
       ? await supabase.from('matches').select('qb_txn_id').eq('tenant_id', tenantId)
-          .eq('status', 'approved').in('qb_txn_id', txnIds)
-      : { data: [] as any[] };
-    const shared = new Set((taken || []).map((m: any) => m.qb_txn_id));
+          .in('status', ['matched', 'pending', 'discrepancy', 'approved']).in('qb_txn_id', txnIds)
+      : { data: [] as any[], error: null };
+    // Fail closed: without this answer a duplicate could be approved.
+    if (claimErr) return res.status(500).json({ error: claimErr.message });
     const seen = new Map<string, number>();
-    (candidates || []).forEach((m: any) => m.qb_txn_id && seen.set(m.qb_txn_id, (seen.get(m.qb_txn_id) || 0) + 1));
-    seen.forEach((n, id) => { if (n > 1) shared.add(id); });
+    (claims || []).forEach((m: any) => seen.set(m.qb_txn_id, (seen.get(m.qb_txn_id) || 0) + 1));
+    const shared = new Set([...seen].filter(([, n]) => n > 1).map(([id]) => id));
     const toApprove = (candidates || []).filter((m: any) => !m.qb_txn_id || !shared.has(m.qb_txn_id));
     const skipped = (candidates || []).length - toApprove.length;
     if (!toApprove.length) return res.json({ approved: 0, skippedDuplicates: skipped });

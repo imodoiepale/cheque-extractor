@@ -204,18 +204,25 @@ export function normalizeCheckNum(val: string | null | undefined): string | null
   return String(val).trim().replace(/\D/g, '').replace(/^0+/, '') || null;
 }
 
-// Same bar as PAYEE_MATCH_MIN in the extension's service worker.
+// Same rule and bar as payeesAgree / PAYEE_MATCH_MIN in the extension's
+// background/service-worker.js; change both together.
 const PAYEE_MATCH_MIN = 60;
+
+function payeeKey(s: string | null | undefined): string {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\b(the|inc|incorporated|llc|ltd|limited|co|corp|corporation|company|plc)\b/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
 
 /**
  * Do two payee names name the same party? Comparing the first five characters
- * passed "Red Oak Technology" as "Red Oak Supplies". A missing name on either
- * side is not a disagreement.
+ * passed "Red Oak Technology" as "Red Oak Supplies"; "The Home Depot Inc." and
+ * "Home Depot" must still agree. A missing name on either side is not a disagreement.
  */
 export function payeesAgree(a: string | null | undefined, b: string | null | undefined): boolean {
-  const x = normalizeString(a), y = normalizeString(b);
+  const x = payeeKey(a), y = payeeKey(b);
   if (!x || !y) return true;
-  if (x.includes(y) || y.includes(x)) return true; // "Cedar Repair" vs "Cedar Repair LLC"
+  if (x.includes(y) || y.includes(x)) return true;
   return stringSimilarity(x, y) >= PAYEE_MATCH_MIN;
 }
 
@@ -231,7 +238,8 @@ export function calculateMatchConfidence(ext: CheckExtraction, qb: QuickBooksEnt
   const qbAmount = parseAmount(qb.amount);
   if (Math.abs(extAmount - qbAmount) < 0.01) score += 30;
   
-  if (payeesAgree(extVal(extraction, 'payee'), qb.payee)) score += 20;
+  const extPayee = extVal(extraction, 'payee');
+  if (extPayee && qb.payee && payeesAgree(extPayee, qb.payee)) score += 20; // a missing name earns nothing
   
   // Normalize dates before comparing to avoid format mismatch ("2026-02-02" vs "Feb 2, 2026")
   const extDateNorm = toYMD(extVal(extraction, 'checkDate') || '');

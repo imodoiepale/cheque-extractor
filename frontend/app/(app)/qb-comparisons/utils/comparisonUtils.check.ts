@@ -41,6 +41,7 @@ assert.equal(row('974211').matchStatus, 'mismatch', 'a different payee must be a
 assert.equal(row('974212').matchStatus, 'mismatch', 'a $360 difference must be a mismatch');
 
 assert.ok(payeesAgree('Cedar Repair', 'Cedar Repair LLC'), 'a suffix is the same payee');
+assert.ok(payeesAgree('Home Depot', 'The Home Depot Inc.'), 'an article and suffix are the same payee');
 assert.ok(payeesAgree('', 'Anyone'), 'a missing payee is not a disagreement');
 assert.ok(!payeesAgree('Red Oak Technology', 'Red Oak Supplies'), 'a shared first word is not the same payee');
 
