@@ -49,8 +49,8 @@ failures = []
 resp, calls = run(fail_table="checks")
 if resp.status_code != 500:
     failures.append(f"a refused checks delete returned {resp.status_code}, expected 500")
-if "check_jobs" in calls:
-    failures.append("the job row was deleted even though its checks were not")
+if calls != ["checks"]:
+    failures.append(f"a refused checks delete still touched {calls[1:]}; nothing else may go")
 if "j1" not in api_server.jobs:
     failures.append("the job left memory even though the database still holds it")
 

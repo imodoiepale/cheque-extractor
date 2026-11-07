@@ -2996,40 +2996,24 @@ def delete_job(job_id: str, _auth=Depends(_verify_token)):
 
     print(f"Deleting job {job_id}...")
 
-    # Rows first, files after: a refused delete then leaves the document whole.
-    # Delete the job's flattened rows first: checks, matches and statement_rows
-    # carry job_id but no foreign key to check_jobs, so they outlived the job and
-    # kept showing in reconcile, reports and the extension.
-    # Every failure is collected and reported. This used to print and return
-    # "deleted successfully" regardless, so a job whose rows a foreign key held
-    # (a reconciled cheque's audit or export rows) came back on the next read.
-    failed = []
-
-    def _delete(table, query):
-        try:
-            resp = _requests.delete(f"{_sb_url}/rest/v1/{table}?{query}", headers=_sb_headers(), timeout=10)
-            if resp.status_code >= 400:
-                failed.append(f"{table}: {resp.status_code} {resp.text[:200]}")
-        except Exception as e:
-            failed.append(f"{table}: {e}")
-
+    # Rows first, files after, stopping at the first refusal. This used to print
+    # every error and return "deleted successfully", so a job whose rows a foreign
+    # key held (a reconciled cheque's audit or export rows) came back on the next
+    # read. The cheques go first: a refusal there (the usual one) loses nothing,
+    # because their matches, including approvals, only go with them (matches
+    # cascade from checks, migration 013). statement_rows carry job_id with no
+    # foreign key, so they are removed explicitly; the job row goes last.
     if _supabase_ok:
         q = _urlquote(job_id, safe="")
-        try:
-            ids = [r["id"] for r in _supabase_select("checks", columns="id", filters={"job_id": job_id}, limit=5000)]
-        except Exception as e:
-            ids = []
-            failed.append(f"checks lookup: {e}")
-        for i in range(0, len(ids), 200):
-            _delete("matches", f"check_id=in.({','.join(ids[i:i + 200])})")
-        for table in ("checks", "statement_rows"):
-            _delete(table, f"job_id=eq.{q}")
-        # The job row with all checks_data goes last, only once its rows are gone.
-        if not failed:
-            _delete("check_jobs", f"job_id=eq.{q}")
-        if failed:
-            print(f"  Delete failed: {failed}")
-            raise HTTPException(500, "The document could not be fully deleted: " + "; ".join(failed))
+        for table in ("checks", "statement_rows", "check_jobs"):
+            try:
+                resp = _requests.delete(f"{_sb_url}/rest/v1/{table}?job_id=eq.{q}", headers=_sb_headers(), timeout=10)
+                err = f"{resp.status_code} {resp.text[:200]}" if resp.status_code >= 400 else None
+            except Exception as e:
+                err = str(e)
+            if err:
+                print(f"  Delete failed at {table}: {err}")
+                raise HTTPException(500, f"The document could not be deleted ({table}: {err})")
         print(f"  âœ“ Deleted from database")
 
     out_path = OUTPUT_DIR / job_id
