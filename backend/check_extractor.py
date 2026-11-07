@@ -180,29 +180,41 @@ def determine_predominant_format(pages, sample_count=8):
 
 
 MICR_BAND_MIN = 0.035
+MICR_BAND_GLYPHS = 12
 
 
 def _has_micr_band(roi_bw):
     """
-    A solid band of character-height ink in the bottom quarter of the region.
+    A band of MICR-like characters in the bottom quarter of the region: rows of
+    character-height ink, holding many separate glyphs.
 
-    The fixed-strip test above misses a cheque printed inside a frame (bank
-    image pages): the frame and the white margin under the MICR line dilute the
-    strip until a real cheque scores below the bar. Measured on Michael's July
-    statement: the MICR band is ~5% of the box height on every cheque, while a
-    deposit slip's longest band is ~2.5% and a table rule is 2-3 rows. Full-width
-    rules (frames, table lines) break the run rather than extend it.
+    The fixed-strip test in _region_confidence misses a cheque printed inside a
+    frame (bank image pages): the frame and the white margin under the MICR line
+    dilute the strip until a real cheque scores below the bar. Measured on
+    Michael's July statement: the MICR band is ~5% of the box height on every
+    cheque, a deposit slip's longest band ~2.5%, a table rule 2-3 rows.
+    Full-width rows (frames, rules) break the run rather than extend it.
+
+    An ordinary line of text passes this too, so it is only ever used to rescue
+    boxes on a page that already holds a cheque passing the strict test; see
+    detect_checks_on_page. It never makes a page a cheque page or casts a format vote.
     """
     bh, bw2 = roi_bw.shape
-    fill = np.sum(roi_bw[int(bh * 0.75):] > 0, axis=1) / max(bw2, 1)
-    run = best = 0
-    for f in fill:
+    tail = roi_bw[int(bh * 0.75):]
+    fill = np.sum(tail > 0, axis=1) / max(bw2, 1)
+    run = best = end = 0
+    for i, f in enumerate(fill):
         run = run + 1 if 0.05 < f <= 0.80 else 0
-        best = max(best, run)
-    return best >= max(bh * MICR_BAND_MIN, 8)
+        if run > best:
+            best, end = run, i + 1
+    if best < max(bh * MICR_BAND_MIN, 8):
+        return False
+    cols = np.any(tail[end - best:end] > 0, axis=0).astype(np.int8)
+    glyphs = int(np.sum(np.diff(np.concatenate(([0], cols))) == 1))
+    return glyphs >= MICR_BAND_GLYPHS
 
 
-def _region_confidence(box, gray, h, w):
+def _region_confidence(box, gray, h, w, rescue=False):
     """
     How much a detected region looks like an actual cheque front, 0.0 to 1.0.
 
@@ -242,7 +254,7 @@ def _region_confidence(box, gray, h, w):
     bottom_rows = np.sum(bottom, axis=1) / 255
     bottom_row_frac = np.sum(bottom_rows > bw2 * 0.05) / max(bottom.shape[0], 1)
 
-    if (bottom_row_frac < MICR_ROW_MIN or bottom_ink < MICR_MIN) and not _has_micr_band(roi_bw):
+    if (bottom_row_frac < MICR_ROW_MIN or bottom_ink < MICR_MIN) and not (rescue and _has_micr_band(roi_bw)):
         # No MICR band. Whatever else this region looks like, it is not a cheque
         # front, so it can never clear the page gate on geometry alone.
         return 0.0
@@ -367,7 +379,15 @@ def detect_checks_on_page(pil_page, format_hint=None):
     if best < REGION_CONFIDENCE_PAGE_MIN:
         return []
 
-    return [b for b, c in scored if c >= REGION_CONFIDENCE_BOX_MIN]
+    # On a page that holds a real cheque, a framed cheque whose MICR line sits
+    # above a white margin is rescued by the band test (Michael's July page 3
+    # lost 4 of 5 cheques). It is never used to qualify a page, so statement
+    # pages and their text lines cannot become cheques through it.
+    # ponytail: a page where every cheque is framed this way still yields
+    # nothing; upgrade path is qualifying the page from the rest of the document.
+    return [b for b, c in scored
+            if c >= REGION_CONFIDENCE_BOX_MIN
+            or _region_confidence(b, gray, h, w, rescue=True) >= REGION_CONFIDENCE_BOX_MIN]
 
 
 def _box_overlaps_any(box, others, threshold=0.20):

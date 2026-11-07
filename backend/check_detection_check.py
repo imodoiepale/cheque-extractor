@@ -39,14 +39,15 @@ def cheque_page(n=3):
     return Image.fromarray(img)
 
 
-def framed_cheque_page(n=3):
-    """Cheques printed inside a frame on a grey-tinted image (bank image pages).
-    The frame and the white margin under the MICR line dilute the bottom strip;
-    Michael's July statement lost 4 of 5 page-3 cheques this way."""
-    img = blank()
+def framed_cheque_page(n=3, plain_first=True):
+    """Cheques printed inside a frame (bank image pages). The frame and the white
+    margin under the MICR line dilute the bottom strip; Michael's July statement
+    lost 4 of 5 page-3 cheques this way. As on his page, the first cheque is an
+    ordinary one that passes the strict test, which is what qualifies the page."""
+    img = np.array(cheque_page(1)) if plain_first else blank()
     bw, bh = int(W * 0.72), int(H * 0.17)
     x = (W - bw) // 2
-    for i in range(n):
+    for i in range(1 if plain_first else 0, n):
         y = int(H * 0.05) + i * int(bh * 1.25)
         cv2.rectangle(img, (x, y), (x + bw, y + bh), (0, 0, 0), 4)          # frame
         cv2.rectangle(img, (x + 12, y + 12), (x + bw - 12, y + bh - 12), (0, 0, 0), 2)  # cheque edge
@@ -55,6 +56,22 @@ def framed_cheque_page(n=3):
         # A thin MICR line (~5% of the box) with a wide white margin under it.
         for mx in range(x + 30, x + int(bw * 0.45), 9):
             cv2.line(img, (mx, y + int(bh * 0.80)), (mx, y + int(bh * 0.85)), (0, 0, 0), 4)
+    return Image.fromarray(img)
+
+
+def summary_box_page():
+    """A bordered account-summary box of real rendered text, its last line in the
+    bottom quarter. A line of text looks like a MICR band to the rescue test, so
+    a page holding only this must still yield nothing."""
+    img = blank()
+    x1, y1, x2, y2 = int(W * 0.06), int(H * 0.10), int(W * 0.94), int(H * 0.28)
+    cv2.rectangle(img, (x1, y1), (x2, y2), (0, 0, 0), 3)
+    cv2.line(img, (int(W * 0.5), y1), (int(W * 0.5), y2), (0, 0, 0), 2)
+    lines = ["BEGINNING BALANCE 161,844.03", "DEPOSITS AND CREDITS 13,000.00",
+             "CHECKS PAID 23,489.90", "SERVICE FEES 0.00", "ENDING BALANCE 151,354.13"]
+    for i, t in enumerate(lines):
+        y = y1 + int((y2 - y1) * (0.18 + 0.17 * i))
+        cv2.putText(img, t, (x1 + 20, y), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 0), 2)
     return Image.fromarray(img)
 
 
@@ -103,6 +120,13 @@ found = ce.detect_checks_on_page(framed_cheque_page(3), format_hint="A")
 expect(len(found) == 3,
        f"framed cheque page yielded {len(found)} of 3; a frame and a white margin under "
        "the MICR line must not hide a cheque")
+
+# The rescue never qualifies a page by itself: text in a box is not a cheque.
+for hint in (None, "A"):
+    found = ce.detect_checks_on_page(summary_box_page(), format_hint=hint)
+    expect(len(found) == 0, f"a statement summary box of text yielded {len(found)} cheque(s) with format_hint={hint!r}")
+expect(ce.determine_predominant_format([summary_box_page()] * 4) is None,
+       "statement text boxes must not cast a format vote")
 
 # ── 3. Confidence ranks a cheque above a statement row ───────────────────
 cg = cv2.cvtColor(np.array(cheque_page(1)), cv2.COLOR_RGB2GRAY)
