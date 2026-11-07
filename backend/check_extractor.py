@@ -179,6 +179,29 @@ def determine_predominant_format(pages, sample_count=8):
     return None
 
 
+MICR_BAND_MIN = 0.035
+
+
+def _has_micr_band(roi_bw):
+    """
+    A solid band of character-height ink in the bottom quarter of the region.
+
+    The fixed-strip test above misses a cheque printed inside a frame (bank
+    image pages): the frame and the white margin under the MICR line dilute the
+    strip until a real cheque scores below the bar. Measured on Michael's July
+    statement: the MICR band is ~5% of the box height on every cheque, while a
+    deposit slip's longest band is ~2.5% and a table rule is 2-3 rows. Full-width
+    rules (frames, table lines) break the run rather than extend it.
+    """
+    bh, bw2 = roi_bw.shape
+    fill = np.sum(roi_bw[int(bh * 0.75):] > 0, axis=1) / max(bw2, 1)
+    run = best = 0
+    for f in fill:
+        run = run + 1 if 0.05 < f <= 0.80 else 0
+        best = max(best, run)
+    return best >= max(bh * MICR_BAND_MIN, 8)
+
+
 def _region_confidence(box, gray, h, w):
     """
     How much a detected region looks like an actual cheque front, 0.0 to 1.0.
@@ -219,7 +242,7 @@ def _region_confidence(box, gray, h, w):
     bottom_rows = np.sum(bottom, axis=1) / 255
     bottom_row_frac = np.sum(bottom_rows > bw2 * 0.05) / max(bottom.shape[0], 1)
 
-    if bottom_row_frac < MICR_ROW_MIN or bottom_ink < MICR_MIN:
+    if (bottom_row_frac < MICR_ROW_MIN or bottom_ink < MICR_MIN) and not _has_micr_band(roi_bw):
         # No MICR band. Whatever else this region looks like, it is not a cheque
         # front, so it can never clear the page gate on geometry alone.
         return 0.0

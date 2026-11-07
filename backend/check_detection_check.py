@@ -39,6 +39,25 @@ def cheque_page(n=3):
     return Image.fromarray(img)
 
 
+def framed_cheque_page(n=3):
+    """Cheques printed inside a frame on a grey-tinted image (bank image pages).
+    The frame and the white margin under the MICR line dilute the bottom strip;
+    Michael's July statement lost 4 of 5 page-3 cheques this way."""
+    img = blank()
+    bw, bh = int(W * 0.72), int(H * 0.17)
+    x = (W - bw) // 2
+    for i in range(n):
+        y = int(H * 0.05) + i * int(bh * 1.25)
+        cv2.rectangle(img, (x, y), (x + bw, y + bh), (0, 0, 0), 4)          # frame
+        cv2.rectangle(img, (x + 12, y + 12), (x + bw - 12, y + bh - 12), (0, 0, 0), 2)  # cheque edge
+        for fy in (0.25, 0.45, 0.62):
+            cv2.line(img, (x + 40, y + int(bh * fy)), (x + bw - 200, y + int(bh * fy)), (40, 40, 40), 3)
+        # A thin MICR line (~5% of the box) with a wide white margin under it.
+        for mx in range(x + 30, x + int(bw * 0.45), 9):
+            cv2.line(img, (mx, y + int(bh * 0.80)), (mx, y + int(bh * 0.85)), (0, 0, 0), 4)
+    return Image.fromarray(img)
+
+
 def statement_page(rows=22):
     """A ruled transaction table: the false-positive case."""
     img = blank()
@@ -79,6 +98,11 @@ for hint in (None, "A"):
     expect(len(found) >= 1,
            f"cheque page yielded nothing with format_hint={hint!r}; "
            "the confidence gate is too strict and real cheques are being dropped")
+
+found = ce.detect_checks_on_page(framed_cheque_page(3), format_hint="A")
+expect(len(found) == 3,
+       f"framed cheque page yielded {len(found)} of 3; a frame and a white margin under "
+       "the MICR line must not hide a cheque")
 
 # ── 3. Confidence ranks a cheque above a statement row ───────────────────
 cg = cv2.cvtColor(np.array(cheque_page(1)), cv2.COLOR_RGB2GRAY)
