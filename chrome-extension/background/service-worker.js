@@ -839,8 +839,10 @@ function scoreMatch(check, qbTxn) {
   else if (sim >= 70) reasons.payee = 8;
   else if (sim >= 50) reasons.payee = 4;
   // Same number and amount but a different name (Red Oak Technology vs Red Oak
-  // Supplies) is a discrepancy to review, not a clean match.
-  if (check.payee && qbTxn.payee && sim < PAYEE_MATCH_MIN) {
+  // Supplies) is a discrepancy to review, not a clean match. A received cheque is
+  // made out to the firm itself while QB names the customer, so it is not compared.
+  const received = qbTxn.qb_source === 'cheque_received' || ['Payment', 'Deposit'].includes(qbTxn.txn_type);
+  if (!received && !payeesAgree(check.payee, qbTxn.payee)) {
     flags.push({ type: 'payee', message: `Payee differs: "${check.payee}" vs "${qbTxn.payee}"` });
   }
 
@@ -849,8 +851,23 @@ function scoreMatch(check, qbTxn) {
 }
 
 // ponytail: OCR noise in a handwritten payee can dip below this and send a true
-// match to review. That is the safe direction; raise it only with real scans.
+// match to review ("Approve anyway" still works). Raise it only with real scans.
 const PAYEE_MATCH_MIN = 60;
+
+// "The Home Depot Inc." and "Home Depot" name one party; "Red Oak Technology" and
+// "Red Oak Supplies" do not. Same rule as payeesAgree in the web app's
+// qb-comparisons/utils/comparisonUtils.ts. A missing name is not a disagreement.
+function payeeKey(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\b(the|inc|incorporated|llc|ltd|limited|co|corp|corporation|company|plc)\b/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
+function payeesAgree(a, b) {
+  const x = payeeKey(a), y = payeeKey(b);
+  if (!x || !y) return true;
+  if (x.includes(y) || y.includes(x)) return true;
+  return stringSimilarity(x, y) >= PAYEE_MATCH_MIN;
+}
 
 function statusFromScore(score, flags) {
   const hasAmtMismatch = flags.some(f => f.type === 'amount' && f.diff > 0.01);
@@ -1029,7 +1046,9 @@ function markDuplicates(results) {
     groups.get(key).push(r);
   }
   for (const group of groups.values()) {
-    if (group.length < 2) continue;
+    // A copy someone rejected is resolved; once only one copy is left it is a
+    // normal cheque again and can be approved.
+    if (group.filter(r => r.check?.status !== 'rejected').length < 2) continue;
     for (const r of group) {
       if (['approved', 'rejected', 'exported'].includes(r.check?.status)) continue;
       r.status = 'duplicate';
@@ -1666,6 +1685,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             _swChecksCache = null;
             _swChecksAt = 0;
             await chrome.storage.local.remove('kyriqChecksCache').catch(() => {});
+            // Release QB cheques this document's cheques held, so a surviving
+            // copy elsewhere can be approved (see the APPROVE_AND_CLEAR guard).
+            try {
+              const { kyriqApproved } = await chrome.storage.local.get('kyriqApproved');
+              let changed = false;
+              for (const e of Object.values(kyriqApproved || {})) {
+                if (String(e?.check_id || '').startsWith(`${msg.jobId}:`)) { e.check_id = null; changed = true; }
+              }
+              if (changed) await chrome.storage.local.set({ kyriqApproved });
+            } catch (e) { logErr('DELETE_DOCUMENT: approval holder cleanup failed', e); }
             log('DELETE_DOCUMENT success', { jobId: msg.jobId });
             return { success: true };
           } catch (e) {

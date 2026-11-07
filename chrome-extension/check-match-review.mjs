@@ -20,11 +20,13 @@ const lift = (src, name) => {
 const code = [
   sw.match(/const PAYEE_MATCH_MIN = \d+;/)[0],
   lift(sw, 'function levenshtein('), lift(sw, 'function stringSimilarity('),
+  lift(sw, 'function payeeKey('), lift(sw, 'function payeesAgree('),
   lift(sw, 'function scoreMatch('), lift(sw, 'function statusFromScore('),
   lift(sw, 'function markDuplicates('), lift(sp, 'function isCleanMatch('),
-  'return { scoreMatch, statusFromScore, markDuplicates, isCleanMatch };',
+  lift(sp, 'function canApprove('), lift(sp, 'function reviewStatus('),
+  'return { scoreMatch, statusFromScore, markDuplicates, isCleanMatch, canApprove, reviewStatus, payeesAgree };',
 ].join('\n');
-const { scoreMatch, statusFromScore, markDuplicates, isCleanMatch } = new Function(code)();
+const { scoreMatch, statusFromScore, markDuplicates, isCleanMatch, canApprove, reviewStatus, payeesAgree } = new Function(code)();
 
 // QBO setup key (13 cheques) and the 15 bank images.
 const qb = [
@@ -60,6 +62,33 @@ for (const n of ['974209', '974210']) {
 assert.equal(by('974211')[0].status, 'discrepancy', 'a different payee must be a discrepancy');
 assert.equal(by('974212')[0].status, 'discrepancy', 'a $360 amount difference must be a discrepancy');
 assert.equal(by('974913')[0].status, 'discrepancy', 'a different cheque number must be a discrepancy');
+
+// A payee or number difference stays out of Approve all but a person can still
+// approve that one row; an amount difference or a duplicate cannot be approved.
+assert.ok(canApprove(by('974211')[0]) && canApprove(by('974913')[0]), 'payee/number differences can be approved one by one');
+assert.ok(!canApprove(by('974212')[0]), 'an amount difference cannot be approved');
+assert.ok(by('974209').every(r => !canApprove(r)), 'a duplicate cannot be approved');
+
+// Undo derives the status from the flags, so it cannot turn a flagged row clean.
+for (const r of [...by('974209'), by('974211')[0], by('974212')[0]]) {
+  assert.equal(reviewStatus(r), r.status, `undo must restore ${r.check.check_number} to ${r.status}`);
+}
+
+// Name variants of one party are not a payee discrepancy.
+assert.ok(payeesAgree('Home Depot', 'The Home Depot Inc.'));
+assert.ok(payeesAgree('Cedar Repair', 'Cedar Repair, LLC'));
+assert.ok(!payeesAgree('Red Oak Technology', 'Red Oak Supplies'));
+// A received cheque is made out to the firm; QB names the customer.
+const recv = scoreMatch({ check_number: '5001', amount: 900, check_date: '2026-07-01', payee: 'Pinnacle Ridge Financial' },
+  { doc_number: '5001', amount: 900, txn_date: '2026-07-01', payee: 'Acme Customer', qb_source: 'cheque_received', txn_type: 'Payment' });
+assert.equal(statusFromScore(recv.score, recv.flags), 'pending', 'a received cheque must not be a payee discrepancy');
+
+// Rejecting the extra copy resolves the duplicate; the remaining copy can be approved.
+const resolved = markDuplicates([
+  { check: { check_number: '7', amount: 5, status: 'rejected' }, status: 'rejected' },
+  { check: { check_number: '7', amount: 5 }, status: 'matched', qbTxn: {}, amtDiff: 0 },
+]);
+assert.equal(resolved[1].status, 'matched');
 
 // A cheque a person already approved keeps its status; its twin still goes to review.
 const kept = markDuplicates([

@@ -1091,7 +1091,28 @@ function qbMissingInChecks() {
 // A match that may be approved: linked QB transaction, no amount difference.
 // The row Approve button, the confirm dialogs and "Approve clean matches" all use this.
 function isCleanMatch(m) {
-  return !!m && ['matched', 'pending'].includes(m.status) && !!m.qbTxn && !(m.amtDiff > 0.01);
+  return canApprove(m) && m.status !== 'discrepancy';
+}
+
+// One row a person has looked at may be approved even with a payee or cheque #
+// difference (a received cheque, "Home Depot" vs "The Home Depot Inc."), but never
+// with an amount difference or while it is one of several copies. Approve all
+// and auto-approve use isCleanMatch, which leaves those rows for a person.
+function canApprove(m) {
+  return !!m && ['matched', 'pending', 'discrepancy'].includes(m.status) && !!m.qbTxn && !(m.amtDiff > 0.01);
+}
+
+// Status after an undo: derived from the same flags as the service worker's
+// statusFromScore and markDuplicates, so undo cannot make a flagged row clean.
+function reviewStatus(m) {
+  const types = new Set((m.flags || []).map(f => f.type));
+  if (types.has('duplicate')) return 'duplicate';
+  if ((m.score || 0) >= 60 && (types.has('payee') || types.has('checknum') || m.amtDiff > 0.01)) return 'discrepancy';
+  return (m.score || 0) >= 95 ? 'matched' : 'pending';
+}
+
+function reviewNotes(m) {
+  return (m.flags || []).filter(f => ['payee', 'checknum', 'duplicate'].includes(f.type)).map(f => f.message);
 }
 
 // ── Auto-approve rules ─────────────────────────────────────
@@ -1185,7 +1206,7 @@ function renderMatchRow(m, index) {
       <div class="match-actions">
         <button class="btn-sm btn-ghost" data-action="review" data-idx="${index}">Review</button>
         ${m.status === 'unmatched' ? `<button class="btn-sm btn-ghost" data-action="search" data-idx="${index}">Find</button>` : ''}
-        ${isCleanMatch(m) ? `<button class="btn-sm btn-primary row-primary" data-action="approve" data-idx="${index}">Approve</button>` : ''}
+        ${canApprove(m) ? `<button class="btn-sm btn-primary row-primary" data-action="approve" data-idx="${index}">${isCleanMatch(m) ? 'Approve' : 'Approve anyway'}</button>` : ''}
         ${m.status === 'discrepancy' && m.qbTxn && m.amtDiff > 0.01 ? `<button class="btn-sm btn-ghost row-warn" data-action="fix" data-idx="${index}" title="Push the cheque amount to QuickBooks to resolve the difference">Fix in QuickBooks</button>` : ''}
         ${m.status === 'approved' ? `<button class="btn-sm btn-ghost" data-action="undo" data-idx="${index}">Undo</button>` : ''}
         ${m.status !== 'approved' ? `<button class="btn-sm btn-ghost" data-action="flag" data-idx="${index}">Flag</button>` : ''}
@@ -1198,8 +1219,7 @@ function renderMatchRow(m, index) {
           ${scoreItem('Payee', m.reasons.payee || 0, 15)}
         </div>` : ''}
         ${m.amtDiff > 0.01 ? `<p class="amount-diff">Amount differs by ${fmt(m.amtDiff)}</p>` : ''}
-        ${(m.flags || []).filter(f => ['payee', 'checknum', 'duplicate'].includes(f.type))
-          .map(f => `<p class="amount-diff">${escHtml(f.message)}</p>`).join('')}
+        ${reviewNotes(m).map(n => `<p class="amount-diff">${escHtml(n)}</p>`).join('')}
       </div>
     </div>`;
 }
@@ -1227,7 +1247,7 @@ function bindMatchEvents() {
       if (action === 'approve') { showApproveConfirm(idx); }
       else if (action === 'fix') { fixDiscrepancyInQB(idx); }
       else if (action === 'review') { openReviewModal(match.check, match); }
-      else if (action === 'undo') { match.status = match.score >= 95 ? 'matched' : 'pending'; renderMatches(); }
+      else if (action === 'undo') { match.status = reviewStatus(match); renderMatches(); }
       else if (action === 'flag') { match.status = 'flagged'; renderMatches(); }
       else if (action === 'search') {
         const query = prompt('Search QB transactions:', match.check?.payee || '');
@@ -1256,7 +1276,7 @@ let _pendingApproveIdx = null;
 
 function showApproveConfirm(idx) {
   const match = matches[idx];
-  if (!isCleanMatch(match)) return;
+  if (!canApprove(match)) return;
   _pendingApproveIdx = idx;
   const c = match.check || {};
   const q = match.qbTxn || {};
@@ -1269,6 +1289,7 @@ function showApproveConfirm(idx) {
     ['QB Type', q.txn_type || '—'],
     ['QB Amount', fmt(q.amount)],
     ['QB Account', q.account || '—'],
+    ...reviewNotes(match).map(n => ['Check first', n]),
     ['Action', 'Mark as Cleared in QuickBooks (bank reconciliation)'],
   ];
   const detailsEl = $('#approve-confirm-details');
@@ -1332,7 +1353,7 @@ async function runBulkApprove(idxs) {
 
 async function approveAndClear(idx) {
   const match = matches[idx];
-  if (!isCleanMatch(match)) {
+  if (!canApprove(match)) {
     showWarningBanner('Review this cheque and its QuickBooks match before approving.');
     return false;
   }
@@ -2151,6 +2172,8 @@ function renderDocumentsList(docs) {
       matches = matches.filter(m => (m.check || {}).job_id !== jobId);
       chrome.storage.local.remove(matchCacheKey()).catch(() => {});
       renderMatches();
+      // A load already in flight started before the delete and would repaint it.
+      if (_inflightChecksMatch) await _inflightChecksMatch.catch(() => {});
       loadChecksIntoMatches({ force: true });
       dbg(`Deleted document: ${docName}`, 'success');
     });
@@ -2360,7 +2383,7 @@ function openReviewModal(check, match = null) {
   if (approveBtn) {
     approveBtn.style.display = check.status === 'approved' ? 'none' : '';
     // With a QB match, Approve waits until the difference is fixed (Save Changes pushes it to QB).
-    const blocked = !!_reviewMatch?.qbTxn && !isCleanMatch(_reviewMatch);
+    const blocked = !!_reviewMatch?.qbTxn && !canApprove(_reviewMatch);
     approveBtn.disabled = blocked;
     approveBtn.title = blocked ? 'Fix the difference and Save Changes first; Approve unlocks once QuickBooks matches.' : '';
   }
@@ -2966,7 +2989,7 @@ function bindEvents() {
       renderChecksList(_cachedChecks || []);
       if (linked) renderMatches();
     };
-    apply(newStatus, linked ? (newStatus === 'pending_review' ? (linked.score >= 95 ? 'matched' : 'pending') : newStatus) : undefined);
+    apply(newStatus, linked ? (newStatus === 'pending_review' ? reviewStatus(linked) : newStatus) : undefined);
     hide('#review-modal');
     if (btn) { btn.disabled = false; btn.textContent = btnLabel; }
     if (status === 'approved') { _cachedHistory = null; }
@@ -3094,7 +3117,7 @@ function bindEvents() {
         if (m.status === 'discrepancy' && m.amtDiff <= 0.01) m.status = 'matched';
         renderMatches();
         const ap = $('#rm-approve');
-        if (ap) ap.disabled = !isCleanMatch(m);
+        if (ap) ap.disabled = !canApprove(m);
       }
 
       if (fb) {
