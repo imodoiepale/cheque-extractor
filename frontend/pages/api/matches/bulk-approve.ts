@@ -32,7 +32,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     let query = supabase
       .from('matches')
-      .select('id, check_id, status, confidence_score')
+      .select('id, check_id, qb_txn_id, status, confidence_score')
       .eq('tenant_id', tenantId)
       .eq('realm_id', realmId)
       .in('status', ['matched', 'pending']);
@@ -45,9 +45,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       query = query.gte('confidence_score', minConfidence);
     }
 
-    const { data: toApprove, error: fetchErr } = await query;
+    const { data: candidates, error: fetchErr } = await query;
     if (fetchErr) return res.status(500).json({ error: fetchErr.message });
-    if (!toApprove?.length) return res.json({ approved: 0 });
+
+    // One QuickBooks transaction clears one cheque. When two cheques (a repeated
+    // image, a double presentment) point at the same QB transaction, or one is
+    // already approved against it, none of them is bulk-approved: a person picks.
+    const txnIds = [...new Set((candidates || []).map((m: any) => m.qb_txn_id).filter(Boolean))];
+    const { data: taken } = txnIds.length
+      ? await supabase.from('matches').select('qb_txn_id').eq('tenant_id', tenantId)
+          .eq('status', 'approved').in('qb_txn_id', txnIds)
+      : { data: [] as any[] };
+    const shared = new Set((taken || []).map((m: any) => m.qb_txn_id));
+    const seen = new Map<string, number>();
+    (candidates || []).forEach((m: any) => m.qb_txn_id && seen.set(m.qb_txn_id, (seen.get(m.qb_txn_id) || 0) + 1));
+    seen.forEach((n, id) => { if (n > 1) shared.add(id); });
+    const toApprove = (candidates || []).filter((m: any) => !m.qb_txn_id || !shared.has(m.qb_txn_id));
+    const skipped = (candidates || []).length - toApprove.length;
+    if (!toApprove.length) return res.json({ approved: 0, skippedDuplicates: skipped });
 
     const ids = toApprove.map((m: any) => m.id);
     const checkIds = toApprove.map((m: any) => m.check_id);
@@ -93,7 +108,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       console.error('[bulk-approve] cleared email failed:', mailErr?.message || mailErr);
     }
 
-    return res.status(200).json({ success: true, approved: ids.length });
+    return res.status(200).json({ success: true, approved: ids.length, skippedDuplicates: skipped });
   } catch (error: any) {
     console.error('Bulk approve error:', error);
     return res.status(500).json({ error: error.message });

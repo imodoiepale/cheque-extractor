@@ -1,3 +1,5 @@
+import { stringSimilarity } from '@/lib/matching-algorithm';
+
 export interface CheckExtraction {
   check_id: string;
   job_id: string;
@@ -57,9 +59,12 @@ export interface ComparisonRow {
 
 export const isApproved = (row: ComparisonRow) => row.extractionData?.status === 'approved';
 
-/** Matched, exact amount (check # already matched by construction), not yet approved/rejected, approvable. */
+/** Matched, exact amount (check # already matched by construction), not yet approved/rejected, approvable.
+ *  A duplicate cheque number is never clean: the same cheque twice in the uploads
+ *  (one image repeated, or the bank paying it twice) needs a person to look. */
 export const isCleanMatch = (row: ComparisonRow) =>
   row.matchStatus === 'matched' &&
+  !row.isDuplicate &&
   Boolean(row.extractionData?.job_id && row.extractionData?.check_id && row.qbData?.id) &&
   !['approved', 'rejected'].includes(row.extractionData?.status || '') &&
   (normalizeCheckNum(row.qbData!.checkNumber) || row.qbData!.checkNumber) === row.checkNumber &&
@@ -199,6 +204,21 @@ export function normalizeCheckNum(val: string | null | undefined): string | null
   return String(val).trim().replace(/\D/g, '').replace(/^0+/, '') || null;
 }
 
+// Same bar as PAYEE_MATCH_MIN in the extension's service worker.
+const PAYEE_MATCH_MIN = 60;
+
+/**
+ * Do two payee names name the same party? Comparing the first five characters
+ * passed "Red Oak Technology" as "Red Oak Supplies". A missing name on either
+ * side is not a disagreement.
+ */
+export function payeesAgree(a: string | null | undefined, b: string | null | undefined): boolean {
+  const x = normalizeString(a), y = normalizeString(b);
+  if (!x || !y) return true;
+  if (x.includes(y) || y.includes(x)) return true; // "Cedar Repair" vs "Cedar Repair LLC"
+  return stringSimilarity(x, y) >= PAYEE_MATCH_MIN;
+}
+
 export function calculateMatchConfidence(ext: CheckExtraction, qb: QuickBooksEntry): number {
   let score = 0;
   const extraction = ext.extraction || {};
@@ -211,9 +231,7 @@ export function calculateMatchConfidence(ext: CheckExtraction, qb: QuickBooksEnt
   const qbAmount = parseAmount(qb.amount);
   if (Math.abs(extAmount - qbAmount) < 0.01) score += 30;
   
-  const extPayee = normalizeString(extVal(extraction, 'payee'));
-  const qbPayee = normalizeString(qb.payee);
-  if (extPayee && qbPayee && extPayee.includes(qbPayee.substring(0, 5))) score += 20;
+  if (payeesAgree(extVal(extraction, 'payee'), qb.payee)) score += 20;
   
   // Normalize dates before comparing to avoid format mismatch ("2026-02-02" vs "Feb 2, 2026")
   const extDateNorm = toYMD(extVal(extraction, 'checkDate') || '');
@@ -263,9 +281,7 @@ export function intelligentMatch(extractions: CheckExtraction[], qbEntries: Quic
           discrepancies.push(`Date: ${extDateDisplay} vs ${qbDateDisplay}`);
         }
         
-        const extPayee = normalizeString(extVal(ext.extraction, 'payee'));
-        const qbPayee = normalizeString(qbMatch.payee);
-        if (extPayee && qbPayee && !extPayee.includes(qbPayee.substring(0, 5)) && !qbPayee.includes(extPayee.substring(0, 5))) {
+        if (!payeesAgree(extVal(ext.extraction, 'payee'), qbMatch.payee)) {
           discrepancies.push(`Payee: ${extVal(ext.extraction, 'payee')} vs ${qbMatch.payee}`);
         }
         
