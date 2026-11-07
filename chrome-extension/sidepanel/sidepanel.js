@@ -456,6 +456,7 @@ async function handleQBOAuthComplete(msg) {
     }
     hideLoading();
     renderCompanySelect();
+    resetCompanyScope();
     const sync = loadChecksIntoMatches({ pull: true, force: true });
     showView('main');
     setQbStatus('connected');
@@ -834,7 +835,7 @@ function renderCompanySelect() {
   });
   const add = document.createElement('option');
   add.value = '__connect__';
-  add.textContent = '+ Connect another company…';
+  add.textContent = '+ Add New Client'; // same words as the web app's company switcher
   sel.appendChild(add);
 }
 
@@ -857,12 +858,22 @@ function populateDocFilter(docs) {
   });
 }
 
-async function populateAccountSelect() {
+// After a company switch or a new connection, the account list and the account
+// filter belong to the previous company: drop both and load the new company's.
+function resetCompanyScope() {
+  _accountFilter = '';
+  _cachedQB = null;
+  const sel = $('#account-select');
+  if (sel) { while (sel.options.length > 1) sel.remove(1); sel.value = ''; }
+  return populateAccountSelect({ reset: true });
+}
+
+async function populateAccountSelect({ reset = false } = {}) {
   const sel = $('#account-select');
   if (!sel) return;
   const res = await sendMsg({ type: 'GET_QB_ACCOUNTS' });
   const accounts = res?.accounts || []; // [{id, name}]
-  const prev = sel.value;
+  const prev = reset ? '' : sel.value;
   while (sel.options.length > 1) sel.remove(1);
   accounts.forEach(a => {
     const opt = document.createElement('option');
@@ -1175,7 +1186,7 @@ function renderMatchRow(m, index) {
         <button class="btn-sm btn-ghost" data-action="review" data-idx="${index}">Review</button>
         ${m.status === 'unmatched' ? `<button class="btn-sm btn-ghost" data-action="search" data-idx="${index}">Find</button>` : ''}
         ${isCleanMatch(m) ? `<button class="btn-sm btn-primary row-primary" data-action="approve" data-idx="${index}">Approve</button>` : ''}
-        ${m.status === 'discrepancy' && m.qbTxn ? `<button class="btn-sm btn-ghost row-warn" data-action="fix" data-idx="${index}" title="Push the cheque amount to QuickBooks to resolve the difference">Fix in QuickBooks</button>` : ''}
+        ${m.status === 'discrepancy' && m.qbTxn && m.amtDiff > 0.01 ? `<button class="btn-sm btn-ghost row-warn" data-action="fix" data-idx="${index}" title="Push the cheque amount to QuickBooks to resolve the difference">Fix in QuickBooks</button>` : ''}
         ${m.status === 'approved' ? `<button class="btn-sm btn-ghost" data-action="undo" data-idx="${index}">Undo</button>` : ''}
         ${m.status !== 'approved' ? `<button class="btn-sm btn-ghost" data-action="flag" data-idx="${index}">Flag</button>` : ''}
       </div>
@@ -1187,6 +1198,8 @@ function renderMatchRow(m, index) {
           ${scoreItem('Payee', m.reasons.payee || 0, 15)}
         </div>` : ''}
         ${m.amtDiff > 0.01 ? `<p class="amount-diff">Amount differs by ${fmt(m.amtDiff)}</p>` : ''}
+        ${(m.flags || []).filter(f => ['payee', 'checknum', 'duplicate'].includes(f.type))
+          .map(f => `<p class="amount-diff">${escHtml(f.message)}</p>`).join('')}
       </div>
     </div>`;
 }
@@ -2132,6 +2145,13 @@ function renderDocumentsList(docs) {
       _cachedChecks = null;
       populateDocFilter(_cachedDocs);
       renderDocumentsList(_cachedDocs);
+      // The Match list and its stored copy still hold this document's cheques;
+      // drop them now, then refetch so nothing deleted is painted again.
+      extractedChecks = extractedChecks.filter(c => c.job_id !== jobId);
+      matches = matches.filter(m => (m.check || {}).job_id !== jobId);
+      chrome.storage.local.remove(matchCacheKey()).catch(() => {});
+      renderMatches();
+      loadChecksIntoMatches({ force: true });
       dbg(`Deleted document: ${docName}`, 'success');
     });
   });
@@ -2604,6 +2624,7 @@ function bindEvents() {
     dbg(`Connections after refresh: ${connections.length}`);
     if (connections.length > 0 && (await ensureActiveCompany({ preferNewest: true }))) {
       renderCompanySelect();
+      resetCompanyScope();
       const sync = loadChecksIntoMatches({ pull: true, force: true });
       showView('main');
       setQbStatus('connected');
@@ -2726,6 +2747,7 @@ function bindEvents() {
     _cachedDocs = null; _cachedChecks = null; _cachedHistory = null;
     if (_inflightChecksMatch) await _inflightChecksMatch.catch(() => {}); // previous company's load
     matches = []; extractedChecks = [];
+    resetCompanyScope();
     renderMatches();
     await loadChecksIntoMatches({ pull: true, force: true });
     dbg(`Company switch complete: ${realmId}`, 'success');
