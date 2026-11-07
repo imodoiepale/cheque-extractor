@@ -2995,52 +2995,35 @@ def delete_job(job_id: str, _auth=Depends(_verify_token)):
         raise HTTPException(404, "Job not found")
 
     print(f"Deleting job {job_id}...")
-    
-    # Delete local files
+
+    # Rows first, files after, stopping at the first refusal. This used to print
+    # every error and return "deleted successfully", so a job whose rows a foreign
+    # key held (a reconciled cheque's audit or export rows) came back on the next
+    # read. The cheques go first: a refusal there (the usual one) loses nothing,
+    # because their matches, including approvals, only go with them (matches
+    # cascade from checks, migration 013). statement_rows carry job_id with no
+    # foreign key, so they are removed explicitly; the job row goes last.
+    if _supabase_ok:
+        q = _urlquote(job_id, safe="")
+        for table in ("checks", "statement_rows", "check_jobs"):
+            try:
+                resp = _requests.delete(f"{_sb_url}/rest/v1/{table}?job_id=eq.{q}", headers=_sb_headers(), timeout=10)
+                err = f"{resp.status_code} {resp.text[:200]}" if resp.status_code >= 400 else None
+            except Exception as e:
+                err = str(e)
+            if err:
+                print(f"  Delete failed at {table}: {err}")
+                raise HTTPException(500, f"The document could not be deleted ({table}: {err})")
+        print(f"  âœ“ Deleted from database")
+
     out_path = OUTPUT_DIR / job_id
     if out_path.exists():
         shutil.rmtree(out_path)
-        print(f"  âœ“ Deleted local output directory")
-    
     pdf_path = UPLOAD_DIR / f"{job_id}.pdf"
     if pdf_path.exists():
         pdf_path.unlink()
-        print(f"  âœ“ Deleted local PDF")
-
-    # Delete from Supabase Storage (cascade delete all job files)
     if _supabase_ok:
-        print(f"  Deleting files from Supabase Storage...")
         _supabase_delete_folder("checks", f"jobs/{job_id}")
-    
-    # Delete the job's flattened rows first: checks, matches and statement_rows
-    # carry job_id but no foreign key to check_jobs, so they outlived the job and
-    # kept showing in reconcile, reports and the extension.
-    if _supabase_ok:
-        try:
-            q = _urlquote(job_id, safe="")
-            ids = [r["id"] for r in _supabase_select("checks", columns="id", filters={"job_id": job_id}, limit=5000)]
-            for i in range(0, len(ids), 200):
-                _requests.delete(f"{_sb_url}/rest/v1/matches?check_id=in.({','.join(ids[i:i + 200])})",
-                                 headers=_sb_headers(), timeout=10)
-            for table in ("checks", "statement_rows"):
-                _requests.delete(f"{_sb_url}/rest/v1/{table}?job_id=eq.{q}", headers=_sb_headers(), timeout=10)
-        except Exception as e:
-            print(f"  Flattened rows delete error: {e}")
-
-    # Delete from Supabase DB (this removes the job row with all checks_data)
-    if _supabase_ok:
-        try:
-            resp = _requests.delete(
-                f"{_sb_url}/rest/v1/check_jobs?job_id=eq.{job_id}",
-                headers=_sb_headers(),
-                timeout=10,
-            )
-            if resp.status_code >= 400:
-                print(f"  Database delete error ({resp.status_code}): {resp.text[:200]}")
-            else:
-                print(f"  âœ“ Deleted from database")
-        except Exception as e:
-            print(f"  Database delete error: {e}")
 
     # Remove from in-memory cache
     if in_memory:

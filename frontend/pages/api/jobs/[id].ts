@@ -78,8 +78,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 const data = await response.json()
                 return res.status(200).json(data)
             }
+            // The backend answered and refused. Deleting the rows here anyway left
+            // the job in its memory, so it kept coming back; report its reason.
+            const body = await response.json().catch(() => ({} as any))
+            return res.status(response.status).json({ error: body?.detail || body?.error || 'Failed to delete document' })
         } catch {
-            // Backend unavailable — fall through to Supabase DB delete
+            // Backend unreachable — fall through to Supabase DB delete
         }
 
         // Fallback: delete directly from Supabase
@@ -87,17 +91,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             const supabase = getServiceClient()
             if (!supabase) return res.status(503).json({ error: 'Service unavailable' })
             // jobAccessHeaders above already confirmed this job is the caller's firm's.
-            // Flattened rows carry job_id with no foreign key, so remove them too.
-            const { data: checkRows } = await supabase.from('checks').select('id').eq('job_id', id)
-            const checkIds = (checkRows || []).map((r: any) => r.id)
-            if (checkIds.length) await supabase.from('matches').delete().in('check_id', checkIds)
-            await supabase.from('checks').delete().eq('job_id', id)
-            await supabase.from('statement_rows').delete().eq('job_id', id)
-            const { error } = await supabase
-                .from('check_jobs')
-                .delete()
-                .eq('job_id', id)
-            if (error) return res.status(500).json({ error: 'Failed to delete job', details: error.message })
+            // Same order as the backend's delete_job, stopping at the first refusal:
+            // cheques first (their matches cascade, so a refusal loses no approvals),
+            // then statement_rows (job_id, no foreign key), then the job row.
+            for (const table of ['checks', 'statement_rows', 'check_jobs']) {
+                const { error } = await supabase.from(table).delete().eq('job_id', id)
+                if (error) return res.status(500).json({ error: `The document could not be deleted (${table}: ${error.message})` })
+            }
             return res.status(200).json({ success: true, job_id: id })
         } catch (dbError) {
             console.error('Job DELETE DB fallback error:', dbError)
