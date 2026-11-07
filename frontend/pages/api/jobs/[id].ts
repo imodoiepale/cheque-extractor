@@ -78,8 +78,12 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 const data = await response.json()
                 return res.status(200).json(data)
             }
+            // The backend answered and refused. Deleting the rows here anyway left
+            // the job in its memory, so it kept coming back; report its reason.
+            const body = await response.json().catch(() => ({} as any))
+            return res.status(response.status).json({ error: body?.detail || body?.error || 'Failed to delete document' })
         } catch {
-            // Backend unavailable — fall through to Supabase DB delete
+            // Backend unreachable — fall through to Supabase DB delete
         }
 
         // Fallback: delete directly from Supabase
@@ -90,9 +94,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             // Flattened rows carry job_id with no foreign key, so remove them too.
             const { data: checkRows } = await supabase.from('checks').select('id').eq('job_id', id)
             const checkIds = (checkRows || []).map((r: any) => r.id)
-            if (checkIds.length) await supabase.from('matches').delete().in('check_id', checkIds)
-            await supabase.from('checks').delete().eq('job_id', id)
-            await supabase.from('statement_rows').delete().eq('job_id', id)
+            const steps = [
+                checkIds.length ? await supabase.from('matches').delete().in('check_id', checkIds) : { error: null },
+                await supabase.from('checks').delete().eq('job_id', id),
+                await supabase.from('statement_rows').delete().eq('job_id', id),
+            ]
+            const stepError = steps.find(s => s.error)?.error
+            if (stepError) return res.status(500).json({ error: 'Failed to delete job', details: stepError.message })
             const { error } = await supabase
                 .from('check_jobs')
                 .delete()
