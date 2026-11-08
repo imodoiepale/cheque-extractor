@@ -163,7 +163,7 @@ export default function DashboardPage() {
     if (!deleteModal.jobId) return;
     try {
       const res = await fetch(`/api/jobs/${deleteModal.jobId}`, { method: 'DELETE' });
-      if (!res.ok) throw new Error('Failed to delete');
+      if (!res.ok) throw new Error((await res.json().catch(() => null))?.error || 'Failed to delete');
       setJobs((prev) => prev.filter((j) => j.job_id !== deleteModal.jobId));
       if (selectedJob?.job_id === deleteModal.jobId) { setSelectedJob(null); setSelectedCheckIdx(null); }
     } catch (e: any) {
@@ -290,13 +290,17 @@ export default function DashboardPage() {
 
     setDeletingDuplicates(true);
     try {
+      // A refused delete is now reported by the server; count them, don't drop them.
+      let failed = 0;
       for (const group of duplicateGroups) {
         const toDelete = group.jobs.slice(1);
         for (const job of toDelete) {
-          await fetch(`/api/jobs/${job.job_id}`, { method: 'DELETE' });
+          const res = await fetch(`/api/jobs/${job.job_id}`, { method: 'DELETE' });
+          if (!res.ok) failed++;
         }
       }
       await fetchJobs();
+      if (failed) setError(`${failed} duplicate document${failed === 1 ? '' : 's'} could not be deleted.`);
     } catch (e: any) {
       setError(e.message);
     } finally {
