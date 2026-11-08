@@ -779,6 +779,9 @@ function scoreMatch(check, qbTxn) {
   const cn2 = String(qbTxn.doc_number || '').replace(/\D/g, '').replace(/^0+/, '');
   if (cn1 && cn2 && cn1 === cn2) reasons.checkNumber = 30;
   else if (cn1 && cn2 && (cn1.endsWith(cn2) || cn2.endsWith(cn1))) reasons.checkNumber = 10;
+  // Both carry a number and they differ (974913 on the bank vs 974213 in QB):
+  // amount, date and payee can still score 70, but it is not the same cheque.
+  if (cn1 && cn2 && cn1 !== cn2) flags.push({ type: 'checknum', message: `Cheque number differs: #${cn1} vs #${cn2} in QuickBooks` });
 
   // Date (15pts) — parse all common formats to UTC ms without timezone risk
   if (check.check_date && qbTxn.txn_date) {
@@ -835,15 +838,42 @@ function scoreMatch(check, qbTxn) {
   else if (sim >= 85) reasons.payee = 12;
   else if (sim >= 70) reasons.payee = 8;
   else if (sim >= 50) reasons.payee = 4;
+  // Same number and amount but a different name (Red Oak Technology vs Red Oak
+  // Supplies) is a discrepancy to review, not a clean match. A received cheque is
+  // made out to the firm itself while QB names the customer, so it is not compared.
+  const received = qbTxn.qb_source === 'cheque_received' || ['Payment', 'Deposit'].includes(qbTxn.txn_type);
+  if (!received && !payeesAgree(check.payee, qbTxn.payee)) {
+    flags.push({ type: 'payee', message: `Payee differs: "${check.payee}" vs "${qbTxn.payee}"` });
+  }
 
   const score = Math.min(reasons.amount + reasons.checkNumber + reasons.date + reasons.payee, 100);
   return { score, reasons, flags, amtDiff: diff };
 }
 
+// ponytail: OCR noise in a handwritten payee can dip below this and send a true
+// match to review ("Approve anyway" still works). Raise it only with real scans.
+const PAYEE_MATCH_MIN = 60;
+
+// "The Home Depot Inc." and "Home Depot" name one party; "Red Oak Technology" and
+// "Red Oak Supplies" do not. Same rule as payeesAgree in the web app's
+// qb-comparisons/utils/comparisonUtils.ts. A missing name is not a disagreement.
+function payeeKey(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ')
+    .replace(/\b(the|inc|incorporated|llc|ltd|limited|co|corp|corporation|company|plc)\b/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
+function payeesAgree(a, b) {
+  const x = payeeKey(a), y = payeeKey(b);
+  if (!x || !y) return true;
+  if (x.includes(y) || y.includes(x)) return true;
+  return stringSimilarity(x, y) >= PAYEE_MATCH_MIN;
+}
+
 function statusFromScore(score, flags) {
   const hasAmtMismatch = flags.some(f => f.type === 'amount' && f.diff > 0.01);
+  const hasPayeeMismatch = flags.some(f => f.type === 'payee' || f.type === 'checknum');
   if (score === 0) return 'unmatched';
-  if (hasAmtMismatch && score >= 60) return 'discrepancy';
+  if ((hasAmtMismatch || hasPayeeMismatch) && score >= 60) return 'discrepancy';
   if (score >= 95) return 'matched';
   return 'pending';
 }
@@ -1000,6 +1030,36 @@ function passesAutoApprove(rules, score, result) {
   return rules.match === 'all' ? ticked.every(agrees) : ticked.some(agrees);
 }
 
+// The same cheque number and amount twice in the uploads: one image repeated, or
+// the bank paying the cheque twice. Both copies best-match the same QuickBooks
+// cheque at 100%, so left alone they were both approvable and Approve all would
+// clear one QB cheque for two bank items. Every copy goes to review instead.
+// Same key as attentionFlags() in the side panel, so the chip and the status agree.
+// A copy a person already approved, rejected or exported keeps its status.
+function markDuplicates(results) {
+  const groups = new Map();
+  for (const r of results) {
+    const c = r.check || {};
+    if (!c.check_number || !parseFloat(c.amount)) continue;
+    const key = `${String(c.check_number).trim().toLowerCase()}|${parseFloat(c.amount)}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(r);
+  }
+  for (const group of groups.values()) {
+    // A copy someone rejected is resolved; once only one copy is left it is a
+    // normal cheque again and can be approved.
+    if (group.filter(r => r.check?.status !== 'rejected').length < 2) continue;
+    for (const r of group) {
+      if (['approved', 'rejected', 'exported'].includes(r.check?.status)) continue;
+      r.status = 'duplicate';
+      r.needsAutoApprove = false;
+      r.qbAlreadyCleared = false;
+      r.flags = [...(r.flags || []), { type: 'duplicate', message: `Duplicate cheque #${r.check.check_number}: ${group.length} copies in your uploads. Review before approving.` }];
+    }
+  }
+  return results;
+}
+
 async function runFullMatch(extractedChecks) {
   const { tenantId, realm_id: realmId } = await getActiveConnection();
   const session = await getSession();
@@ -1135,6 +1195,8 @@ async function runFullMatch(extractedChecks) {
       results.push({ check, qbTxn: null, score: 0, reasons: {}, flags: [], status: persistedStatus || 'unmatched', amtDiff: 0 });
     }
   }
+
+  markDuplicates(results);
 
   // Dedup APPROVE_AND_CLEAR firings: when several Kyriq cheques bucket-collide
   // on the same already-cleared QB intuit_id, only the highest-scoring one
@@ -1619,6 +1681,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               const errData = await res.json().catch(() => ({}));
               return { error: errData.error || `Delete failed (${res.status})` };
             }
+            // The cached cheque list still holds the deleted document's cheques.
+            _swChecksCache = null;
+            _swChecksAt = 0;
+            await chrome.storage.local.remove('kyriqChecksCache').catch(() => {});
+            // Release QB cheques this document's cheques held, so a surviving
+            // copy elsewhere can be approved (see the APPROVE_AND_CLEAR guard).
+            try {
+              const { kyriqApproved } = await chrome.storage.local.get('kyriqApproved');
+              let changed = false;
+              for (const e of Object.values(kyriqApproved || {})) {
+                if (String(e?.check_id || '').startsWith(`${msg.jobId}:`)) { e.check_id = null; changed = true; }
+              }
+              if (changed) await chrome.storage.local.set({ kyriqApproved });
+            } catch (e) { logErr('DELETE_DOCUMENT: approval holder cleanup failed', e); }
             log('DELETE_DOCUMENT success', { jobId: msg.jobId });
             return { success: true };
           } catch (e) {
@@ -2013,6 +2089,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             return { success: persistR.ok, cleared: false, persisted: persistR.ok, persistError: persistR.ok ? null : (persistR.reason || persistR.status || null), warning: 'QB transaction not linked — approved in Kyriq only' };
           }
 
+          // One QuickBooks cheque clears one bank item. A second Kyriq cheque
+          // approving the same QB transaction is a duplicate the user must resolve.
+          if (msg.checkId) {
+            const { kyriqApproved } = await chrome.storage.local.get('kyriqApproved').catch(() => ({}));
+            const holder = kyriqApproved?.[String(qbIntuitId)]?.check_id;
+            if (holder && holder !== `${msg.jobId}:${msg.checkId}`) {
+              return { success: false, error: `QuickBooks cheque #${qbTxn.doc_number || qbIntuitId} is already approved against another Kyriq cheque. Review the duplicate before approving.` };
+            }
+          }
+
           // Save approval status via Next.js status route (handles jobs.checks_data JSON)
           const saveCheckApproval = async (checkId, jobId) => {
             if (!checkId) return { ok: false, reason: 'no_check_id' };
@@ -2144,6 +2230,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               txn_date: qbTxn.txn_date || null,
               account: qbTxn.account || null,
               approved_at: new Date().toISOString(),
+              check_id: msg.checkId ? `${msg.jobId}:${msg.checkId}` : null, // check ids repeat across jobs
             };
             for (let attempt = 0; attempt < 3; attempt++) {
               try {

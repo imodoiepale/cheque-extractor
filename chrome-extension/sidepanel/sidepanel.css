@@ -1383,6 +1383,7 @@ header { box-shadow: none; border-bottom: 0; }
 .match-row.status-approved { box-shadow: inset 3px 0 0 var(--success-text); background: var(--success-bg); }
 .match-row.status-pending { box-shadow: inset 3px 0 0 var(--warning); }
 .match-row.status-discrepancy { box-shadow: inset 3px 0 0 var(--error); }
+.match-row.status-duplicate { box-shadow: inset 3px 0 0 var(--warning); }
 .match-row.status-flagged { box-shadow: inset 3px 0 0 var(--error-text); background: var(--error-bg); }
 .match-row.status-unmatched { box-shadow: inset 3px 0 0 var(--neutral-border); }
 .match-row[class*='status-'] { border-left: 0; }
