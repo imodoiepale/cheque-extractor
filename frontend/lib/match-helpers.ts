@@ -1,4 +1,4 @@
-import { createClientFromRequest, createServiceClient } from '@/lib/supabase/api';
+import { createClientFromRequest, createServiceClient, getRequestUser } from '@/lib/supabase/api';
 import { can, toDbRole, type Capability, type DbRole } from '@/lib/roles';
 import { getQbAccessToken } from '@/lib/qb-token';
 import type { NextApiRequest, NextApiResponse } from 'next';
@@ -33,7 +33,11 @@ function readAal(token: string | undefined): string | null {
 
 export async function getAuthContext(req: NextApiRequest): Promise<AuthContext> {
   const supabase = await createClientFromRequest(req);
-  const { data: { user } } = await supabase.auth.getUser();
+  // Bearer callers (the extension) go through the retrying resolver: one slow
+  // or empty /auth/v1/user answer used to fail the request as "Not authenticated".
+  const user = req.headers.authorization?.startsWith('Bearer ')
+    ? await getRequestUser(req)
+    : (await supabase.auth.getUser()).data.user;
   if (!user) throw new Error('Not authenticated');
 
   const { data: profile } = await supabase
