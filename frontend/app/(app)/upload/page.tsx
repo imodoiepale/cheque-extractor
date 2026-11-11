@@ -437,12 +437,17 @@ function UploadPageInner() {
     setProgressMessages(prev => ({ ...prev, [entryId]: ['Uploading PDF...'] }));
 
     try {
-      // Through the Next proxy, not straight at the Python backend. The proxy
-      // carries the session, which is what lets the backend resolve the tenant,
-      // stamp tenant_id on the job and record the upload fingerprint that backs
-      // the duplicate warning. Called directly, every one of those was missing.
-      let response = await fetch('/api/upload-analyze', {
+      // Straight to the backend with the session token, as the extension does.
+      // Through the Next proxy, Vercel refused any body over 4.5 MB with 413
+      // before our code ran (Michael, 10 Nov: a 4.8 MB statement). The token is
+      // what lets the backend resolve the tenant, gate processing (402) and
+      // record the fingerprint behind the duplicate warning (409).
+      const { data: { session } } = await createClient().auth.getSession();
+      const backend = (process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090').replace(/\/$/, '');
+      const authHeaders: Record<string, string> = session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {};
+      let response = await fetch(`${backend}/api/upload-analyze`, {
         method: 'POST',
+        headers: authHeaders,
         body: formData,
       });
 
@@ -455,8 +460,9 @@ function UploadPageInner() {
           setProgressMessages(prev => ({ ...prev, [entryId]: ['Skipped, already uploaded'] }));
           throw new DuplicateSkipped(file.name);
         }
-        response = await fetch('/api/upload-analyze?confirm_reupload=true', {
+        response = await fetch(`${backend}/api/upload-analyze?confirm_reupload=true`, {
           method: 'POST',
+          headers: authHeaders,
           body: formData,
         });
       }
