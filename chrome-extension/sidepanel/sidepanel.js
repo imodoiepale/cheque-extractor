@@ -774,6 +774,9 @@ async function loadChecksIntoMatches({ pull = false, force = false } = {}) {
       return pullRes;
     }
     extractedChecks = dbChecks;
+    // Same list the Review tab shows; keep it in step so it never paints a stale one.
+    _cachedChecks = dbChecks;
+    if (currentTab === 'cheques') renderChecksList(dbChecks);
     dbg(`loadChecksIntoMatches: ${extractedChecks.length} checks loaded`);
     updateMatchesBanner('syncing', `Matching ${extractedChecks.length} cheques…`);
     const matchRes = await sendMsg({ type: 'RUN_MATCHING', checks: extractedChecks }).catch(() => null);
@@ -2189,8 +2192,16 @@ async function loadChecks(force = false) {
     const list = $('#checks-list');
     // Keep rows on screen during a refresh; placeholder only when empty.
     if (list && !list.children.length) list.innerHTML = '<div class="empty-state"><div class="empty-icon">⏳</div><p>Loading...</p></div>';
-    const res = await sendMsg({ type: 'GET_CHECKS', force });
-    const checks = res?.checks || [];
+    const res = await sendMsg({ type: 'GET_CHECKS', force }).catch(e => ({ error: e?.message || 'Request failed' }));
+    if (res?.error || !Array.isArray(res?.checks)) {
+      // A failed fetch is not "no cheques": caching [] here left the Review tab
+      // empty until the panel was reopened, while Match showed every cheque.
+      dbg(`loadChecks failed: ${res?.error || 'no data'}`, 'warn');
+      if (_cachedChecks) renderChecksList(_cachedChecks);
+      else if (list) list.innerHTML = '<div class="empty-state"><p>Could not load cheques</p><p class="sub">Press Refresh to try again</p></div>';
+      return;
+    }
+    const checks = res.checks;
     dbg(`Checks: ${checks.length}`);
     _cachedChecks = checks;
     renderChecksList(checks);
