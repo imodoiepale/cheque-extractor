@@ -788,6 +788,18 @@ def _claims_from_request(request) -> Optional[dict]:
 _tenant_by_user: dict = {}
 
 
+def _assert_may_upload(user_id) -> None:
+    """Role gate for uploads, same rule as checks.upload in frontend/lib/roles.ts:
+    admins and members upload, viewers do not. It sits here because the app and
+    the extension both call the upload endpoints directly, with no Next proxy
+    gate in front. Unknown roles count as member, as toDbRole() does."""
+    if not user_id:
+        return
+    prof = _supabase_select("user_profiles", "role", {"id": user_id}, limit=1)
+    if prof and (prof[0].get("role") or "") == "viewer":
+        raise HTTPException(403, "Your role can view cheques but not upload them. Ask an administrator.")
+
+
 def _auth_context(request) -> dict:
     """{'user_id': ..., 'tenant_id': ...}; either may be None."""
     # _verify_token has already confirmed this token with Supabase Auth and
@@ -1430,6 +1442,7 @@ async def upload_pdf(
 
     ctx = _auth_context(request)
     tenant_id, user_id = ctx["tenant_id"], ctx["user_id"]
+    _assert_may_upload(user_id)
     _assert_processing_allowed(tenant_id)
 
     # Duplicate detection, database-backed (migration 028).
@@ -1542,6 +1555,7 @@ async def upload_analyze(
     # â”€â”€ Who is this, and may they process? â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     ctx = _auth_context(request)
     tenant_id, user_id = ctx["tenant_id"], ctx["user_id"]
+    _assert_may_upload(user_id)
     _assert_processing_allowed(tenant_id)
 
     # â”€â”€ Duplicate detection, database-backed (migration 028) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
