@@ -319,14 +319,17 @@ def _supabase_delete_folder(bucket: str, folder_path: str):
         print(f"  Storage folder delete error: {e}")
 
 
-def _supabase_select(table: str, columns: str = "*", filters: dict = None, limit: int = 200):
+def _supabase_select(table: str, columns: str = "*", filters: dict = None, limit: int = 200,
+                     order: str = "created_at.desc"):
     """Select rows from a Supabase table. Returns list of dicts or empty list."""
     if not _supabase_ok:
         return []
     query = f"{_sb_url}/rest/v1/{table}?select={columns}"
     if filters:
         query += "&" + "&".join(f"{k}=eq.{_urlquote(str(v), safe='')}" for k, v in filters.items())
-    query += f"&limit={limit}&order=created_at.desc"
+    # upload_fingerprints has no created_at: ordering by it made every duplicate
+    # lookup a 400, read here as "no rows", so re-uploads were never caught.
+    query += f"&limit={limit}&order={order}"
     try:
         resp = _requests.get(query, headers=_sb_headers(), timeout=15)
         if resp.status_code >= 400:
@@ -931,6 +934,7 @@ def _lookup_upload_fingerprint(tenant_id: str, content_hash: str) -> Optional[di
         "first_uploaded_at,last_uploaded_at,upload_count,file_name,first_job_id,last_job_id",
         {"tenant_id": tenant_id, "content_hash": content_hash},
         limit=1,
+        order="last_uploaded_at.desc",
     )
     return rows[0] if rows else None
 

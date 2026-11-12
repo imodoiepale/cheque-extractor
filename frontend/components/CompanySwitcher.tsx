@@ -308,6 +308,22 @@ export default function CompanySwitcher() {
               )}
               Add New Client
             </button>
+            {/* A labelled way out, beside the way in (Michael, 11 Nov): the icon on
+                each row was easy to miss. Same confirm and same disconnect(). */}
+            {active && canEditAccount && (
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingDisconnect(active);
+                  setOpen(false);
+                }}
+                className="flex w-full items-center gap-2 rounded-input px-3 py-2 text-[13px] font-medium
+                           text-error-text press hover:bg-error-bg"
+              >
+                <Unplug aria-hidden className="h-4 w-4" />
+                <span className="truncate">Disconnect {active.companyName || 'this company'}</span>
+              </button>
+            )}
           </div>
         </div>
       )}
