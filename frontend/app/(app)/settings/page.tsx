@@ -130,6 +130,14 @@ function SettingsPageContent() {
         setMounted(true)
     }, [])
 
+    // The tab follows the URL on every change, not just the first load. The
+    // sidebar's Connections (?tab=integrations) and Settings (no tab) are the
+    // same route, so reading ?tab= once left Settings showing Connections.
+    useEffect(() => {
+        const t = searchParams?.get('tab')
+        setActiveTab(t && TABS.some((x) => x.value === t) ? t : 'general')
+    }, [searchParams])
+
     // Parse URL params for OAuth callback results (fire only once)
     const handledOAuthRef = useRef(false)
     useEffect(() => {

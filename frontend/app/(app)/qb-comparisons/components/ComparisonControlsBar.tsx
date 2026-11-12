@@ -45,6 +45,7 @@ interface ComparisonControlsBarProps {
   showExportDropdown: boolean;
   setShowExportDropdown: (show: boolean) => void;
   onRefresh: () => void;
+  refreshing?: boolean;
   onUpload: () => void;
   onExportCSV: () => void;
   onExportExcel: () => void;
@@ -78,6 +79,7 @@ export const ComparisonControlsBar: React.FC<ComparisonControlsBarProps> = ({
   showExportDropdown,
   setShowExportDropdown,
   onRefresh,
+  refreshing = false,
   onUpload,
   onExportCSV,
   onExportExcel,
@@ -310,8 +312,8 @@ export const ComparisonControlsBar: React.FC<ComparisonControlsBarProps> = ({
           )}
         </div>
 
-        <Button size="sm" variant="ghost" onClick={onRefresh} icon={<RefreshCw size={12} />}>
-          Refresh
+        <Button size="sm" variant="ghost" onClick={onRefresh} loading={refreshing} icon={<RefreshCw size={12} />}>
+          {refreshing ? 'Refreshing…' : 'Refresh'}
         </Button>
       </div>
     </div>

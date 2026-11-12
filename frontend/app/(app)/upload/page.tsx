@@ -85,11 +85,14 @@ type ViewMode = 'card' | 'table';
 type RangeType = 'all' | 'pages' | 'cheques';
 
 /** One pending "you uploaded this before" question, awaiting the reader. */
+/** Skip it, keep both, or swap the earlier document for this one. */
+type ReuploadChoice = 'skip' | 'again' | 'replace';
+
 interface ReuploadAsk {
   key: string;
   fileName: string;
   previousUploadedAt: string | null;
-  resolve: (proceed: boolean) => void;
+  resolve: (choice: ReuploadChoice) => void;
 }
 
 function fmtSize(bytes?: number): string {
@@ -251,7 +254,7 @@ function UploadPageInner() {
   /** Resolves when the reader answers the dialog. Replaces window.confirm. */
   const askReupload = useCallback(
     (fileName: string, previousUploadedAt: string | null) =>
-      new Promise<boolean>((resolve) => {
+      new Promise<ReuploadChoice>((resolve) => {
         setReuploadQueue((q) => [
           ...q,
           { key: `${fileName}:${q.length}:${Date.now()}`, fileName, previousUploadedAt, resolve },
@@ -261,8 +264,8 @@ function UploadPageInner() {
   );
 
   /** Answer the head of the queue. Dismissing counts as declining, as cancel did. */
-  const answerReupload = (proceed: boolean) => {
-    reuploadAsk?.resolve(proceed);
+  const answerReupload = (choice: ReuploadChoice) => {
+    reuploadAsk?.resolve(choice);
     setReuploadQueue((q) => q.slice(1));
   };
 
@@ -455,10 +458,21 @@ function UploadPageInner() {
       // to processing it again knowing it counts against their monthly checks.
       if (response.status === 409) {
         const dup = await response.json().catch(() => ({} as any));
-        const proceed = await askReupload(file.name, dup.previous_uploaded_at ?? null);
-        if (!proceed) {
+        const choice = await askReupload(file.name, dup.previous_uploaded_at ?? null);
+        if (choice === 'skip') {
           setProgressMessages(prev => ({ ...prev, [entryId]: ['Skipped, already uploaded'] }));
           throw new DuplicateSkipped(file.name);
+        }
+        // Replace: remove the earlier document first, so its cheques are not
+        // listed twice (Michael, 11 Nov). A refused delete stops here rather
+        // than leaving both copies behind.
+        if (choice === 'replace' && dup.previous_job_id) {
+          setProgressMessages(prev => ({ ...prev, [entryId]: ['Removing the earlier upload...'] }));
+          const del = await fetch(`/api/jobs/${dup.previous_job_id}`, { method: 'DELETE' });
+          if (!del.ok && del.status !== 404) {
+            const why = await del.json().catch(() => ({} as any));
+            throw new Error(why.error || `could not remove the earlier upload (${del.status})`);
+          }
         }
         response = await fetch(`${backend}/api/upload-analyze?confirm_reupload=true`, {
           method: 'POST',
@@ -1512,14 +1526,17 @@ function UploadPageInner() {
         open={!!reuploadAsk}
         size="md"
         title="You uploaded this file before"
-        onClose={() => answerReupload(false)}
+        onClose={() => answerReupload('skip')}
         footer={
           <>
-            <Button variant="secondary" size="sm" onClick={() => answerReupload(false)}>
+            <Button variant="secondary" size="sm" onClick={() => answerReupload('skip')}>
               Skip this file
             </Button>
-            <Button size="sm" onClick={() => answerReupload(true)}>
-              Process it again
+            <Button variant="secondary" size="sm" onClick={() => answerReupload('again')}>
+              Keep both
+            </Button>
+            <Button size="sm" onClick={() => answerReupload('replace')}>
+              Replace earlier upload
             </Button>
           </>
         }
@@ -1548,7 +1565,8 @@ function UploadPageInner() {
               <strong className="font-semibold text-ink-strong">
                 {t("those cheques count against this month's total")}
               </strong>
-              . Skip it to leave your existing results untouched.
+              . Replace swaps the earlier upload for this one, so no cheque is listed twice.
+              Skip leaves your existing results untouched.
             </p>
           </div>
         )}

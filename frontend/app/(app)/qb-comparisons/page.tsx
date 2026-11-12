@@ -299,6 +299,22 @@ export default function QBComparisonsPage() {
     }
   };
 
+  // Refresh used to re-read only what Kyriq had stored, with no feedback, so it
+  // looked dead (Michael, 11 Nov). Connected: pull from QuickBooks (which
+  // reloads and toasts). Not connected: reload and say so.
+  const handleRefresh = async () => {
+    if (qbConnected) return handleAutoSync();
+    setSyncing(true);
+    try {
+      await refreshData();
+      showToast('success', 'Refreshed. Connect QuickBooks to pull its latest transactions.');
+    } catch (err: any) {
+      showToast('error', friendlyError(err));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const handleAutoSync = async () => {
     setSyncing(true);
     try {
@@ -1000,7 +1016,8 @@ export default function QBComparisonsPage() {
         setFilterStatus={setFilterStatus}
         showExportDropdown={showExportDropdown}
         setShowExportDropdown={setShowExportDropdown}
-        onRefresh={refreshData}
+        onRefresh={handleRefresh}
+        refreshing={syncing}
         onUpload={() => setShowUploadModal(true)}
         onExportCSV={handleExportCSV}
         onExportExcel={handleExportExcel}
