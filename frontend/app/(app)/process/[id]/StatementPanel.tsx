@@ -36,13 +36,14 @@ const SHOW = 50;
  * Renders nothing unless the statement lists cheques: a plain sheet of cheque
  * images has no statement to reconcile.
  */
-export default function StatementPanel({ jobId, imageCount }: { jobId: string; imageCount: number }) {
+export default function StatementPanel({ jobId, imageCount, readCount = 0 }: { jobId: string; imageCount: number; readCount?: number }) {
   const t = useSpelling();
   const [data, setData] = useState<Reconciliation | null>(null);
   const [failed, setFailed] = useState(false);
 
-  // Refetch when the image count changes: extraction fills in numbers and amounts
-  // as it runs, which changes which cheques pair up.
+  // Refetch as extraction reads each cheque, not only when the image count
+  // changes: the count stays the same while numbers and amounts are filled in,
+  // so the panel kept its first, empty pairing (Michael, 12 Nov: "No number").
   useEffect(() => {
     let live = true;
     fetch(`/api/jobs/${jobId}/statement-rows`)
@@ -50,7 +51,7 @@ export default function StatementPanel({ jobId, imageCount }: { jobId: string; i
       .then((d: Reconciliation) => { if (live) { setData(d); setFailed(false); } })
       .catch(() => { if (live) setFailed(true); });
     return () => { live = false; };
-  }, [jobId, imageCount]);
+  }, [jobId, imageCount, readCount]);
 
   if (failed || !data || data.summary.rows === 0) return null;
 

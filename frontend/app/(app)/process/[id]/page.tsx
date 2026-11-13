@@ -343,7 +343,7 @@ export default function ProcessingPage() {
 
       {/* ── Statement vs images: only when the upload has a statement table ── */}
       {jobData?.page_kinds?.some((k) => k === 'statement' || k === 'both') && (
-        <StatementPanel jobId={jobId} imageCount={checks.length} />
+        <StatementPanel jobId={jobId} imageCount={checks.length} readCount={checks.filter((c: any) => extVal(c.extraction, 'checkNumber') || extVal(c.extraction, 'amount')).length} />
       )}
 
       {/* ── Cheque image previews (show during processing too) ── */}
