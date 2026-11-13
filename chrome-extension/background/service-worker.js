@@ -1941,7 +1941,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             });
             const data = await res.json();
             // 409 = same file uploaded before; the backend explains it in `message`.
-            if (!res.ok) return { error: apiErrorText(data, `Upload failed (${res.status})`), blocked: res.status === 402, blockReason: data.detail?.reason || data.reason || null, duplicate: !!data.duplicate, previousUploadedAt: data.previous_last_uploaded_at || data.previous_uploaded_at || null };
+            if (!res.ok) return { error: apiErrorText(data, `Upload failed (${res.status})`), blocked: res.status === 402, blockReason: data.detail?.reason || data.reason || null, duplicate: !!data.duplicate, previousUploadedAt: data.previous_last_uploaded_at || data.previous_uploaded_at || null, previousJobId: data.previous_job_id || null };
             log('UPLOAD_DOCUMENT success', { job_id: data.job_id });
             return { success: true, job_id: data.job_id, job: data };
           } catch (e) {

@@ -1727,13 +1727,45 @@ function fmtUploadDate(iso) {
   return isNaN(d) ? 'previously' : `on ${d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`;
 }
 
-function showDuplicate(fileName, when) {
+// Same three choices as the app's re-upload dialog (Michael, 13 Nov). Replace
+// only when the earlier upload still exists; a deleted one has nothing to swap.
+function showDuplicate(fileName, when, previousJobId = null) {
+  const replace = async () => {
+    setUploadStatus('loading', 'Removing the earlier upload');
+    const res = await sendMsg({ type: 'DELETE_DOCUMENT', jobId: previousJobId });
+    if (res?.error && !/404/.test(res.error)) {
+      setUploadStatus('error', 'Could not remove the earlier upload', res.error,
+        [{ label: 'Choose another file', onClick: () => setUploadStep(1) }]);
+      return;
+    }
+    _cachedDocs = null; _cachedChecks = null;
+    runExtraction({ confirmReupload: true });
+  };
   setUploadStatus('warn', 'Already uploaded',
-    `"${fileName}" was uploaded ${when}. Uploading it again counts toward this period's usage.`,
+    `"${fileName}" was uploaded ${when}${previousJobId ? '' : ' and deleted since'}. Uploading it again counts toward this period's usage.`
+      + (previousJobId ? ' Replace swaps the earlier upload for this one, so no cheque is listed twice.' : ''),
     [
-      { label: 'Upload again', primary: true, onClick: () => runExtraction({ confirmReupload: true }) },
-      { label: 'Choose another file', onClick: () => setUploadStep(1) },
+      ...(previousJobId ? [{ label: 'Replace earlier upload', primary: true, onClick: replace }] : []),
+      { label: 'Keep both', primary: !previousJobId, onClick: () => runExtraction({ confirmReupload: true }) },
+      { label: 'Skip', onClick: () => setUploadStep(1) },
     ]);
+}
+
+// Image cards for a list of cheques; a click opens the same viewer as Review.
+function chequeCardsHtml(checks) {
+  return checks.map((c, i) => `
+    <div class="cheque-card" data-idx="${i}" role="button" tabindex="0" title="View cheque">
+      ${c.image_url ? `<img src="${escHtml(c.image_url)}" alt="Cheque ${escHtml(c.check_number || '')}" loading="lazy">` : '<div class="cheque-card-noimg">No image</div>'}
+      <div class="cheque-card-row"><span class="cheque-card-payee">${escHtml(c.payee || '—')}</span><span class="cheque-card-amt">${fmt(c.amount)}</span></div>
+      <div class="cheque-card-meta">${escHtml(c.check_date || '—')} · #${escHtml(c.check_number || '—')}</div>
+    </div>`).join('');
+}
+function wireChequeCards(container, checks) {
+  container.querySelectorAll('.cheque-card').forEach(el => {
+    const open = () => openReviewModal(checks[+el.dataset.idx]);
+    el.addEventListener('click', open);
+    el.addEventListener('keydown', e => { if (e.key === 'Enter') open(); });
+  });
 }
 
 // The hybrid result can be empty while each engine's own result is stored.
@@ -1776,7 +1808,7 @@ async function runExtraction(opts = {}) {
       d.pdf_name && file.name && d.pdf_name.toLowerCase() === file.name.toLowerCase());
     if (duplicate) {
       appendLog(`Duplicate: "${file.name}"`, 'err');
-      showDuplicate(file.name, fmtUploadDate(duplicate.created_at));
+      showDuplicate(file.name, fmtUploadDate(duplicate.created_at), duplicate.job_id);
       return;
     }
   }
@@ -1804,7 +1836,7 @@ async function runExtraction(opts = {}) {
 
   if (uploadRes?.duplicate) {
     appendLog(`Server: ${uploadRes.error}`, 'err');
-    showDuplicate(file.name, fmtUploadDate(uploadRes.previousUploadedAt));
+    showDuplicate(file.name, fmtUploadDate(uploadRes.previousUploadedAt), uploadRes.previousJobId);
     return;
   }
   if (uploadRes?.blocked) {
@@ -1941,6 +1973,12 @@ async function startAndPoll(file, opts = {}) {
         memo: ext.memo?.value || ext.memo || null,
         _fileName: job.pdf_name || file.name,
         _checkId: c.check_id,
+        // Fields the cheque viewer (openReviewModal) reads.
+        id: c.check_id,
+        job_id: currentJobId,
+        image_url: c.image_url || null,
+        status: c.status || 'pending_review',
+        source_file: job.pdf_name || file.name,
       };
     });
 
@@ -1968,16 +2006,9 @@ function renderExtracted() {
   if (!extractedChecks.length) { hide('#extraction-results'); return; }
   show('#extraction-results');
   $('#results-count').textContent = extractedChecks.length;
-  $('#extracted-list').innerHTML = extractedChecks.map(c => `
-    <div class="extracted-card">
-      <div class="field"><span class="label">File</span><span class="value">${escHtml(c._fileName || '—')}</span></div>
-      <div class="field"><span class="label">Check #</span><span class="value">${escHtml(c.check_number || '—')}</span></div>
-      <div class="field"><span class="label">Amount</span><span class="value">${fmt(c.amount)}</span></div>
-      <div class="field"><span class="label">Date</span><span class="value">${c.check_date || '—'}</span></div>
-      <div class="field"><span class="label">Payee</span><span class="value">${escHtml(c.payee || '—')}</span></div>
-      <div class="field"><span class="label">Bank</span><span class="value">${escHtml(c.bank_name || '—')}</span></div>
-      ${c.memo ? `<div class="field"><span class="label">Memo</span><span class="value">${escHtml(c.memo)}</span></div>` : ''}
-    </div>`).join('');
+  const list = $('#extracted-list');
+  list.innerHTML = chequeCardsHtml(extractedChecks);
+  wireChequeCards(list, extractedChecks);
 }
 
 function fileToBase64(file) {
@@ -2147,8 +2178,25 @@ function renderDocumentsList(docs) {
         </div>
         <div class="doc-status ${cls}">${label}</div>
         <button class="btn-xs btn-doc-delete" data-job="${escHtml(d.job_id)}" title="Delete upload"></button>
-      </div>`;
+      </div>
+      <div class="doc-cheques" data-for="${escHtml(d.job_id)}" style="display:none;"></div>`;
   }).join('');
+  // Click a document to see its cheques, as in the app (Michael, 13 Nov).
+  list.querySelectorAll('.doc-card').forEach(card => {
+    card.style.cursor = 'pointer';
+    card.addEventListener('click', async () => {
+      const box = list.querySelector(`.doc-cheques[data-for="${CSS.escape(card.dataset.job)}"]`);
+      if (!box) return;
+      if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+      box.style.display = '';
+      box.innerHTML = '<p class="sub">Loading cheques…</p>';
+      if (_cachedChecks === null) await loadChecks();
+      const mine = (_cachedChecks || []).filter(c => c.job_id === card.dataset.job);
+      if (!mine.length) { box.innerHTML = '<p class="sub">No cheques in this document.</p>'; return; }
+      box.innerHTML = `<div class="cheque-grid">${chequeCardsHtml(mine)}</div>`;
+      wireChequeCards(box, mine);
+    });
+  });
   list.querySelectorAll('.btn-doc-delete').forEach(btn => {
     btn.addEventListener('click', async (e) => {
       e.stopPropagation();

@@ -92,6 +92,8 @@ interface ReuploadAsk {
   key: string;
   fileName: string;
   previousUploadedAt: string | null;
+  /** The earlier upload was deleted since, so there is nothing to replace. */
+  deleted: boolean;
   resolve: (choice: ReuploadChoice) => void;
 }
 
@@ -253,11 +255,11 @@ function UploadPageInner() {
   // ── Helpers ────────────────────────────────────────────────
   /** Resolves when the reader answers the dialog. Replaces window.confirm. */
   const askReupload = useCallback(
-    (fileName: string, previousUploadedAt: string | null) =>
+    (fileName: string, previousUploadedAt: string | null, deleted = false) =>
       new Promise<ReuploadChoice>((resolve) => {
         setReuploadQueue((q) => [
           ...q,
-          { key: `${fileName}:${q.length}:${Date.now()}`, fileName, previousUploadedAt, resolve },
+          { key: `${fileName}:${q.length}:${Date.now()}`, fileName, previousUploadedAt, deleted, resolve },
         ]);
       }),
     []
@@ -458,7 +460,7 @@ function UploadPageInner() {
       // to processing it again knowing it counts against their monthly checks.
       if (response.status === 409) {
         const dup = await response.json().catch(() => ({} as any));
-        const choice = await askReupload(file.name, dup.previous_uploaded_at ?? null);
+        const choice = await askReupload(file.name, dup.previous_uploaded_at ?? null, !!dup.previous_job_deleted);
         if (choice === 'skip') {
           setProgressMessages(prev => ({ ...prev, [entryId]: ['Skipped, already uploaded'] }));
           throw new DuplicateSkipped(file.name);
@@ -1535,9 +1537,11 @@ function UploadPageInner() {
             <Button variant="secondary" size="sm" onClick={() => answerReupload('again')}>
               Keep both
             </Button>
-            <Button size="sm" onClick={() => answerReupload('replace')}>
-              Replace earlier upload
-            </Button>
+            {!reuploadAsk?.deleted && (
+              <Button size="sm" onClick={() => answerReupload('replace')}>
+                Replace earlier upload
+              </Button>
+            )}
           </>
         }
       >
@@ -1559,14 +1563,15 @@ function UploadPageInner() {
                     day: 'numeric',
                   })}.`
                 : 'This document has already been uploaded.'}
+              {reuploadAsk.deleted && ' You deleted it since, but deleting does not give back the cheques it used.'}
             </p>
             <p className="text-sm text-ink-body">
               {t('Processing it again will re-read every cheque, and')}{' '}
               <strong className="font-semibold text-ink-strong">
                 {t("those cheques count against this month's total")}
               </strong>
-              . Replace swaps the earlier upload for this one, so no cheque is listed twice.
-              Skip leaves your existing results untouched.
+              .{!reuploadAsk.deleted && ' Replace swaps the earlier upload for this one, so no cheque is listed twice.'}
+              {' '}Skip leaves your existing results untouched.
             </p>
           </div>
         )}

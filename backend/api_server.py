@@ -974,13 +974,20 @@ def _duplicate_guard(tenant_id: str, content_hash: str, file_name: str,
     prev = _lookup_upload_fingerprint(tenant_id, content_hash)
     if not prev:
         return None
+    # The fingerprint outlives a deleted document on purpose: deleting does not
+    # refund usage, so uploading the file again still counts. But a deleted
+    # document cannot be replaced, so say so and let the client drop "Replace".
+    prev_job = prev.get("last_job_id") or prev.get("first_job_id")
+    if prev_job and not _supabase_select("check_jobs", "job_id", {"job_id": prev_job}, limit=1):
+        prev_job = None
     return {
         "duplicate": True,
         "requires_confirmation": True,
         "previous_uploaded_at": prev.get("first_uploaded_at"),
         "previous_last_uploaded_at": prev.get("last_uploaded_at"),
         "previous_upload_count": prev.get("upload_count"),
-        "previous_job_id": prev.get("last_job_id") or prev.get("first_job_id"),
+        "previous_job_id": prev_job,
+        "previous_job_deleted": prev_job is None,
         "previous_file_name": prev.get("file_name"),
         "file_name": file_name,
         "message": (
