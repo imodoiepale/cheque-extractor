@@ -348,6 +348,28 @@
     }
   }
 
+  // Kyriq writes "[Kyriq] Verified" to the memo through the QuickBooks API.
+  // QuickBooks then re-draws the Reconcile table from an old copy, so every
+  // tick vanishes until a refresh, although the ticks are saved (Michael,
+  // 16 Nov). A few seconds after the last approval, if rows we ticked show
+  // unticked, refresh once. Clicking them again would untick the saved state.
+  let _staleTimer = null;
+  function scheduleStaleReconcileCheck() {
+    clearTimeout(_staleTimer);
+    _staleTimer = setTimeout(() => {
+      if (getPageType() !== 'reconcile' || _newApprovalInFlight || _autoTickInFlight) {
+        scheduleStaleReconcileCheck();
+        return;
+      }
+      const lost = findReconcilePageRows()
+        .filter(r => _tickedThisPage.has(reconcileRowKey(r)) && !isAlreadyCleared(r));
+      if (lost.length) {
+        log(`Reconcile: ${lost.length} ticked row(s) were re-drawn unticked; refreshing the page`);
+        location.reload();
+      }
+    }, 4000);
+  }
+
   async function _handleNewApprovalImpl(newTxn) {
     const pt = getPageType();
     const tag = `${newTxn.payee || ''} #${newTxn.doc_number || ''} $${newTxn.amount || ''}`.trim();
@@ -368,6 +390,7 @@
     if (pt === 'reconcile') {
       _tickedThisPage.delete(`${normNum(newTxn.doc_number)}|${normAmt(newTxn.amount)}`);
       await autoTickReconcile(true);
+      scheduleStaleReconcileCheck();
       return;
     }
 
