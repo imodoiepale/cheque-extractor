@@ -328,14 +328,27 @@
         return;
       }
 
-      const rows = pt === 'reconcile' ? findReconcilePageRows() : findReconRows();
-      const matchRow = pt === 'reconcile' ? matchReconcileRow : matchReconRow;
-      for (const row of rows) {
-        const match = matchRow(row, lookup);
+      if (pt === 'reconcile') {
+        const row = findReconcilePageRows().find(r => matchReconcileRow(r, lookup));
+        if (!row) { pipeToSidepanel(`Undo: no matching row found for ${tag}`, 'warn'); return; }
+        const key = reconcileRowKey(row);
+        const ref = `#${key.split('|')[0] || oldTxn.doc_number || ''}`;
+        const r = await globalThis.kyriqTickRows([key], {
+          clicked: new Set(), findButton: findReconcileButton, count: reconcileTickedCount,
+          isTicked: isTickedMarkup, want: false,
+        });
+        if (r.confirmed.length || r.restored.length) pipeToSidepanel(`✓ Unticked ${ref}`, 'success');
+        else if (r.unreadable.length) pipeToSidepanel(`Kyriq couldn't read the Reconcile totals, so it didn't untick ${ref}. Please untick it by hand.`, 'warn', true);
+        else pipeToSidepanel(`QuickBooks didn't confirm the untick on ${ref}. Please check it on the Reconcile page.`, 'warn', true);
+        return;
+      }
+
+      for (const row of findReconRows()) {
+        const match = matchReconRow(row, lookup);
         if (!match) continue;
-        const btn = row.querySelector('button[data-testid="clear-state-cell"]');
+        if (registerRowState(row) !== true) continue;
+        const btn = findRegisterClearedCell(row);
         if (!btn) continue;
-        if (btn.getAttribute('aria-pressed') !== 'true') continue;
         btn.click();
         highlightRow(row, '#9ca3af');
         unticked++;
@@ -346,28 +359,6 @@
     } finally {
       _removeApprovalInFlight = false;
     }
-  }
-
-  // Kyriq writes "[Kyriq] Verified" to the memo through the QuickBooks API.
-  // QuickBooks then re-draws the Reconcile table from an old copy, so every
-  // tick vanishes until a refresh, although the ticks are saved (Michael,
-  // 16 Nov). A few seconds after the last approval, if rows we ticked show
-  // unticked, refresh once. Clicking them again would untick the saved state.
-  let _staleTimer = null;
-  function scheduleStaleReconcileCheck() {
-    clearTimeout(_staleTimer);
-    _staleTimer = setTimeout(() => {
-      if (getPageType() !== 'reconcile' || _newApprovalInFlight || _autoTickInFlight) {
-        scheduleStaleReconcileCheck();
-        return;
-      }
-      const lost = findReconcilePageRows()
-        .filter(r => _tickedThisPage.has(reconcileRowKey(r)) && !isAlreadyCleared(r));
-      if (lost.length) {
-        log(`Reconcile: ${lost.length} ticked row(s) were re-drawn unticked; refreshing the page`);
-        location.reload();
-      }
-    }, 4000);
   }
 
   async function _handleNewApprovalImpl(newTxn) {
@@ -390,7 +381,6 @@
     if (pt === 'reconcile') {
       _tickedThisPage.delete(`${normNum(newTxn.doc_number)}|${normAmt(newTxn.amount)}`);
       await autoTickReconcile(true);
-      scheduleStaleReconcileCheck();
       return;
     }
 
@@ -435,16 +425,23 @@
       if (didClear) break;
       const match = matchRow(row, lookup);
       if (!match) continue;
-      const btn = row.querySelector('button[data-testid="clear-state-cell"]');
-      if (!btn) {
+      const cell = findRegisterClearedCell(row);
+      if (!cell) {
         pipeToSidepanel(`Row matched #${match.doc_number} but no clear button found in DOM`, 'warn');
         continue;
       }
-      if (btn.getAttribute('aria-pressed') === 'true') {
+      // The C is a toggle that QuickBooks saves at once: click only a row read
+      // as not cleared, or a cleared one would be un-cleared.
+      const state = registerRowState(row);
+      if (state === true) {
         pipeToSidepanel(`Row #${match.doc_number} already cleared`, 'info');
         continue;
       }
-      btn.click();
+      if (state === null) {
+        pipeToSidepanel(`Kyriq can't read the cleared mark on #${match.doc_number} here. Tick it on the Reconcile page.`, 'warn');
+        continue;
+      }
+      cell.click();
       highlightRow(row, '#059669');
       cleared++;
       didClear = true;
@@ -679,37 +676,27 @@
     return null;
   }
 
-  /**
-   * Find the cleared checkbox (or toggle element) within a row.
-   * QB sometimes uses:
-   *  - input[type="checkbox"]
-   *  - A div/span styled as a checkbox at the start of the row
-   *  - A click on the row's first cell
-   */
-  function findClearedCheckbox(row) {
-    // Modern QB: <button data-testid="clear-state-cell" aria-pressed="…"> in td.clearState
-    const btn = row.querySelector('button[data-testid="clear-state-cell"]');
-    if (btn) return btn.getAttribute('aria-pressed') === 'true' ? null : btn;
-
-    // Legacy fallbacks
-    const cb = row.querySelector('input[type="checkbox"]');
-    if (cb) return cb.checked ? null : cb;
-
-    const clearTd = row.querySelector('td.clearState, [class*="clearState"]');
-    if (clearTd) return clearTd.querySelector('button') || clearTd;
-
-    return null;
+  // ─── Reading the cleared mark ─────────────────────────────────────────────
+  // true when the tick button's markup says ticked, null when it can't tell.
+  // aria-pressed was never confirmed on a signed-in QuickBooks page, and rows
+  // Michael had ticked did not show it (17 Nov), so a missing "true" is not
+  // read as "unticked": Reconcile clicks are checked against the header count.
+  function isTickedMarkup(btn) {
+    if (!btn) return null;
+    if (btn.getAttribute('aria-pressed') === 'true' || btn.getAttribute('aria-checked') === 'true') return true;
+    const text = (btn.textContent || '').trim();
+    return text === 'C' || text === 'R' ? true : null;
   }
 
-  function isAlreadyCleared(row) {
+  // Register rows: true / false / null (can't tell). The legacy cell shows
+  // "C", "R" or nothing; the button reads like Reconcile's.
+  function registerRowState(row) {
     const btn = row.querySelector('button[data-testid="clear-state-cell"]');
-    if (btn) return btn.getAttribute('aria-pressed') === 'true';
-
-    const cb = row.querySelector('input[type="checkbox"]');
-    if (cb) return cb.checked;
-
-    const toggle = row.querySelector('[aria-checked="true"],[class*="cleared"],[class*="Cleared"]');
-    return !!toggle;
+    if (btn) return isTickedMarkup(btn);
+    const cell = row.querySelector('td.clearState, [class*="clearState"]');
+    if (!cell) return null;
+    const text = (cell.textContent || '').trim();
+    return text === 'C' || text === 'R' ? true : text === '' ? false : null;
   }
 
   /** Animate an element out then remove it. */
@@ -880,31 +867,74 @@
   // Rows ticked or seen ticked on this page, so a row the user unticks by hand
   // stays unticked. A new approval and navigation both release their keys.
   const _tickedThisPage = new Set();
+  let _headerSettled = false;    // the header count has held still since this page loaded
+  let _unreadableWarned = false; // "couldn't read the totals" is shown once per page
+  let _markupSent = false;       // KYRIQ_TICK_MARKUP is sent once per page
   function reconcileRowKey(row) {
     const amount = normAmt((row.cells[8]?.textContent || '').replace(/[$,()]/g, '').trim())
                 || normAmt((row.cells[9]?.textContent || '').replace(/[$,()]/g, '').trim());
     return `${normNum(row.cells[3]?.textContent.trim())}|${amount}`;
   }
+  function findReconcileButton(key) {
+    return findReconcilePageRows()
+      .find(r => reconcileRowKey(r) === key)
+      ?.querySelector('button[data-testid="clear-state-cell"]') || null;
+  }
 
-  // Tick the cleared "C" on every reconcile row Kyriq approved. No UI: the
-  // human approval already happened in Kyriq. Never unticks, never touches a
-  // row that is already cleared. Safe to call repeatedly (60 s refresh +
-  // KYRIQ_APPROVAL_ADDED) because each row is only ever clicked once.
+  // Ticked items per the Reconcile header ("13 PAYMENTS" + "0 DEPOSITS"), or
+  // null when the header isn't on the page.
+  function reconcileTickedCount() {
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    function* texts() { for (let n = walker.nextNode(); n; n = walker.nextNode()) yield n.data; }
+    return globalThis.kyriqCountFromTexts(texts());
+  }
+
+  // QuickBooks fills in the saved ticks after the table appears, so the first
+  // tick on a page waits until the count has held still.
+  async function waitForSteadyCount(quietMs = 1500, maxMs = 15000) {
+    const end = Date.now() + maxMs;
+    let last = reconcileTickedCount();
+    let since = Date.now();
+    while (Date.now() < end) {
+      await new Promise(r => setTimeout(r, 250));
+      const now = reconcileTickedCount();
+      if (now !== last) { last = now; since = Date.now(); }
+      else if (now != null && Date.now() - since >= quietMs) return;
+    }
+  }
+
+  // Tick the cleared mark on every reconcile row Kyriq approved. No UI: the
+  // human approval already happened in Kyriq. Every click is checked against
+  // the header count, so a row that was already ticked ends ticked
+  // (reconcile-tick.js). A call made while a run is going is not dropped: it
+  // asks for one more pass, which picks up an approval that landed mid-run.
   let _autoTickInFlight = false;
+  let _autoTickAgain = false;
   async function autoTickReconcile(forceRefresh = false) {
-    if (getPageType() !== 'reconcile' || _autoTickInFlight) return;
+    if (getPageType() !== 'reconcile') return;
+    if (_autoTickInFlight) { _autoTickAgain = true; return; }
     _autoTickInFlight = true;
-    try { await _autoTickReconcileImpl(forceRefresh); } finally { _autoTickInFlight = false; }
+    try {
+      do {
+        _autoTickAgain = false;
+        await _autoTickReconcileImpl(forceRefresh);
+        forceRefresh = true;
+      } while (_autoTickAgain && getPageType() === 'reconcile');
+    } finally { _autoTickInFlight = false; }
   }
   async function _autoTickReconcileImpl(forceRefresh) {
     const lookup = await getApproved(forceRefresh);
     if (!lookup.list.length) return; // logged out or nothing approved
+    if (!_headerSettled) { await waitForSteadyCount(); _headerSettled = true; }
     const allRows = findReconcilePageRows();
     const matched = []; // { row, txn }
     const seenTxnIds = new Set();
 
     for (const row of allRows) {
-      if (isAlreadyCleared(row)) { _tickedThisPage.add(reconcileRowKey(row)); continue; }
+      if (isTickedMarkup(row.querySelector('button[data-testid="clear-state-cell"]')) === true) {
+        _tickedThisPage.add(reconcileRowKey(row));
+        continue;
+      }
       const txn = matchReconcileRow(row, lookup);
       if (!txn) continue;
       const key = txn.intuit_id || `${txn.doc_number}|${txn.amount}`;
@@ -924,19 +954,32 @@
     const matchedFinal = pageAccount ? accountScoped : matched;
     log(`Reconcile: ${allRows.length} rows found, ${lookup.list.length} approved, ${matchedFinal.length} to clear`);
 
-    const { confirmed, unconfirmed } = await globalThis.kyriqTickRows(
-      matchedFinal.map(m => reconcileRowKey(m.row)),
-      {
-        clicked: _tickedThisPage,
-        findButton: key => findReconcilePageRows()
-          .find(r => reconcileRowKey(r) === key)
-          ?.querySelector('button[data-testid="clear-state-cell"]') || null,
-      }
-    );
-    if (confirmed.length) pipeToSidepanel(`Reconcile: ticked C on ${confirmed.length} Kyriq-approved row(s)`, 'success');
-    if (unconfirmed.length) {
-      const refs = unconfirmed.map(k => `#${k.split('|')[0] || k}`).join(', ');
-      pipeToSidepanel(`QuickBooks didn't confirm the C tick on ${refs}. Please check ${unconfirmed.length === 1 ? 'it' : 'them'} on the Reconcile page.`, 'warn', true);
+    const r = await globalThis.kyriqTickRows(matchedFinal.map(m => reconcileRowKey(m.row)), {
+      clicked: _tickedThisPage,
+      findButton: findReconcileButton,
+      count: reconcileTickedCount,
+      isTicked: isTickedMarkup,
+    });
+    const refs = keys => keys.map(k => `#${k.split('|')[0] || k}`).join(', ');
+    const them = keys => (keys.length === 1 ? 'it' : 'them');
+    if (r.confirmed.length) pipeToSidepanel(`Reconcile: ticked ${r.confirmed.length} Kyriq-approved row(s)`, 'success');
+    if (r.restored.length) pipeToSidepanel(`Reconcile: ${refs(r.restored)} already ticked, left ticked`, 'info');
+    // The markup didn't show those ticks. Save what it looks like once per page
+    // (tags and attributes only, no text) so the next release can read it.
+    const odd = r.restored[0] || r.unconfirmed[0];
+    if (odd && !_markupSent) {
+      _markupSent = true;
+      const btn = findReconcileButton(odd);
+      const shape = el => `<${el.tagName.toLowerCase()} ${[...el.attributes].map(a => `${a.name}="${a.value}"`).join(' ')}>`
+        + [...el.children].map(shape).join('');
+      if (btn) safeSendMessage({ type: 'KYRIQ_TICK_MARKUP', ticked: r.restored.includes(odd), markup: shape(btn).slice(0, 2000) });
+    }
+    if (r.unconfirmed.length) {
+      pipeToSidepanel(`QuickBooks didn't confirm the tick on ${refs(r.unconfirmed)}. Please check ${them(r.unconfirmed)} on the Reconcile page.`, 'warn', true);
+    }
+    if (r.unreadable.length && !_unreadableWarned) {
+      _unreadableWarned = true;
+      pipeToSidepanel(`Kyriq couldn't read the Reconcile totals, so it didn't tick ${refs(r.unreadable)}. Please tick ${them(r.unreadable)} by hand.`, 'warn', true);
     }
   }
 
@@ -1077,15 +1120,6 @@
     return null;
   }
 
-  function isRegisterRowCleared(row) {
-    const btn = row.querySelector('button[data-testid="clear-state-cell"]');
-    if (btn) return btn.getAttribute('aria-pressed') === 'true';
-
-    const cell = row.querySelector('td.clearState, [class*="clearState"]');
-    const text = (cell?.textContent || '').trim();
-    return text === 'C' || text === 'R';
-  }
-
   async function initRegisterPage() {
     // Detect which DOM variant is in use after waiting for either row type to render.
     // We race between dgrid rows and React table rows so whichever loads wins.
@@ -1124,10 +1158,13 @@
     const matched = [];
     const seenTxnIds = new Set();
 
+    let unreadable = 0;
     for (const row of allRows) {
-      if (isRegisterRowCleared(row)) continue;
+      const state = registerRowState(row);
+      if (state === true) continue;
       const txn = matchReconRow(row, lookup);
       if (!txn) continue;
+      if (state === null) { unreadable++; continue; } // a toggle we can't read is left alone
       const key = txn.intuit_id || `${txn.doc_number}|${txn.amount}`;
       if (seenTxnIds.has(key)) continue; // same approval already claimed a row
       seenTxnIds.add(key);
@@ -1144,11 +1181,12 @@
     }
     const regMatchedFinal = regPageAccount ? regAccountScoped : matched;
     log(`Register: ${allRows.length} rows, ${lookup.list.length} approved, ${regMatchedFinal.length} to mark cleared`);
+    if (unreadable) pipeToSidepanel(`Register: Kyriq can't read the cleared mark on ${unreadable} approved row(s), so it left them. Tick them on the Reconcile page.`, 'info');
     if (!regMatchedFinal.length) return;
 
     let cleared = 0;
     for (const { row } of regMatchedFinal) {
-      if (isRegisterRowCleared(row)) continue;
+      if (registerRowState(row) !== false) continue;
       const cell = findRegisterClearedCell(row);
       if (cell) { cell.click(); cleared++; }
     }
@@ -1367,6 +1405,8 @@
       _lastUrl = location.href;
       _currentPage = null; // reset so next navigation re-runs automation
       _tickedThisPage.clear();
+      _headerSettled = false;
+      _unreadableWarned = false;
       clearTimeout(_navDebounceTimer); // cancel any in-flight nav timer
       _navDebounceTimer = setTimeout(() => {
         _navDebounceTimer = null;

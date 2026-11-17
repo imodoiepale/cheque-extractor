@@ -1,6 +1,7 @@
 import { requireCapability, READ_METHODS } from '@/lib/match-helpers';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createAuthenticatedClient, createServiceClient } from '@/lib/supabase/api';
+import { patchJobCheck, withManualFields } from '@/lib/check-sync';
 
 /**
  * PATCH /api/jobs/[id]/checks/[checkId]/fields
@@ -80,38 +81,22 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ? job.checks_data
       : (typeof job.checks_data === 'string' ? JSON.parse(job.checks_data || '[]') : []);
 
-    const checksCol = 'checks_data';
-
-    const checkIdx = checksData.findIndex(
-      (c: any) => c.check_id === checkId || c.id === checkId
-    );
-
-    if (checkIdx === -1) {
+    if (!checksData.some((c: any) => c.check_id === checkId || c.id === checkId)) {
       return res.status(404).json({ error: `Check "${checkId}" not found in job` });
     }
 
-    // Patch fields inside the extraction object (nested under check.extraction)
-    const check = { ...checksData[checkIdx] };
-    const ext = { ...(check.extraction || {}) };
-
-    if (amount !== undefined)       { ext.amount       = { value: parseFloat(amount), source: 'manual' }; }
-    if (payee !== undefined)        { ext.payee        = { value: payee,              source: 'manual' }; }
-    if (check_date !== undefined)   { ext.checkDate    = { value: check_date,         source: 'manual' }; }
-    if (check_number !== undefined) { ext.checkNumber  = { value: check_number,       source: 'manual' }; }
-    if (memo !== undefined)         { ext.memo         = { value: memo,               source: 'manual' }; }
-
-    check.extraction = ext;
-    checksData[checkIdx] = check;
-
-    const { error: patchErr } = await db
-      .from('check_jobs')
-      .update({ [checksCol]: checksData, updated_at: new Date().toISOString() })
-      .eq('id', job.id)
-      .eq('tenant_id', tenantId);
-
-    if (patchErr) {
-      console.error('Failed to patch checks_data:', patchErr);
-      return res.status(500).json({ error: patchErr.message });
+    // The edit goes inside check.extraction. patchJobCheck retries when another
+    // save lands first, so an approval made at the same moment isn't undone.
+    const saved = await patchJobCheck(db, tenantId, job.job_id, checkId, (c) => withManualFields(c, {
+      amount: amount !== undefined ? parseFloat(amount) : undefined,
+      payee,
+      checkDate: check_date,
+      checkNumber: check_number,
+      memo,
+    }));
+    if (!saved) {
+      console.error('Failed to patch checks_data', { jobId: job.job_id, checkId });
+      return res.status(500).json({ error: 'The change could not be saved. Please try again.' });
     }
 
     // Mirror to the flattened checks table (review page, reconcile, matching read it).
