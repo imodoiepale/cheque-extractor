@@ -2,6 +2,7 @@ import { requireCapability, READ_METHODS } from '@/lib/match-helpers';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createAuthenticatedClient, createServiceClient } from '@/lib/supabase/api';
 import { clearQBTransactionServer, type QBClearStatus } from '@/pages/api/qbo/clear-transaction';
+import { patchJobCheck } from '@/lib/check-sync';
 
 type QBSync = { status: QBClearStatus; message?: string; readOnlyClearedStatus?: string | null };
 
@@ -101,28 +102,17 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       ? job.checks_data
       : (typeof job.checks_data === 'string' ? JSON.parse(job.checks_data || '[]') : []);
 
-    const checksCol = 'checks_data';
-
-    const checkIdx = checksData.findIndex(
-      (c: any) => c.check_id === checkId || c.id === checkId
-    );
-
-    if (checkIdx === -1) {
+    const check = checksData.find((c: any) => c.check_id === checkId || c.id === checkId);
+    if (!check) {
       return res.status(404).json({ error: `Check "${checkId}" not found in job` });
     }
 
-    const check = { ...checksData[checkIdx], status, updated_at: new Date().toISOString() };
-    checksData[checkIdx] = check;
-
-    const { error: patchErr } = await db
-      .from('check_jobs')
-      .update({ [checksCol]: checksData, updated_at: new Date().toISOString() })
-      .eq('id', job.id)
-      .eq('tenant_id', tenantId);
-
-    if (patchErr) {
-      console.error('Failed to patch check status:', patchErr);
-      return res.status(500).json({ error: patchErr.message });
+    // Not a plain write-back of the list: the extension approves three cheques
+    // at once and that kept only the last one. patchJobCheck retries instead.
+    const saved = await patchJobCheck(db, tenantId, job.job_id, checkId, (c) => ({ ...c, status }));
+    if (!saved) {
+      console.error('Failed to patch check status', { jobId: job.job_id, checkId });
+      return res.status(500).json({ error: 'The status could not be saved. Please try again.' });
     }
 
     // Keep the flattened checks table and matches in sync (every status, including the

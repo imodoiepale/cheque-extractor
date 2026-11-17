@@ -15,6 +15,8 @@ const CHECKS_TTL = 30000;
 function findCachedCheck(checkId, jobId) {
   return (_swChecksCache || []).find(c => (c.id === checkId || c.check_id === checkId) && (!jobId || c.job_id === jobId));
 }
+// Writes to the kyriqApproved map, one at a time (see storeKyriqApproved).
+let _kyriqApprovedWrites = Promise.resolve();
 chrome.storage.local.get('kyriqChecksCache')
   .then(({ kyriqChecksCache }) => { if (kyriqChecksCache) _swChecksCache = kyriqChecksCache; })
   .catch(() => {});
@@ -2220,7 +2222,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
           // Persist approved QB txn to local storage so content script can
           // auto-check the reconciliation page without another API round-trip.
-          const storeKyriqApproved = async () => {
+          // Queued: "Approve all" runs three approvals at once, and each read
+          // the map, added its entry and wrote it back, so two were lost.
+          const storeKyriqApproved = () => (_kyriqApprovedWrites = _kyriqApprovedWrites.then(async () => {
             const entry = {
               intuit_id: String(qbIntuitId),
               txn_type: txnType,
@@ -2245,7 +2249,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 if (attempt < 2) await new Promise(r => setTimeout(r, 300 * (attempt + 1)));
               }
             }
-          };
+          }).catch(e => logErr('storeKyriqApproved failed', e)));
 
           try {
             const clearResult = await clearQBTransaction(txnType, qbIntuitId, msg.check || null, qbTxn);
@@ -2665,6 +2669,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
 
         // ── Wipe local approval store (e.g. on logout / company switch) ──
+        // The Reconcile tick button's markup, saved once when Kyriq couldn't
+        // read it (see qbo-overlay.js), so the read can be fixed from real data.
+        case 'KYRIQ_TICK_MARKUP': {
+          const s = await getSession();
+          const tid = s ? await getTenantId(s.user.id).catch(() => null) : null;
+          if (!tid) return { success: false };
+          await supabaseRequest('audit_logs', {
+            method: 'POST',
+            body: JSON.stringify({ tenant_id: tid, action: 'qb_tick_markup', entity_type: 'qb_transaction',
+              metadata: { ticked: !!msg.ticked, markup: String(msg.markup || '').slice(0, 2000) } }),
+          }).catch(e => logErr('KYRIQ_TICK_MARKUP failed', e));
+          return { success: true };
+        }
+
         case 'CLEAR_KYRIQ_APPROVED': {
           await chrome.storage.local.remove('kyriqApproved').catch(() => {});
           return { success: true };
