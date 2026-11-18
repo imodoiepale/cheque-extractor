@@ -30,7 +30,7 @@ import {
 import { advanceStep, loadBatch, loadResume, type ResumeState } from '@/lib/reconcile-client';
 import Stepper from '@/components/reconcile/Stepper';
 import MatchProgress from '@/components/reconcile/MatchProgress';
-import ConnectQuickBooksCard from '@/components/reconcile/ConnectQuickBooksCard';
+import ConnectQuickBooksCard, { AddToChromeCard } from '@/components/reconcile/ConnectQuickBooksCard';
 
 // Steps 3 and 4 are the heavy ones (grid, modals); load them only when reached.
 const stepFallback = () => <Skeleton className="h-64 w-full rounded-card" />;
@@ -226,7 +226,7 @@ function Reconcile() {
         <div className="space-y-4">
           {/* Inline, above the upload box, so a new user never leaves the
               flow to go to Settings. */}
-          {!qbLoading && !hasConnections ? <ConnectQuickBooksCard /> : null}
+          {!qbLoading && !hasConnections ? <><AddToChromeCard /><ConnectQuickBooksCard /></> : null}
           <UploadSlot batchId={batch?.id ?? null} />
         </div>
       ) : null}

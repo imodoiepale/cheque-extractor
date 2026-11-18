@@ -51,7 +51,8 @@ export const PLANS: Plan[] = [
 export const INCLUDED_IN_EVERY_PLAN = [
   'Unlimited companies',
   'Unlimited users',
-  'Kyriq Chrome extension included',
+  'Chrome extension for daily reconciling',
+  'Web app for admin, users and billing',
   'All core features',
 ];
 

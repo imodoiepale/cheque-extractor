@@ -2,9 +2,28 @@
 
 import { useCallback, useState } from 'react';
 import toast from 'react-hot-toast';
-import { Plug } from 'lucide-react';
+import { Chrome, Plug } from 'lucide-react';
 import { Button, GlassCard } from '@/components/ui';
 import { startQuickBooksConnect } from '@/lib/reconcile-client';
+import { EXTENSION_URL } from '@/lib/extension';
+
+/** First step for a new firm (Michael, 18 Nov): most of the work happens in the extension. */
+export function AddToChromeCard() {
+  return (
+    <GlassCard className="flex flex-col gap-4 sm:flex-row sm:items-center">
+      <span aria-hidden className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-input bg-brand-wash">
+        <Chrome className="h-5 w-5 text-brand-deep" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <h2 className="text-sm font-semibold text-ink-strong">Add Kyriq to Chrome</h2>
+        <p className="mt-0.5 text-sm text-ink-body">Reconcile right beside QuickBooks. Most of your team will work here.</p>
+      </div>
+      <a href={EXTENSION_URL} target="_blank" rel="noopener noreferrer" className="shrink-0">
+        <Button size="sm">Add to Chrome</Button>
+      </a>
+    </GlassCard>
+  );
+}
 
 /**
  * Connect QuickBooks, inline on step 1 (CHECKLIST section 3).

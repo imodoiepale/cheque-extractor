@@ -44,6 +44,7 @@ import { Reveal, useScrollReveals } from './Reveal';
 // numbers. They used to exist only here, which is why the admin console was
 // still quoting DepthMe's consumer prices.
 import { PLANS, INCLUDED_IN_EVERY_PLAN } from '@/lib/pricing';
+import { EXTENSION_URL } from '@/lib/extension';
 // The approved 15 FAQ pairs. Shared with the FAQPage JSON-LD in app/page.tsx.
 import { FAQS } from '@/lib/marketing/faqs';
 import { NumberTicker } from '@/components/ui/number-ticker';
@@ -60,11 +61,6 @@ import { ShimmerButton } from '@/components/ui/shimmer-button';
 /** The single CTA label and destination. Both are asserted by the check. */
 const CTA_LABEL = 'Start Free Trial';
 const CTA_HREF = '/signup';
-/** Chrome Web Store listing. Unset until the extension is published, so the button stays hidden. */
-// The published store listing; the env var can still override it.
-const EXTENSION_URL =
-  process.env.NEXT_PUBLIC_CHROME_EXTENSION_URL ||
-  'https://chromewebstore.google.com/detail/apnglhjejjghgmcinkoeganejmkjmkpk';
 const TRIAL_TERMS = '14-day trial or 250 processed checks, whichever comes first · No credit card required';
 const HERO_ASSURANCES = ['No credit card required', 'Setup in minutes', 'Human approval always required'];
 
@@ -91,11 +87,40 @@ function CtaLink({ className, size = 'lg' }: { className?: string; size?: 'md' |
 // and real URLs where a page exists, so crawlers can follow them.
 const NAV_LINKS = [
   { label: 'How It Works', href: '/#how' },
+  { label: 'Chrome Extension', href: '/#extension' },
   { label: 'Features', href: '/features' },
   { label: 'Pricing', href: '/pricing' },
   { label: 'Guides', href: '/guides' },
   { label: 'FAQs', href: '/#faq' },
 ];
+
+/**
+ * "Add to Chrome", which is a dead end on a phone: under 768px it becomes a
+ * mailto the visitor sends to themselves, with the store link in the body.
+ */
+const INSTALL_MAILTO = `mailto:?subject=${encodeURIComponent('Install Kyriq for Chrome')}&body=${encodeURIComponent(
+  `Add Kyriq to Chrome on your desktop, then open it beside QuickBooks:\n${EXTENSION_URL}`
+)}`;
+function AddToChrome({ variant = 'primary', className }: { variant?: 'primary' | 'secondary'; className?: string }) {
+  const btn = cn(buttonVariants({ variant, size: 'lg' }), className);
+  return (
+    <>
+      <a href={EXTENSION_URL} target="_blank" rel="noopener noreferrer" className={cn(btn, 'hidden md:inline-flex')}>
+        Add to Chrome <ArrowRight size={16} aria-hidden />
+      </a>
+      <a href={INSTALL_MAILTO} className={cn(btn, 'md:hidden')}>
+        Email me the install link
+      </a>
+    </>
+  );
+}
+function DesktopOnlyNote({ className }: { className?: string }) {
+  return (
+    <p className={cn('md:hidden text-[13px]', className)}>
+      Kyriq&apos;s extension runs in Chrome on your desktop, right beside QuickBooks.
+    </p>
+  );
+}
 
 /** Signed in already? Read from the local session: no network call. */
 function useSignedIn() {
@@ -250,10 +275,12 @@ function Hero() {
           <Rise>
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mb-5">
               <CtaLink />
-              <a href="#how" className={cn(buttonVariants({ variant: 'secondary', size: 'lg' }))}>
-                See how it works
-              </a>
+              <AddToChrome variant="secondary" />
             </div>
+            <DesktopOnlyNote className="text-ink-faint mb-3" />
+            <p className="text-sm text-ink-body mb-4">
+              Best experience: our Chrome extension, open right beside the QuickBooks account you&apos;re reconciling.
+            </p>
             <div className="flex flex-wrap gap-x-5 gap-y-2 text-xs sm:text-[13px] text-ink-faint">
               {HERO_ASSURANCES.map((item) => (
                 <span key={item} className="inline-flex items-center gap-1.5">
@@ -269,16 +296,15 @@ function Hero() {
           <div className="relative rounded-card">
             <div aria-hidden className="absolute -inset-8 rounded-modal bg-brand/10 blur-3xl" />
             <BorderBeam size={300} duration={12} />
-            <div tabIndex={0} aria-label="Screenshot of the Kyriq QuickBooks comparisons page" className="relative rounded-card overflow-x-auto shadow-glass-modal border border-glass-hairline bg-surface">
-              {/* Wide table: phones scroll it sideways so the text stays readable. */}
+            <div className="relative rounded-card overflow-hidden shadow-glass-modal border border-glass-hairline bg-surface">
               <Image
-                src="/landing/quickbooks-comparisons-real.webp"
-                alt="The Kyriq QuickBooks comparisons page, showing 15 uploaded checks compared with QuickBooks: 14 matched and 1 mismatch, each with Approve and Review actions"
-                width={2376}
-                height={1062}
+                src="/landing/quickbooks-extension-4k-v1.webp"
+                alt="QuickBooks Online bank transactions with the Kyriq Chrome extension open on the right, reviewing suggested check matches"
+                width={2560}
+                height={1440}
                 priority
                 sizes="(max-width: 1280px) 100vw, 1280px"
-                className="block h-auto w-full min-w-[820px]"
+                className="block h-auto w-full"
               />
             </div>
           </div>
@@ -445,6 +471,59 @@ function BuiltForFirms() {
   );
 }
 
+/** Michael, 18 Nov: the extension is where the daily work happens, the app is the back office. */
+function TwoWays() {
+  const cards = [
+    {
+      title: 'Chrome extension: for everyday reconciling',
+      body: 'Opens right next to the QuickBooks account you’re working in. Upload the statement, review matches, approve and clear checks without switching tabs.',
+      note: 'Most of your team will live here.',
+      img: '/landing/quickbooks-extension-4k-v1.webp',
+      w: 2560, h: 1440,
+      alt: 'The Kyriq Chrome extension open beside QuickBooks Online',
+      action: <AddToChrome />,
+      mobileNote: true,
+    },
+    {
+      title: 'Kyriq web app: your back office',
+      body: 'Manage users, companies, permissions, billing, check usage and the audit trail. It also does everything the extension does, for when you’re away from QuickBooks.',
+      img: '/landing/quickbooks-comparisons-real.webp',
+      w: 2376, h: 1062,
+      alt: 'The Kyriq web app comparing uploaded checks with QuickBooks',
+      action: (
+        <Link href="/login" className={cn(buttonVariants({ variant: 'secondary', size: 'lg' }))}>
+          Sign in to the app
+        </Link>
+      ),
+    },
+  ];
+  return (
+    <section id="two-ways" className="relative py-20 sm:py-28 px-4 sm:px-6">
+      <div className="relative max-w-7xl mx-auto">
+        <SectionHead eyebrow="Two ways to use Kyriq" title="Do the work beside QuickBooks. Run your firm from the app." />
+        <div data-reveal className="grid md:grid-cols-2 gap-5 lg:gap-8 stagger reveal-children">
+          {cards.map((c) => (
+            <div key={c.title} className="animate-glass-rise flex flex-col rounded-card bg-surface/90 backdrop-blur-xl border border-glass-hairline shadow-glass overflow-hidden">
+              <div className="relative aspect-video bg-surface border-b border-glass-hairline">
+                <Image src={c.img} alt={c.alt} fill sizes="(max-width: 768px) 100vw, 50vw" className="object-contain object-center" />
+              </div>
+              <div className="flex flex-1 flex-col p-6 sm:p-8">
+                <h3 className="text-xl font-bold text-ink-strong mb-3">{c.title}</h3>
+                <p className="text-sm text-ink-body leading-relaxed">{c.body}</p>
+                {c.note && <p className="mt-3 text-sm font-semibold text-brand-deep">{c.note}</p>}
+                <div className="mt-auto pt-6">
+                  {c.action}
+                  {c.mobileNote && <DesktopOnlyNote className="mt-3 text-ink-faint" />}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function ExtensionSection() {
   return (
     <section id="extension" className="relative py-20 sm:py-28 lg:py-36 px-4 sm:px-6 bg-shell-solid overflow-hidden">
@@ -465,11 +544,10 @@ function ExtensionSection() {
               </li>
             ))}
           </ul>
-          {EXTENSION_URL && (
-            <a href={EXTENSION_URL} target="_blank" rel="noopener noreferrer" className={cn(buttonVariants({ variant: 'primary', size: 'lg' }), 'mt-9')}>
-              Add to Chrome <ArrowRight size={16} aria-hidden />
-            </a>
-          )}
+          <div className="mt-9">
+            <AddToChrome />
+            <DesktopOnlyNote className="mt-3 text-shell-muted" />
+          </div>
         </div>
         <div data-reveal className="relative aspect-[4/3] sm:aspect-video overflow-hidden rounded-modal border border-glass-hairline-dark bg-surface shadow-glass-modal">
           <Image src="/landing/quickbooks-extension-4k-v1.webp" alt="Kyriq Chrome extension reviewing suggested matches inside QuickBooks Online" fill sizes="(max-width: 1024px) 100vw, 60vw" className="object-contain object-center contrast-[1.05] saturate-[0.9]" />
@@ -531,7 +609,7 @@ function VoiceSection() {
             <KyriqIconWhite size={15} /> <Mic className="h-3.5 w-3.5" aria-hidden /> Kyriq IQ · Coming soon
           </span>
           <h2 className="mb-5 text-[clamp(1.875rem,2.8vw,3rem)] font-bold leading-[1.05] tracking-[-0.03em] text-white">
-            Ask. Review. Act, 
+            Ask. Review. Act,{' '}
             <span className="bg-gradient-to-r from-brand-light to-accentEmerald bg-clip-text text-transparent">with your approval.</span>
           </h2>
           <p className="mb-3 text-[clamp(1.05rem,1.3vw,1.2rem)] leading-relaxed text-white/85">
@@ -567,7 +645,7 @@ export function Pricing() {
         <SectionHead
           eyebrow="Simple, flexible pricing"
           title="Choose monthly flexibility or save one month with an annual commitment"
-          blurb="Every Kyriq plan includes the web app and the Chrome extension at no additional cost."
+          blurb="Every plan includes both: the Chrome extension for daily reconciling, and the web app for admin."
         />
 
         {/* Monthly / annual toggle. One recessed track, no per-item borders. */}
@@ -744,7 +822,10 @@ function CTASection() {
               <ArrowRight size={16} className="ml-2" aria-hidden />
             </ShimmerButton>
           </div>
-          <p className="relative mt-5 text-xs text-shell-muted">{TRIAL_TERMS}</p>
+          <p className="relative mt-5 text-[15px] text-shell-text">
+            Then add Kyriq to Chrome and reconcile right inside QuickBooks.
+          </p>
+          <p className="relative mt-3 text-xs text-shell-muted">{TRIAL_TERMS}</p>
           <p className="relative mt-3 text-[13px] text-shell-muted">
             Already have an account?{' '}
             <Link href="/login" className="font-semibold text-shell-text underline-offset-4 hover:underline">Sign in</Link>
@@ -846,10 +927,11 @@ export default function LandingPage() {
       <Hero />
       <FactsBar />
       <HowItWorks />
-      <BuiltForFirms />
+      <TwoWays />
       <ExtensionSection />
-      <VoiceSection />
+      <BuiltForFirms />
       <Pricing />
+      <VoiceSection />
       <Faq />
       <CTASection />
       <Footer />
