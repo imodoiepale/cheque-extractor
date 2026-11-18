@@ -717,10 +717,10 @@ export function Pricing() {
                 {CTA_LABEL}
               </Link>
               <Link
-                href={`${CTA_HREF}?subscribe=${p.tier}`}
+                href={`${CTA_HREF}?subscribe=${p.tier}${annual ? '&billing=annual' : ''}`}
                 className={cn('mt-3 text-center text-[13px] font-semibold hover:underline', p.popular ? 'text-shell-text' : 'text-brand-deep')}
               >
-                Skip the trial and subscribe monthly
+                {annual ? 'Skip the trial and subscribe annually' : 'Skip the trial and subscribe monthly'}
               </Link>
             </div>
           ))}

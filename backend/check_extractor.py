@@ -887,7 +887,8 @@ Return ONLY a JSON object with these exact keys:
   "memo": "memo line text if any, null otherwise",
   "micr_routing": "9-digit routing number from MICR line at bottom",
   "micr_account": "account number from MICR line",
-  "micr_serial": "serial/check number from MICR line"
+  "micr_serial": "serial/check number from MICR line",
+  "documentType": "check, or deposit_slip if this is a deposit slip / deposit ticket rather than a check"
 }
 
 Important: For the payee field, read the HANDWRITTEN name carefully. It is the name written after "PAY TO THE ORDER OF". Do NOT return "THE ORDER OF" as the payee."""

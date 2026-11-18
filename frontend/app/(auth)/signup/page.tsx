@@ -45,10 +45,13 @@ export default function SignupPage() {
   const [loading, setLoading] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [subscribeTo, setSubscribeTo] = useState<(typeof PLANS)[number] | null>(null);
+  const [annualBilling, setAnnualBilling] = useState(false);
 
   useEffect(() => {
-    const tier = new URLSearchParams(window.location.search).get('subscribe');
+    const params = new URLSearchParams(window.location.search);
+    const tier = params.get('subscribe');
     if (isPlanTier(tier)) setSubscribeTo(PLANS.find((p) => p.tier === tier) ?? null);
+    setAnnualBilling(params.get('billing') === 'annual');
   }, []);
 
   const set =(name: Exclude<FieldName, 'consent'>) => (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -93,7 +96,7 @@ export default function SignupPage() {
             full_name: `${values.firstName.trim()} ${values.lastName.trim()}`.trim(),
             company_name: values.firmName.trim(),
             terms_accepted_at: new Date().toISOString(),
-            ...(subscribeTo ? { subscribe_plan: subscribeTo.tier } : {}),
+            ...(subscribeTo ? { subscribe_plan: subscribeTo.tier, subscribe_billing: annualBilling ? 'annual' : 'monthly' } : {}),
           },
         },
       });
@@ -152,7 +155,9 @@ export default function SignupPage() {
         <Badge tone="brand" size="sm" className="mb-3">
           <Zap size={12} aria-hidden />{' '}
           {subscribeTo
-            ? `${subscribeTo.name} plan · $${subscribeTo.monthly.toLocaleString('en-US')} per month`
+            ? annualBilling
+              ? `${subscribeTo.name} plan · $${subscribeTo.annual.toLocaleString('en-US')} per year`
+              : `${subscribeTo.name} plan · $${subscribeTo.monthly.toLocaleString('en-US')} per month`
             : <>14-day free trial &middot; No credit card required</>}
         </Badge>
         <h1 className="font-heading text-2xl font-semibold text-ink-strong sm:text-3xl">

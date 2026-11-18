@@ -1978,7 +1978,9 @@ async function startAndPoll(file, opts = {}) {
         // Fields the cheque viewer (openReviewModal) reads.
         id: c.check_id,
         job_id: currentJobId,
-        image_url: c.image_url || null,
+        // The live job names it storage_url; the saved one image_url (Michael,
+        // 18 Nov: every card said "No image" until he opened Docs).
+        image_url: c.image_url || c.storage_url || null,
         status: c.status || 'pending_review',
         source_file: job.pdf_name || file.name,
       };

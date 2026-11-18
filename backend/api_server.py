@@ -45,6 +45,7 @@ from pydantic import BaseModel
 from PIL import Image as PILImage
 import hashlib
 from doc_kind import classify_document, checks_per_page_from_manifest
+from deposit_slip import is_deposit_slip
 import page_kinds as _page_kinds
 import statement_rows as _statement_rows
 import reconcile_rows as _reconcile_rows
@@ -649,6 +650,7 @@ def _load_engine_results(results_dir: str, check: dict):
     engine_results = {}
     # Load individual engine extractions (full extraction format for each engine separately)
     engine_extractions = {}
+    raw_texts, doc_types = [], []
     
     for engine in ("tesseract", "numarkdown", "gemini"):
         eng_path = os.path.join(check_dir, f"{engine}.json")
@@ -656,6 +658,8 @@ def _load_engine_results(results_dir: str, check: dict):
             try:
                 with open(eng_path) as f:
                     data = json.load(f)
+                raw_texts.append(data.get("raw_text"))
+                doc_types.append((data.get("raw_json") or {}).get("documentType") if isinstance(data.get("raw_json"), dict) else None)
                 # Store raw fields for backward compatibility
                 engine_results[engine] = data.get("fields", {})
                 # Store full extraction with confidence scores for each engine
@@ -667,6 +671,15 @@ def _load_engine_results(results_dir: str, check: dict):
         check["engine_results"] = engine_results
     if engine_extractions:
         check["engine_extractions"] = engine_extractions
+    check["deposit_slip"] = is_deposit_slip(raw_texts, doc_types)
+
+
+def _drop_deposit_slips(checks: list) -> None:
+    """Remove deposit slips in place, so they are not saved, shown or billed."""
+    slips = [c["check_id"] for c in checks if c.get("deposit_slip")]
+    if slips:
+        print(f"  Not cheques (deposit slips), dropped: {', '.join(slips)}")
+        checks[:] = [c for c in checks if not c.get("deposit_slip")]
 
 
 def _convert_fields_to_extraction(fields: dict, source: str) -> dict:
@@ -1295,6 +1308,7 @@ def _process_pdf(job_id: str, pdf_path: str, pdf_name: str):
             results_dir = os.path.join(out_dir, "ocr_results")
             for check in checks:
                 _load_engine_results(results_dir, check)
+            _drop_deposit_slips(checks)
         except Exception as ocr_err:
             print(f"OCR phase error (non-fatal): {ocr_err}")
             traceback.print_exc()
@@ -2202,6 +2216,7 @@ def start_extraction(req: StartExtractionRequest, request: Request, _auth=Depend
                 for check in checks:
                     if check["check_id"] in empty_ids:
                         _load_engine_results(results_dir, check)
+            _drop_deposit_slips(checks)
 
             app_ext.save_summary(filtered_manifest)
 
@@ -3785,6 +3800,7 @@ if __name__ == "__main__":
                                 results_dir = Path(job_dir) / "ocr_results"
                                 for check in jobs[jid].get("checks", []):
                                     _load_engine_results(str(results_dir), check)
+                                _drop_deposit_slips(jobs[jid].get("checks", []))
                                 
                                 # Update database
                                 checks_data = []
