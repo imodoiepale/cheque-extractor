@@ -371,9 +371,13 @@ export default function BillingPage() {
       const supabase = createClient();
       const { data: { session } } = await supabase.auth.getSession();
       const tier = session?.user?.user_metadata?.subscribe_plan;
+      const annual = session?.user?.user_metadata?.subscribe_billing === 'annual';
       if (!isPlanTier(tier)) return;
-      await supabase.auth.updateUser({ data: { subscribe_plan: null } });
-      if (!sub.subscription?.stripeSubscriptionId && sub.stripe?.configured !== false) startCheckout(tier);
+      await supabase.auth.updateUser({ data: { subscribe_plan: null, subscribe_billing: null } });
+      if (!sub.subscription?.stripeSubscriptionId && sub.stripe?.configured !== false) {
+        if (annual) startAnnual(tier);
+        else startCheckout(tier);
+      }
     })().catch((e) => setActionError(e?.message || 'Could not start checkout.'));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- runs once, when the subscription first loads
   }, [sub]);
