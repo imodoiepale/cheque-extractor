@@ -67,7 +67,8 @@ assert.equal(by('974913')[0].status, 'discrepancy', 'a different cheque number m
 // approve that one row; an amount difference or a duplicate cannot be approved.
 assert.ok(canApprove(by('974211')[0]) && canApprove(by('974913')[0]), 'payee/number differences can be approved one by one');
 assert.ok(!canApprove(by('974212')[0]), 'an amount difference cannot be approved');
-assert.ok(by('974209').every(r => !canApprove(r)), 'a duplicate cannot be approved');
+assert.ok(by('974209').every(r => canApprove(r)), 'a person can approve one copy of a duplicate');
+assert.ok(by('974209').every(r => !isCleanMatch(r)), 'Approve all leaves duplicates for a person');
 
 // Undo derives the status from the flags, so it cannot turn a flagged row clean.
 for (const r of [...by('974209'), by('974211')[0], by('974212')[0]]) {

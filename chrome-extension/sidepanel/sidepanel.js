@@ -1094,15 +1094,17 @@ function qbMissingInChecks() {
 // A match that may be approved: linked QB transaction, no amount difference.
 // The row Approve button, the confirm dialogs and "Approve clean matches" all use this.
 function isCleanMatch(m) {
-  return canApprove(m) && m.status !== 'discrepancy';
+  return canApprove(m) && m.status !== 'discrepancy' && m.status !== 'duplicate';
 }
 
 // One row a person has looked at may be approved even with a payee or cheque #
-// difference (a received cheque, "Home Depot" vs "The Home Depot Inc."), but never
-// with an amount difference or while it is one of several copies. Approve all
-// and auto-approve use isCleanMatch, which leaves those rows for a person.
+// difference (a received cheque, "Home Depot" vs "The Home Depot Inc."), or one
+// copy of a duplicate (Michael, 18 Nov: Approve did nothing on 974209), but never
+// with an amount difference. The service worker refuses a second copy for the
+// same QuickBooks cheque. Approve all and auto-approve use isCleanMatch, which
+// leaves those rows for a person.
 function canApprove(m) {
-  return !!m && ['matched', 'pending', 'discrepancy'].includes(m.status) && !!m.qbTxn && !(m.amtDiff > 0.01);
+  return !!m && ['matched', 'pending', 'discrepancy', 'duplicate'].includes(m.status) && !!m.qbTxn && !(m.amtDiff > 0.01);
 }
 
 // Status after an undo: derived from the same flags as the service worker's
@@ -2351,7 +2353,9 @@ function diffCell(extVal, qbVal, type = 'text') {
 
 function openReviewModal(check, match = null) {
   _reviewCheck = check;
-  _reviewMatch = match;
+  // Opened from the Review tab there is no match: find it, or Approve skipped
+  // QuickBooks (no memo, Michael 18 Nov) and Save Changes skipped the QB side.
+  _reviewMatch = match || matches.find(m => m.check?.id === check?.id && (!check?.job_id || m.check?.job_id === check.job_id)) || null;
   const m = $('#review-modal');
   if (!m) return;
   const txn = match?.qbTxn || null;
@@ -3173,7 +3177,16 @@ function bindEvents() {
         // without a re-sync. Payee/number edits don't change amtDiff.
         const m = _reviewMatch;
         m.amtDiff = Math.abs((parseFloat(m.check?.amount) || 0) - (parseFloat(m.qbTxn.amount) || 0));
-        if (m.status === 'discrepancy' && m.amtDiff <= 0.01) m.status = 'matched';
+        // The saved fields now agree: drop their flags so Review and a re-open
+        // stop showing the old difference, and forget the stored match list,
+        // which still held QuickBooks' old values (Michael, 18 Nov).
+        const agree = (a, b) => String(a ?? '').trim().toLowerCase() === String(b ?? '').trim().toLowerCase();
+        m.flags = (m.flags || []).filter(f =>
+          !(f.type === 'checknum' && agree(m.check?.check_number, m.qbTxn.doc_number)) &&
+          !(f.type === 'payee' && agree(m.check?.payee, m.qbTxn.payee)));
+        if (['discrepancy', 'matched', 'pending'].includes(m.status)) m.status = reviewStatus(m);
+        _cachedQB = null;
+        chrome.storage.local.remove(matchCacheKey()).catch(() => {});
         renderMatches();
         const ap = $('#rm-approve');
         if (ap) ap.disabled = !canApprove(m);
