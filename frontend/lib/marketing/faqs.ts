@@ -11,6 +11,10 @@ export const FAQS: { q: string; a: string }[] = [
     a: 'Upload the bank statement you already download and Kyriq extracts the checks from it. Kyriq then reads each check, compares every processed check with the corresponding QuickBooks Online transaction, and lets your team approve 100% matches together, review lower-confidence results individually, identify duplicates and discrepancies, and clear approved matches in the QBO reconciliation.',
   },
   {
+    q: 'Should I use the extension or the web app?',
+    a: 'Use the extension for day-to-day reconciling. It works beside QuickBooks so you can see the register and the matches together. Use the web app for setup and admin: adding users and companies, billing, usage, and reviewing the audit log. Both can run a full reconciliation.',
+  },
+  {
     q: 'Do I need another program to extract checks from my bank statement?',
     a: 'No. Upload your downloaded bank statement directly to Kyriq and Kyriq extracts the checks for you. This removes the separate extraction and re-upload steps. You may also upload individual check images when needed.',
   },

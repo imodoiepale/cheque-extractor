@@ -22,7 +22,9 @@ export function NumberTicker({
   suffix = "",
   className,
 }: NumberTickerProps) {
-  const [displayValue, setDisplayValue] = useState(direction === "down" ? value : 0);
+  // Starts at the final number, so the HTML (search engines, link previews)
+  // says "250", not "0"; the count-up runs once the number scrolls into view.
+  const [displayValue, setDisplayValue] = useState(direction === "down" ? 0 : value);
   const ref = useRef<HTMLSpanElement>(null);
   const [inView, setInView] = useState(false);
 

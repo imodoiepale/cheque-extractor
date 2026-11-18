@@ -143,7 +143,8 @@ console.log('  ok  no watch-demo button, no "500+ firms", no testimonials');
   // and all three must resolve through CTA_HREF.
   const signinLinks = [...src.matchAll(/href="\/login"/g)].length;
   assert.ok(
-    signinLinks <= 3,
+    // +1: the web-app card in "Two ways to use Kyriq" (Michael, 18 Nov) asks for "Sign in to the app".
+    signinLinks <= 4,
     `${LANDING} has ${signinLinks} links to /login — sign-in is navigation, not a call to action`
   );
   assert.ok(
@@ -202,7 +203,7 @@ console.log('  ok  every CTA reads "Start Free Trial" and resolves to /signup');
   assert.match(src, /Annual · one month free/, `${LANDING} lost the annual side of the billing toggle`);
   assert.match(
     read('lib/pricing.ts'), // INCLUDED_IN_EVERY_PLAN, rendered on every plan card
-    /Kyriq Chrome extension included/,
+    /Chrome extension for daily reconciling/,
     `${LANDING}: the Chrome-extension note is gone — it must appear on every plan`
   );
   assert.match(src, /12-month commitment/, `${LANDING} lost the annual terms note`);
@@ -227,12 +228,12 @@ console.log('  ok  every CTA reads "Start Free Trial" and resolves to /signup');
   const faqs = src.match(/export const FAQS: \{ q: string; a: string \}\[\] = \[([\s\S]*?)\r?\n\];/);
   assert.ok(faqs, `${FAQ_FILE}: the FAQS list is gone`);
   const pairs = [...faqs![1].matchAll(/^\s*q:\s*['"`]/gm)].length;
-  assert.equal(pairs, 15, `${LANDING}: FAQS holds ${pairs} pairs, the approved FAQ is 15 questions`);
+  assert.equal(pairs, 16, `${LANDING}: FAQS holds ${pairs} pairs, the approved FAQ is 16 questions (extension vs app added 18 Nov)`);
   for (const q of ['What does Kyriq do?', 'Where can I get help?', 'Can Kyriq read handwritten checks?']) {
     assert.ok(src.includes(q), `${LANDING}: approved FAQ question "${q}" is missing`);
   }
 }
-console.log('  ok  FAQ holds the approved 15 questions');
+console.log('  ok  FAQ holds the approved 16 questions');
 
 /* --- 6. The Magic-UI keyframes and variables survive ------------------- */
 // Parcel A preserved these verbatim and fenced them with a comment naming the
