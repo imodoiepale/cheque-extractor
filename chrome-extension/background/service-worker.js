@@ -544,7 +544,9 @@ async function qbApiRequest(endpoint, method = 'GET', body = null, _attempt = 0)
  * Paginated QB IDS query helper. Walks STARTPOSITION in 1000-row pages.
  * Returns { ok, status, detail, txns } — the shape pullQBTransactions expects.
  */
-async function qboQueryAll(baseQuery, entityKey) {
+// mapPage slims each page as it arrives: a big company's year of full QB
+// objects (BillPayment with every line) crashed the extension (Michael, 19 Nov).
+async function qboQueryAll(baseQuery, entityKey, mapPage = rows => rows) {
   const PAGE_SIZE = 1000;
   const all = [];
   let startPosition = 1;
@@ -553,7 +555,7 @@ async function qboQueryAll(baseQuery, entityKey) {
       const paged = `${baseQuery} STARTPOSITION ${startPosition} MAXRESULTS ${PAGE_SIZE}`;
       const data = await qbApiRequest(`query?query=${encodeURIComponent(paged)}&minorversion=73`);
       const rows = data?.QueryResponse?.[entityKey] || [];
-      all.push(...rows);
+      for (const row of mapPage(rows)) all.push(row);
       if (rows.length < PAGE_SIZE) break;
       startPosition += PAGE_SIZE;
     }
@@ -897,17 +899,8 @@ async function pullQBTransactions() {
   const partialErrors = [];
   const fetchPromises = queries.map(async ({ q, key, type, source }) => {
     try {
-      const result = await qboQueryAll(q, key);
-      if (!result.ok) {
-        logErr(`QB Intuit API ${result.status} for ${type} — sync will be incomplete: ${result.detail}`);
-        partialErrors.push({ type, status: result.status, detail: result.detail });
-        if (result.status === 401) throw new Error('QB_RECONNECT_NEEDED');
-        return [];
-      }
-      let txns = result.txns;
       // BillPayment: QB IDS does not support PayType in WHERE clause — filter client-side
-      if (type === 'BillPayment') txns = txns.filter(t => (t.PayType || '').toLowerCase() === 'check');
-      return txns.map(t => {
+      const slim = rows => (type === 'BillPayment' ? rows.filter(t => (t.PayType || '').toLowerCase() === 'check') : rows).map(t => {
         // Type-specific payee + bank account extraction.
         // BillPayment: vendor is VendorRef; bank account is nested under CheckPayment.BankAccountRef
         // (not BankAccountRef directly — that field belongs to Check/Purchase only).
@@ -943,6 +936,14 @@ async function pullQBTransactions() {
           ...(type === 'BankTransaction' ? { account_ref_id: t.AccountRef?.value, is_pending: true } : {}),
         };
       });
+      const result = await qboQueryAll(q, key, slim);
+      if (!result.ok) {
+        logErr(`QB Intuit API ${result.status} for ${type} — sync will be incomplete: ${result.detail}`);
+        partialErrors.push({ type, status: result.status, detail: result.detail });
+        if (result.status === 401) throw new Error('QB_RECONNECT_NEEDED');
+        return [];
+      }
+      return result.txns;
     } catch (e) {
       if (e.message === 'QB_RECONNECT_NEEDED') throw e; // bubble up — PULL_QB_TXNS handler shows reconnect banner
       console.warn(`QB query failed for ${type}:`, e.message);
@@ -978,12 +979,16 @@ async function pullQBTransactions() {
       memo:         t.memo    || '',
       synced_at:    new Date().toISOString(),
     }));
+    // In batches: one body of thousands of rows is the other half of the crash.
+    const chunks = (rows, n = 500) => Array.from({ length: Math.ceil(rows.length / n) }, (_, i) => rows.slice(i * n, i * n + n));
     try {
-      await supabaseRequest('qb_entries?on_conflict=id', {
-        method: 'POST',
-        headers: { Prefer: 'resolution=merge-duplicates' },
-        body: JSON.stringify(allQBEntries),
-      });
+      for (const part of chunks(allQBEntries)) {
+        await supabaseRequest('qb_entries?on_conflict=id', {
+          method: 'POST',
+          headers: { Prefer: 'resolution=merge-duplicates' },
+          body: JSON.stringify(part),
+        });
+      }
       log(`pullQBTransactions: qb_entries upserted ${allQBEntries.length} rows`);
     } catch (entryErr) {
       logErr('pullQBTransactions: qb_entries upsert failed', entryErr);
@@ -992,11 +997,13 @@ async function pullQBTransactions() {
 
     // ── 2. qb_transactions (secondary — non-fatal; missing constraint OK) ─────
     try {
-      await supabaseRequest('qb_transactions?on_conflict=tenant_id,realm_id,txn_id', {
-        method: 'POST',
-        headers: { Prefer: 'resolution=merge-duplicates' },
-        body: JSON.stringify(allTxns),
-      });
+      for (const part of chunks(allTxns)) {
+        await supabaseRequest('qb_transactions?on_conflict=tenant_id,realm_id,txn_id', {
+          method: 'POST',
+          headers: { Prefer: 'resolution=merge-duplicates' },
+          body: JSON.stringify(part),
+        });
+      }
     } catch (txnErr) {
       logErr('pullQBTransactions: qb_transactions upsert failed (non-fatal)', txnErr);
       // Do NOT throw — qb_entries was already written successfully above
