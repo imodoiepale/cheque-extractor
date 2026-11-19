@@ -1401,9 +1401,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const company = `company=${encodeURIComponent(realmId)}`;
           // qbo.intuit.com is canonical; app.qbo.intuit.com 301s to it, so
           // chrome.tabs.update lands on a stable URL.
-          const targetUrl = msg.accountId
-            ? `https://qbo.intuit.com/app/register?accountId=${encodeURIComponent(msg.accountId)}&${company}`
-            : `https://qbo.intuit.com/app/homepage?${company}`;
+          // /app/...?company= spins forever for an accountant login with many
+          // companies (Michael, 19 Nov). Intuit's login deep link switches
+          // company first, then opens the page.
+          const page = msg.accountId ? `register?accountId=${encodeURIComponent(msg.accountId)}` : 'homepage';
+          const targetUrl = `https://qbo.intuit.com/login?deeplinkcompanyid=${encodeURIComponent(realmId)}&pagereq=${encodeURIComponent(page)}`;
           try {
             // Reuse an Intuit tab rather than stacking up new ones, but only
             // if it is already on this realm — retargeting a tab that is open
