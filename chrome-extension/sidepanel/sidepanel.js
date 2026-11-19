@@ -762,7 +762,7 @@ async function loadChecksIntoMatches({ pull = false, force = false } = {}) {
     updateMatchesBanner('syncing', pull ? 'Syncing QuickBooks…' : 'Refreshing…');
     const [res, pullRes] = await Promise.all([
       sendMsg({ type: 'GET_CHECKS', force }).catch(e => ({ checks: [], error: e?.message })),
-      pull ? sendMsg({ type: 'PULL_QB_TXNS' }).catch(e => ({ error: e?.message })) : null,
+      pull ? sendMsg({ type: 'PULL_QB_TXNS' }, 180000).catch(e => ({ error: e?.message })) : null,
     ]);
     if (pull && handlePullResult(pullRes, 'load') && currentTab !== 'matches') switchTab('matches');
     const dbChecks = res?.checks || [];
@@ -779,7 +779,7 @@ async function loadChecksIntoMatches({ pull = false, force = false } = {}) {
     if (currentTab === 'cheques') renderChecksList(dbChecks);
     dbg(`loadChecksIntoMatches: ${extractedChecks.length} checks loaded`);
     updateMatchesBanner('syncing', `Matching ${extractedChecks.length} cheques…`);
-    const matchRes = await sendMsg({ type: 'RUN_MATCHING', checks: extractedChecks }).catch(() => null);
+    const matchRes = await sendMsg({ type: 'RUN_MATCHING', checks: extractedChecks }, 120000).catch(() => null);
     updateMatchesBanner('loaded', extractedChecks.length);
     if (matchRes?.matches) {
       matches = matchRes.matches;
@@ -2032,9 +2032,11 @@ async function loadQBTransactions(force = false) {
     dbg('loadQBTransactions' + (force ? ' (force)' : ''));
     const list = $('#qb-list');
     if (list) list.innerHTML = '<div class="empty-state"><div class="empty-icon">⏳</div><p>Loading…</p></div>';
-    const res = await sendMsg({ type: 'GET_QB_TXNS' });
+    // A big company is ~5,000 rows: 10 s was not enough, and a timeout read as
+    // "No QB transactions yet" (Michael, 19 Nov, Vazquez Farm).
+    const res = await sendMsg({ type: 'GET_QB_TXNS' }, 90000);
     const txns = res?.txns || [];
-    const status = res?.status || 'ok';
+    const status = res?.status || (res ? 'ok' : 'fetch_failed');
     dbg(`QB Transactions: ${txns.length} (${status})`);
 
     // Do NOT cache when the fetch couldn't run (auth / tenant / network failure).
