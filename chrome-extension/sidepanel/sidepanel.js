@@ -1748,7 +1748,7 @@ function showDuplicate(fileName, when, previousJobId = null) {
       + (previousJobId ? ' Replace swaps the earlier upload for this one, so no cheque is listed twice.' : ''),
     [
       ...(previousJobId ? [{ label: 'Replace earlier upload', primary: true, onClick: replace }] : []),
-      { label: 'Keep both', primary: !previousJobId, onClick: () => runExtraction({ confirmReupload: true }) },
+      { label: previousJobId ? 'Keep both' : 'Upload again', primary: !previousJobId, onClick: () => runExtraction({ confirmReupload: true }) },
       { label: 'Skip', onClick: () => setUploadStep(1) },
     ]);
 }
