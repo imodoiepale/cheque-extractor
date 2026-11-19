@@ -38,6 +38,22 @@ function apiErrorText(body, fallback) {
 
 // qb_entries filter: the active company's rows plus file imports (''). Without
 // an active company, no filter, as the caller is reading the tenant's rows.
+// Each upload belongs to the QuickBooks company that was active when it was
+// made (check_jobs.realm_id). Matching and the lists only use the active
+// company's checks; uploads from before this (no realm) show everywhere.
+// (Michael, 19 Nov: the Kyriq demo checks showed up as Vazquez duplicates.)
+async function scopeChecksToActiveRealm(checks) {
+  if (!checks?.length) return checks || [];
+  let realm = null;
+  try { realm = (await getActiveConnection()).realm_id; } catch (_) { return checks; }
+  if (!realm) return checks;
+  const jobIds = [...new Set(checks.map(c => c.job_id).filter(Boolean))];
+  const rows = await supabaseRequest(`check_jobs?job_id=in.(${jobIds.join(',')})&select=job_id,realm_id`).catch(() => null);
+  if (!rows) return checks; // column not there yet: behave as before
+  const jobRealm = Object.fromEntries(rows.map(r => [r.job_id, r.realm_id]));
+  return checks.filter(c => !jobRealm[c.job_id] || jobRealm[c.job_id] === realm);
+}
+
 async function activeRealmFilter(tenantId) {
   const conns = await supabaseRequest(`qb_connections?tenant_id=eq.${tenantId}&is_active=eq.true&select=realm_id&limit=1`).catch(() => []);
   const realm = conns?.[0]?.realm_id;
@@ -1529,7 +1545,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // would cut the 3MB, until then the 30s cache absorbs repeat calls.
           if (!msg.force && _swChecksCache && Date.now() - _swChecksAt < CHECKS_TTL) {
             log('GET_CHECKS: served from cache');
-            return { checks: _swChecksCache, cached: true };
+            return { checks: await scopeChecksToActiveRealm(_swChecksCache), cached: true };
           }
           try {
             // /api/jobs can take 5-30s on Railway cold starts and returns ~3MB.
@@ -1606,7 +1622,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             _swChecksCache = checks;
             _swChecksAt = Date.now();
             chrome.storage.local.set({ kyriqChecksCache: checks }).catch(() => {});
-            return { checks };
+            return { checks: await scopeChecksToActiveRealm(checks) };
           } catch (e) {
             logErr('GET_CHECKS failed', e);
             return { checks: [], error: e.message };
@@ -1960,6 +1976,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             // 409 = same file uploaded before; the backend explains it in `message`.
             if (!res.ok) return { error: apiErrorText(data, `Upload failed (${res.status})`), blocked: res.status === 402, blockReason: data.detail?.reason || data.reason || null, duplicate: !!data.duplicate, previousUploadedAt: data.previous_last_uploaded_at || data.previous_uploaded_at || null, previousJobId: data.previous_job_id || null };
             log('UPLOAD_DOCUMENT success', { job_id: data.job_id });
+            try {
+              const { realm_id: uploadRealm } = await getActiveConnection();
+              if (uploadRealm && data.job_id) {
+                await supabaseRequest(`check_jobs?job_id=eq.${encodeURIComponent(data.job_id)}`, {
+                  method: 'PATCH', body: JSON.stringify({ realm_id: uploadRealm }),
+                });
+              }
+            } catch (tagErr) { logErr('UPLOAD_DOCUMENT: could not tag the company', tagErr); }
             return { success: true, job_id: data.job_id, job: data };
           } catch (e) {
             logErr('UPLOAD_DOCUMENT failed', e);
@@ -2034,7 +2058,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           }
         }
         case 'RUN_MATCHING': {
-          const checksToMatch = (_swChecksCache?.length ? _swChecksCache : msg.checks) || [];
+          const checksToMatch = await scopeChecksToActiveRealm((_swChecksCache?.length ? _swChecksCache : msg.checks) || []);
           log('RUN_MATCHING', { checksCount: checksToMatch.length, fromCache: !msg.checks });
           const matches = await runFullMatch(checksToMatch);
           log('RUN_MATCHING done', { matchCount: matches?.length });
