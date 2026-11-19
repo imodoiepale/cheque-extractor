@@ -369,6 +369,13 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (!msg || !msg.type) return;
 
   switch (msg.type) {
+    case 'QB_LOAD_PROGRESS': {
+      const badge = $('#qb-count-badge');
+      if (badge && !msg.done) { badge.textContent = `${msg.loaded.toLocaleString()}…`; badge.style.background = 'var(--amber)'; }
+      const p = $('#qb-list .qb-loading-count');
+      if (p) p.textContent = `Loaded ${msg.loaded.toLocaleString()} transactions…`;
+      return;
+    }
     case 'SESSION_CHANGED': {
       dbg(`Session ${msg.signedIn ? 'established' : 'cleared'}`, 'info');
       if (msg.signedIn) {
@@ -2031,7 +2038,11 @@ async function loadQBTransactions(force = false) {
   _inflightQB = (async () => {
     dbg('loadQBTransactions' + (force ? ' (force)' : ''));
     const list = $('#qb-list');
-    if (list) list.innerHTML = '<div class="empty-state"><div class="empty-icon">⏳</div><p>Loading…</p></div>';
+    // The last list for this company shows at once; the fresh one replaces it.
+    const qbKey = 'kyriqQBCache:' + matchCacheKey();
+    const saved = (await chrome.storage.local.get(qbKey).catch(() => ({})))[qbKey];
+    if (saved?.length) renderQBList(saved);
+    else if (list) list.innerHTML = '<div class="empty-state"><div class="empty-icon">⏳</div><p class="qb-loading-count">Loading…</p></div>';
     // A big company is ~5,000 rows: 10 s was not enough, and a timeout read as
     // "No QB transactions yet" (Michael, 19 Nov, Vazquez Farm).
     const res = await sendMsg({ type: 'GET_QB_TXNS' }, 90000);
@@ -2042,6 +2053,11 @@ async function loadQBTransactions(force = false) {
     // Do NOT cache when the fetch couldn't run (auth / tenant / network failure).
     if (status === 'ok' || status === 'empty') {
       _cachedQB = txns;
+      chrome.storage.local.set({ [qbKey]: txns }).catch(() => {});
+    } else if (saved?.length) {
+      dbg(`QB refresh failed (${status}); showing the last loaded list`, 'warn');
+      _cachedQB = null;
+      return;
     } else {
       _cachedQB = null;
     }

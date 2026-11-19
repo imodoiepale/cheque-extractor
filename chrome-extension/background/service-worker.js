@@ -1726,11 +1726,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             log('GET_QB_TXNS: no tenant_id for user');
             return { txns: [], status: 'no_tenant' };
           }
-          let entries;
+          // Streamed in pages of 1000 with a running count, so a big company
+          // (5,000+ rows) shows progress instead of a silent wait.
+          let entries = [];
           try {
-            entries = await supabaseRequest(
-              `qb_entries?tenant_id=eq.${tenantIdQb}${await activeRealmFilter(tenantIdQb)}&select=id,intuit_id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc&limit=5000`
-            );
+            const base = `qb_entries?tenant_id=eq.${tenantIdQb}${await activeRealmFilter(tenantIdQb)}&select=id,intuit_id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc,id.asc`;
+            for (let offset = 0; offset < 20000; offset += 1000) {
+              const page = await supabaseRequest(`${base}&limit=1000&offset=${offset}`) || [];
+              for (const row of page) entries.push(row);
+              chrome.runtime.sendMessage({ type: 'QB_LOAD_PROGRESS', loaded: entries.length, done: page.length < 1000 }).catch(() => {});
+              if (page.length < 1000) break;
+            }
           } catch (fetchErr) {
             logErr('GET_QB_TXNS: supabase fetch failed', fetchErr);
             return { txns: [], status: 'fetch_failed', error: fetchErr?.message || 'fetch failed' };
