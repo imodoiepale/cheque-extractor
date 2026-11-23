@@ -339,4 +339,21 @@ ok('every page declared, no inline script or handler, icon paths resolve');
   ok(`QB list renders at most ${batch} cards on every page`);
 }
 
+/* --- 13. Company safety ---------------------------------------------------- */
+// Intuit ids repeat across companies; a QB failure must not mark a check approved.
+{
+  const sw = read('background/service-worker.js');
+  const overlay = read('content/qbo-overlay.js');
+  for (const t of ['KYRIQ_APPROVAL_ADDED', 'KYRIQ_APPROVAL_REMOVED']) {
+    const at = sw.indexOf(`type: '${t}'`);
+    assert.ok(at > 0 && /realmId/.test(sw.slice(at, at + 120)), `${t} is sent without the company it belongs to`);
+  }
+  assert.ok(overlay.includes('tabRealm() !== String(msg.realmId)'), "QB tab no longer rejects another company's message");
+  const fail = sw.slice(sw.indexOf("'APPROVE_AND_CLEAR QB clear failed"), sw.indexOf("case 'UNDO_QB_TICK'"));
+  assert.ok(fail && !fail.includes('saveCheckApproval') && !fail.includes('storeKyriqApproved'), 'a failed QB update still approves the check in Kyriq');
+  const scope = sw.slice(sw.indexOf('async function scopeChecksToActiveRealm'), sw.indexOf('async function activeRealmFilter'));
+  assert.ok(!scope.includes('catch (_) { return checks; }') && !scope.includes('if (!realm) return checks;'), "an unknown company shows every company's checks");
+  ok('tab messages carry the company; failed QB updates stay pending; scoping fails closed');
+}
+
 console.log(`\n${checks} checks passed.`);

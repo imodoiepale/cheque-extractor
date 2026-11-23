@@ -1393,7 +1393,7 @@ async function approveAndClear(idx) {
         rollback();
         const reason = res.error || res.persistError || res.warning || 'Approval could not be saved.';
         dbg(`SW error: ${reason}`, 'error');
-        showErrorDialog('QB Approve Failed', reason, res.qbRaw || null);
+        showErrorDialog(res.qbChanged ? 'Cleared in QuickBooks, not saved in Kyriq' : 'QB Approve Failed', reason, res.qbRaw || null);
         return false;
       }
       switch (res.qbStatus) {

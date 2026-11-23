@@ -45,11 +45,19 @@ function apiErrorText(body, fallback) {
 async function scopeChecksToActiveRealm(checks) {
   if (!checks?.length) return checks || [];
   let realm = null;
-  try { realm = (await getActiveConnection()).realm_id; } catch (_) { return checks; }
-  if (!realm) return checks;
+  // Fail closed: an unknown company must not expose every company's checks.
+  try { realm = (await getActiveConnection()).realm_id; } catch (_) { return []; }
+  if (!realm) return [];
   const jobIds = [...new Set(checks.map(c => c.job_id).filter(Boolean))];
-  const rows = await supabaseRequest(`check_jobs?job_id=in.(${jobIds.join(',')})&select=job_id,realm_id`).catch(() => null);
-  if (!rows) return checks; // column not there yet: behave as before
+  let rows;
+  try {
+    rows = await supabaseRequest(`check_jobs?job_id=in.(${jobIds.join(',')})&select=job_id,realm_id`);
+  } catch (e) {
+    // Only a missing column (migration 057 not applied) falls back; any other
+    // error surfaces instead of quietly showing every company's checks.
+    if (/realm_id/.test(e?.message || '')) return checks;
+    throw e;
+  }
   const jobRealm = Object.fromEntries(rows.map(r => [r.job_id, r.realm_id]));
   return checks.filter(c => !jobRealm[c.job_id] || jobRealm[c.job_id] === realm);
 }
@@ -1448,13 +1456,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const tid = await getTenantId(s.user.id);
           log('SWITCH_COMPANY', { realmId: msg.realmId, tenantId: tid });
           try {
-            // Deactivate all connections for this tenant
-            await supabaseRequest(`qb_connections?tenant_id=eq.${tid}`, {
-              method: 'PATCH', body: JSON.stringify({ is_active: false }),
-            });
-            // Activate only the selected company
+            // Activate the target first, then deactivate the rest: a failure
+            // part-way never leaves the tenant with no active company.
             await supabaseRequest(`qb_connections?tenant_id=eq.${tid}&realm_id=eq.${msg.realmId}`, {
               method: 'PATCH', body: JSON.stringify({ is_active: true }),
+            });
+            await supabaseRequest(`qb_connections?tenant_id=eq.${tid}&realm_id=neq.${msg.realmId}`, {
+              method: 'PATCH', body: JSON.stringify({ is_active: false }),
             });
             // Read back the active connection to confirm and return details
             const activeConns = await supabaseRequest(
@@ -2080,6 +2088,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             try {
               const r = await chrome.tabs.sendMessage(t.id, {
                 type: 'KYRIQ_FIX_DISCREPANCY',
+                realmId: (await getActiveConnection().catch(() => null))?.realm_id || null,
                 refNo,
                 corrections,
               });
@@ -2329,8 +2338,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             await storeKyriqApproved();
             // Tell any open QB tab to immediately click the C button for this row —
             // no page reload or manual button click needed.
+            const { realmId: approvalRealm } = await getValidQBToken().catch(() => ({}));
             const approvalPayload = {
               type: 'KYRIQ_APPROVAL_ADDED',
+              realmId: approvalRealm || null,
               txn: {
                 intuit_id: String(qbIntuitId),
                 txn_type:  txnType,
@@ -2347,8 +2358,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 });
               }
             }).catch(e => logErr('KYRIQ_APPROVAL_ADDED: tabs.query failed', e));
-            const persistResult = await saveCheckApproval(msg.checkId, msg.jobId);
-            const { realmId: rId } = await getValidQBToken().catch(() => ({}));
+            let persistResult = await saveCheckApproval(msg.checkId, msg.jobId);
+            if (persistResult?.ok !== true) persistResult = await saveCheckApproval(msg.checkId, msg.jobId);
+            const rId = approvalRealm;
             const qbUrl = rId ? qbTxnUrl(rId, txnType, qbIntuitId) : null;
             chrome.runtime.sendMessage({ type: 'CHECK_UPDATED', checkId: msg.checkId, jobId: msg.jobId, status: 'approved', cleared: didClear, qbStatus }).catch(() => {});
             const warning =
@@ -2369,15 +2381,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
               warning,
               persisted: persistResult?.ok === true,
               persistError: persistResult?.ok ? null : (persistResult?.reason || null),
+              // QB already changed: the panel must say so, not show a plain failure.
+              qbChanged: true,
+              error: persistResult?.ok === true ? undefined : 'Cleared in QuickBooks, but Kyriq could not save it. Retry to save.',
             };
           } catch (e) {
-            logErr('APPROVE_AND_CLEAR QB clear failed — approving locally only', e);
-            // Local-only approve: record status in DB but warn user that QB was not cleared.
-            // Still store in local map so the reconciliation page can auto-check the row.
-            await storeKyriqApproved().catch(() => {});
-            const persistResult = await saveCheckApproval(msg.checkId, msg.jobId);
-            chrome.runtime.sendMessage({ type: 'CHECK_UPDATED', checkId: msg.checkId, jobId: msg.jobId, status: 'approved', cleared: false, qbStatus: 'failed' }).catch(() => {});
-            return { success: persistResult?.ok === true, cleared: false, qbStatus: 'failed', persisted: persistResult?.ok === true, persistError: persistResult?.ok ? null : (persistResult?.reason || null), warning: `QB not cleared: ${e.message}`, qbRaw: e.qbRaw || null, qbHttpStatus: e.qbStatus || null };
+            logErr('APPROVE_AND_CLEAR QB clear failed — check left pending', e);
+            // QB did not change, so Kyriq must not say "approved": the check
+            // stays pending and the user retries.
+            return { success: false, cleared: false, qbStatus: 'failed', persisted: false, error: `QuickBooks was not updated: ${e.message}`, warning: `QB not cleared: ${e.message}`, qbRaw: e.qbRaw || null, qbHttpStatus: e.qbStatus || null };
           }
         }
         case 'UNDO_QB_TICK': {
@@ -2390,8 +2402,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             entry = stored?.kyriqApproved?.[intuitId] || null;
           } catch (_) {}
 
+          const removalRealm = (await getActiveConnection().catch(() => null))?.realm_id || null;
           const removalPayload = {
             type: 'KYRIQ_APPROVAL_REMOVED',
+            realmId: removalRealm,
             txn: entry || {
               intuit_id: intuitId,
               txn_type:   msg.txnType   || null,

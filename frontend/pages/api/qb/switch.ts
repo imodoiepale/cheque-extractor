@@ -50,22 +50,21 @@ export default async function handler(
       return res.status(404).json({ error: 'Connection not found' });
     }
 
-    // Deactivate all connections for this tenant
-    await supabase
-      .from('qb_connections')
-      .update({ is_active: false })
-      .eq('tenant_id', tenantId);
-
-    // Activate the requested one
+    // Activate the target first, then deactivate the rest: a failure part-way
+    // never leaves the tenant with no active company.
     const { error: activateError } = await supabase
       .from('qb_connections')
       .update({ is_active: true })
       .eq('tenant_id', tenantId)
       .eq('realm_id', realmId);
+    if (activateError) return res.status(500).json({ error: 'Failed to switch company' });
 
-    if (activateError) {
-      return res.status(500).json({ error: 'Failed to switch company' });
-    }
+    const { error: deactivateError } = await supabase
+      .from('qb_connections')
+      .update({ is_active: false })
+      .eq('tenant_id', tenantId)
+      .neq('realm_id', realmId);
+    if (deactivateError) return res.status(500).json({ error: 'Failed to switch company' });
 
     return res.status(200).json({
       success: true,

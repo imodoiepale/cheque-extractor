@@ -250,7 +250,20 @@
     applyOverlayVisibility();
   }
 
+  // QuickBooks company of this tab when the URL names it (?company= / ?companyId= / ?cid=).
+  function tabRealm() {
+    const q = new URLSearchParams(location.search);
+    return q.get('company') || q.get('companyId') || q.get('cid') || null;
+  }
+
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    // Never act on another company's row: Intuit ids repeat across companies.
+    // ponytail: only enforced when the URL names the company; an unnamed tab
+    // still accepts. Upgrade: read the realm from the QBO page context.
+    if (msg?.realmId && tabRealm() && tabRealm() !== String(msg.realmId)) {
+      if (msg.type === 'KYRIQ_FIX_DISCREPANCY') { sendResponse({ status: 'wrong_company' }); }
+      return;
+    }
     if (msg?.type === 'KYRIQ_UI_STATE') {
       _uiState.sidepanelOpen = !!msg.sidepanelOpen;
       _uiState.overlayMode   = msg.overlayMode || 'whenOpen';
