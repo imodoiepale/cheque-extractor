@@ -279,6 +279,8 @@ let _qbDateFrom     = null;
 let _qbDateTo       = null;
 let _qbSourceFilter = '';  // qb_source value to filter QB Data tab ('' = all)
 let _cachedQB       = null; // null = not loaded yet; [] = loaded but empty
+const QB_RENDER_BATCH = 200;
+let _qbRenderOffset = 0;
 // ── Single-flight guards (prevent duplicate concurrent loads) ──
 let _inflightChecksMatch = null;
 let _inflightQB          = null;
@@ -2037,6 +2039,7 @@ async function loadQBTransactions(force = false) {
   if (_cachedQB !== null && !force) { renderQBList(_cachedQB); return; }
   _inflightQB = (async () => {
     dbg('loadQBTransactions' + (force ? ' (force)' : ''));
+    _qbRenderOffset = 0;
     const list = $('#qb-list');
     // The last list for this company shows at once; the fresh one replaces it.
     const qbKey = 'kyriqQBCache:' + matchCacheKey();
@@ -2115,19 +2118,24 @@ function renderQBList(txns, status = 'ok') {
     });
   }
 
-  // Update count badge
-  const badge = $('#qb-count-badge');
-  if (badge) {
-    const showing = filtered.length, total = txns.length;
-    badge.textContent = showing < total ? `${showing} / ${total}` : String(total);
-    badge.style.background = showing < total ? 'var(--amber)' : 'var(--green)';
-  }
-
   if (!filtered.length) {
     const msg = txns.length ? 'No transactions match the current filter' : 'No QB transactions yet';
     const sub = txns.length ? 'Try clearing the search or date range' : 'Click Sync to pull transactions from QuickBooks';
     list.innerHTML = `<div class="empty-state"><div class="empty-icon"></div><p>${msg}</p><p class="sub">${sub}</p></div>`;
     return;
+  }
+
+  // Painting 5,000+ cards at once crashed Chrome's side-panel renderer for
+  // large companies. Keep all rows searchable, but only put a small window in
+  // the DOM until the user asks for more.
+  const visible = filtered.slice(_qbRenderOffset, _qbRenderOffset + QB_RENDER_BATCH);
+  const remaining = filtered.length - _qbRenderOffset - visible.length;
+
+  const badge = $('#qb-count-badge');
+  if (badge) {
+    const end = _qbRenderOffset + visible.length;
+    badge.textContent = filtered.length > QB_RENDER_BATCH ? `${_qbRenderOffset + 1}-${end} / ${filtered.length}` : String(filtered.length);
+    badge.style.background = filtered.length < txns.length ? 'var(--amber)' : 'var(--green)';
   }
 
   const SRC_LABEL = {
@@ -2136,7 +2144,7 @@ function renderQBList(txns, status = 'ok') {
     cheque_received:     { icon: '', label: 'Received' },
     payroll_check:       { icon: '�', label: 'Payroll' },
   };
-  list.innerHTML = filtered.map(t => {
+  list.innerHTML = visible.map(t => {
     const src    = getQBSource(t);
     const srcMeta = SRC_LABEL[src] || { icon: '', label: t.txn_type || 'Txn' };
     const date   = t.txn_date ? fmtDate(t.txn_date) : '—';
@@ -2157,7 +2165,17 @@ function renderQBList(txns, status = 'ok') {
           ${memo}
         </div>
       </div>`;
-  }).join('');
+  }).join('')
+    + (_qbRenderOffset > 0 ? '<button class="btn-outline full qb-page-prev">Previous 200</button>' : '')
+    + (remaining > 0 ? `<button class="btn-outline full qb-page-next">Next ${Math.min(QB_RENDER_BATCH, remaining).toLocaleString()} (${remaining.toLocaleString()} remaining)</button>` : '');
+  list.querySelector('.qb-page-prev')?.addEventListener('click', () => {
+    _qbRenderOffset = Math.max(0, _qbRenderOffset - QB_RENDER_BATCH);
+    renderQBList(txns, status);
+  });
+  list.querySelector('.qb-page-next')?.addEventListener('click', () => {
+    _qbRenderOffset += QB_RENDER_BATCH;
+    renderQBList(txns, status);
+  });
 }
 
 // ── Documents (from Supabase check_jobs table) ────────────────────────
@@ -2979,7 +2997,10 @@ function bindEvents() {
 
   // ── QB Data tab: refresh + search + date filter events ──
   $('#btn-refresh-qb')?.addEventListener('click', () => { _cachedQB = null; loadQBTransactions(true); });
-  const applyQBFilter = () => { if (_cachedQB !== null) renderQBList(_cachedQB); };
+  const applyQBFilter = () => {
+    _qbRenderOffset = 0;
+    if (_cachedQB !== null) renderQBList(_cachedQB);
+  };
   $('#qb-search')?.addEventListener('input', e => {
     _qbSearch = e.target.value.trim();
     const clr = $('#qb-search-clear');
@@ -3260,6 +3281,7 @@ function bindEvents() {
   $('#account-select')?.addEventListener('change', e => {
     _accountFilter = e.target.value;
     renderMatches();
+    _qbRenderOffset = 0;
     if (_cachedQB !== null) renderQBList(_cachedQB);
   });
 
@@ -3274,6 +3296,7 @@ function bindEvents() {
     pill.addEventListener('click', () => {
       _qbSourceFilter = pill.dataset.src;
       $$('.src-pill').forEach(p => p.classList.toggle('active', p.dataset.src === _qbSourceFilter));
+      _qbRenderOffset = 0;
       if (_cachedQB !== null) renderQBList(_cachedQB);
     });
   });
