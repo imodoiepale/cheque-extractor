@@ -324,4 +324,19 @@ ok('every page declared, no inline script or handler, icon paths resolve');
   ok(`${(manifest.permissions ?? []).length} permissions, every one used; no dev or wildcard hosts`);
 }
 
+/* --- 12. Large QB companies cannot paint every row at once --------------- */
+// Vazquez Farm has 5,283 rows. Version 1.2.27 mapped all of them into one
+// innerHTML assignment, which killed the side panel as soon as QB was opened.
+{
+  const panel = read('sidepanel/sidepanel.js');
+  const batch = Number(panel.match(/const QB_RENDER_BATCH = (\d+);/)?.[1]);
+  assert.ok(batch > 0 && batch <= 250, `QB render batch must stay bounded at 250 rows or fewer; found ${batch}`);
+  assert.ok(panel.includes('filtered.slice(_qbRenderOffset, _qbRenderOffset + QB_RENDER_BATCH)'), 'QB list no longer slices the filtered rows into bounded pages');
+  assert.ok(panel.includes('list.innerHTML = visible.map(t => {'), 'QB list is not rendering the bounded window');
+  assert.ok(!panel.includes('list.innerHTML = filtered.map(t => {'), 'QB list renders every transaction and will crash large companies again');
+  assert.ok(panel.includes("list.querySelector('.qb-page-next')"), 'QB list has no way to page through the remaining rows');
+  assert.ok(!panel.includes('_qbRenderLimit += QB_RENDER_BATCH'), 'QB list still grows the DOM without a hard ceiling');
+  ok(`QB list renders at most ${batch} cards on every page`);
+}
+
 console.log(`\n${checks} checks passed.`);
