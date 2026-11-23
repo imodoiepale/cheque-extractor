@@ -918,26 +918,15 @@ export default async function handler(
 
         } else {
 
-          // Clear old QB entries for this company before storing new ones
-
-          await supabase
-
-            .from('qb_entries')
-
-            .delete()
-
-            .eq('tenant_id', tenantId)
-            .in('realm_id', [token.connection.realmId, '']);
-
-          
-
-          // Insert new entries into qb_entries table with tenant_id
+          // Upsert first, prune second: a failed write must never leave the
+          // company with no QB data (the old delete-then-insert did).
+          const syncedAt = new Date().toISOString();
 
           const { error: storeError } = await supabase
 
             .from('qb_entries')
 
-            .insert(
+            .upsert(
 
               filteredEntries.map(e => ({
 
@@ -968,7 +957,7 @@ export default async function handler(
 
                 raw_data: e.raw,
 
-                synced_at: new Date().toISOString(),
+                synced_at: syncedAt,
 
               }))
 
@@ -979,6 +968,19 @@ export default async function handler(
           if (storeError) {
 
             errors.push(`Storage failed: ${storeError.message}`);
+
+          } else if (filteredEntries.length) {
+
+            // Rows this sync did not touch (skipped on an empty pull: that is
+            // more often a failed fetch than a company with zero cheques). no longer exist in QB for this company.
+            const { error: pruneError } = await supabase
+              .from('qb_entries')
+              .delete()
+              .eq('tenant_id', tenantId)
+              .eq('realm_id', token.connection.realmId)
+              .neq('qb_type', 'FileImport') // file imports are not in the QB API pull
+              .lt('synced_at', syncedAt);
+            if (pruneError) errors.push(`Prune failed: ${pruneError.message}`);
 
           }
 

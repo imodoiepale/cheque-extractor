@@ -47,6 +47,17 @@ const VOUCH_TARGETS = [
 export default function QBComparisonsPage() {
   const t = useSpelling();
   const { loading, extractions, qbEntries, qbSources, error, refreshData } = useComparisonData();
+  const [assigningCompany, setAssigningCompany] = useState(false);
+  // Uploads / QB file-import rows with no company: not matched until assigned.
+  const [untaggedCount, setUntaggedCount] = useState(0);
+  const loadUntagged = useCallback(async () => {
+    const { data: { session } } = await createClient().auth.getSession();
+    if (!session) return;
+    const r = await fetch('/api/jobs/assign-company', { headers: { Authorization: `Bearer ${session.access_token}` } });
+    const b = r.ok ? await r.json().catch(() => ({})) : {};
+    setUntaggedCount((b.count || 0) + (b.qbRows || 0));
+  }, []);
+  useEffect(() => { loadUntagged(); }, [loadUntagged]);
   
   // Silently extract incomplete jobs in the background
   useBackgroundExtraction(extractions);
@@ -762,6 +773,28 @@ export default function QBComparisonsPage() {
     }
   };
 
+  // Older uploads have no company; they stay out of matching until assigned.
+  const handleAssignUntagged = async () => {
+    setAssigningCompany(true);
+    try {
+      const { data: { session } } = await createClient().auth.getSession();
+      if (!session) return;
+      const response = await fetch('/api/jobs/assign-company', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || `Assign failed (${response.status})`);
+      showToast('success', `${body.assigned + (body.qbRows || 0)} item(s) assigned to this company`);
+      setUntaggedCount(0);
+      await refreshData();
+    } catch (err) {
+      showToast('error', friendlyError(err));
+    } finally {
+      setAssigningCompany(false);
+    }
+  };
+
   const handleDeleteAllQB = async () => {
     setDeletingAllQB(true);
     try {
@@ -1046,6 +1079,17 @@ export default function QBComparisonsPage() {
       {/* The grid, full width, with the selected row's evidence beside it on
           wide screens. Pagination rides inside the table shell. */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col p-4">
+        {untaggedCount > 0 && (
+          <div role="status" className="mb-3 flex items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+            <span>
+              {untaggedCount} older upload{untaggedCount === 1 ? ' or QuickBooks row has' : 's or QuickBooks rows have'} no company and {untaggedCount === 1 ? 'is' : 'are'} not being matched.
+              Assign only if {untaggedCount === 1 ? 'it belongs' : 'they belong'} to the company selected above.
+            </span>
+            <Button size="sm" variant="secondary" onClick={handleAssignUntagged} disabled={assigningCompany}>
+              {assigningCompany ? 'Assigning…' : 'Assign to this company'}
+            </Button>
+          </div>
+        )}
         <ComparisonTable
           data={comparisonData}
           sortField={sortField}

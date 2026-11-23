@@ -339,4 +339,33 @@ ok('every page declared, no inline script or handler, icon paths resolve');
   ok(`QB list renders at most ${batch} cards on every page`);
 }
 
+/* --- 13. Company safety ---------------------------------------------------- */
+// Intuit ids repeat across companies; a QB failure must not mark a check approved.
+{
+  const sw = read('background/service-worker.js');
+  const overlay = read('content/qbo-overlay.js');
+  for (const t of ['KYRIQ_APPROVAL_ADDED', 'KYRIQ_APPROVAL_REMOVED']) {
+    const at = sw.indexOf(`type: '${t}'`);
+    assert.ok(at > 0 && /realmId/.test(sw.slice(at, at + 120)), `${t} is sent without the company it belongs to`);
+  }
+  assert.ok(overlay.includes('tabRealm() !== String(msg.realmId)'), "QB tab no longer rejects another company's message");
+  const fail = sw.slice(sw.indexOf("'APPROVE_AND_CLEAR QB clear failed"), sw.indexOf("case 'UNDO_QB_TICK'"));
+  assert.ok(fail && !fail.includes('saveCheckApproval') && !fail.includes('storeKyriqApproved'), 'a failed QB update still approves the check in Kyriq');
+  const scope = sw.slice(sw.indexOf('async function scopeChecksToActiveRealm'), sw.indexOf('async function activeRealmFilter'));
+  assert.ok(!scope.includes('catch (_) { return checks; }') && !scope.includes('if (!realm) return checks;'), "an unknown company shows every company's checks");
+  ok('tab messages carry the company; failed QB updates stay pending; scoping fails closed');
+}
+
+/* --- 14. No row ceiling, no untagged leaks, no hardcoded QB accounts -------- */
+{
+  const sw = read('background/service-worker.js');
+  const panel = read('sidepanel/sidepanel.js');
+  assert.ok(!/offset < 20000|limit=5000/.test(sw), 'a QB read still stops at a fixed row count');
+  assert.ok(!sw.includes('realm_id=in.("",'), "untagged QB rows ('') still show under every company");
+  assert.ok(sw.includes('return checks.filter(c => jobRealm[c.job_id] === realm);'), 'untagged uploads show under every company again');
+  assert.ok(panel.includes("sendMsg({ type: 'GET_QB_TXNS', offset }"), 'side panel loads the whole QB list in one message again');
+  assert.ok(!/name: '(Checking|Uncategorized Expense|Undeposited Funds)'/.test(sw) && !sw.includes("|| 'Checking'"), 'a QB create uses a hardcoded account name');
+  ok('QB reads are paged with no ceiling; untagged rows held back; accounts resolved by Id');
+}
+
 console.log(`\n${checks} checks passed.`);

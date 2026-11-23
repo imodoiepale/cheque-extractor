@@ -1,4 +1,4 @@
-import { requireCapability, READ_METHODS } from '@/lib/match-helpers';
+import { requireCapability, READ_METHODS, getActiveRealm } from '@/lib/match-helpers';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createAuthenticatedClient } from '@/lib/supabase/api';
 
@@ -35,11 +35,16 @@ export default async function handler(
       return res.status(400).json({ error: 'User has no tenant' });
     }
 
+    // Only the selected company: the dialog shows that company's count.
+    const realmId = await getActiveRealm(supabase, profile.tenant_id);
+    if (!realmId) return res.status(400).json({ error: 'No active QuickBooks company' });
+
     // First, count how many entries exist
     const { count: beforeCount } = await supabase
       .from('qb_entries')
       .select('*', { count: 'exact', head: true })
-      .eq('tenant_id', profile.tenant_id);
+      .eq('tenant_id', profile.tenant_id)
+      .eq('realm_id', realmId);
 
     console.log(`[DELETE-ALL] Found ${beforeCount} QB entries for tenant ${profile.tenant_id}`);
 
@@ -47,7 +52,8 @@ export default async function handler(
     const { error } = await supabase
       .from('qb_entries')
       .delete()
-      .eq('tenant_id', profile.tenant_id);
+      .eq('tenant_id', profile.tenant_id)
+      .eq('realm_id', realmId);
 
     if (error) {
       console.error('Failed to delete all QB entries:', error);

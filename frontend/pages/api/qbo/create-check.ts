@@ -3,6 +3,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { createAuthenticatedClient } from '@/lib/supabase/api';
 import { getQbToken } from '@/lib/qb-token';
 import { qbFetch } from '@/lib/qb-http';
+import { resolveQbRefs, findEntityRef } from '@/lib/qb-refs';
 
 const QBO_BASE = 'https://quickbooks.api.intuit.com';
 const QBO_SANDBOX = 'https://sandbox-quickbooks.api.intuit.com';
@@ -38,22 +39,36 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   const realmId = conn.realmId;
   const totalAmt = parseFloat(String(amount).replace(/[^0-9.]/g, '')) || 0;
 
+  let refs;
+  try {
+    refs = await resolveQbRefs(base, realmId, accessToken, req.body.bankAccount);
+  } catch (e: any) {
+    return res.status(502).json({ error: e.message });
+  }
+  const missing = txnType === 'Purchase'
+    ? (!refs.bank ? 'a Bank account' : !refs.expense ? 'an Expense account' : null)
+    : txnType === 'Deposit'
+      ? (!refs.undeposited && !refs.bank ? 'an Undeposited Funds or Bank account' : !refs.income ? 'an Income account' : null)
+      : null;
+  if (missing) return res.status(400).json({ error: `This QuickBooks company has no ${missing}. Add one in QuickBooks, then retry.` });
+  const entity = await findEntityRef(base, realmId, accessToken, txnType === 'Purchase' ? 'Vendor' : 'Customer', payee);
+
   let payload: any;
 
   if (txnType === 'Purchase') {
     payload = {
       PaymentType: 'Check',
-      AccountRef: { name: 'Checking' },
+      AccountRef: refs.bank,
       TxnDate: date,
       DocNumber: checkNumber || '',
       TotalAmt: totalAmt,
       PrivateNote: memo || `[Kyriq] Created from vouched check #${checkNumber}`,
-      ...(payee ? { EntityRef: { name: payee, type: 'Vendor' } } : {}),
+      ...(entity ? { EntityRef: { ...entity, type: 'Vendor' } } : {}),
       Line: [{
         DetailType: 'AccountBasedExpenseLineDetail',
         Amount: totalAmt,
         AccountBasedExpenseLineDetail: {
-          AccountRef: { name: 'Uncategorized Expense' },
+          AccountRef: refs.expense,
           BillableStatus: 'NotBillable',
         },
       }],
@@ -63,14 +78,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       TxnDate: date,
       DocNumber: checkNumber || '',
       TotalAmt: totalAmt,
-      DepositToAccountRef: { name: 'Undeposited Funds' },
+      DepositToAccountRef: refs.undeposited || refs.bank,
       PrivateNote: memo || `[Kyriq] Created from vouched check #${checkNumber}`,
       Line: [{
         DetailType: 'DepositLineDetail',
         Amount: totalAmt,
         DepositLineDetail: {
-          AccountRef: { name: 'Uncategorized Income' },
-          ...(payee ? { Entity: { Type: 'Customer', EntityRef: { name: payee } } } : {}),
+          AccountRef: refs.income,
+          ...(entity ? { Entity: { Type: 'Customer', EntityRef: entity } } : {}),
         },
       }],
     };
@@ -103,6 +118,29 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   const created = data[txnType === 'Purchase' ? 'Purchase' : 'Deposit'];
+
+  // Save it locally now so the comparison shows it before the next sync.
+  // Same id shape as pull-checks, so that sync upserts this row, not a copy.
+  if (created?.Id && conn.tenantId) {
+    const { error: saveErr } = await supabase.from('qb_entries').upsert({
+      id: `${txnType.toLowerCase()}-${created.Id}:${realmId}:${conn.tenantId}`,
+      realm_id: realmId,
+      tenant_id: conn.tenantId,
+      intuit_id: String(created.Id),
+      qb_type: txnType,
+      qb_source: txnType === 'Purchase' ? 'cheque_written' : 'cheque_received',
+      check_number: created.DocNumber || '',
+      date: created.TxnDate || date,
+      amount: String(created.TotalAmt ?? totalAmt),
+      payee: entity?.name || payee || '',
+      account: (txnType === 'Purchase' ? refs.bank : refs.undeposited || refs.bank)?.name || '',
+      memo: created.PrivateNote || '',
+      raw_data: created,
+      synced_at: new Date().toISOString(),
+    });
+    if (saveErr) console.warn('create-check: created in QB but local save failed:', saveErr.message);
+  }
+
   return res.status(200).json({
     success: true,
     qbId: created?.Id,

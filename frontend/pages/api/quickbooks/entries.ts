@@ -27,18 +27,27 @@ export default async function handler(
     const supabase = createAuthenticatedClient(req);
 
     // Try to fetch stored entries from qb_entries table
-    // Only the selected company's rows, plus file imports ('' has no company).
+    // Only the selected company's rows. No company -> nothing (fail closed);
+    // untagged rows ('') are assigned via /api/jobs/assign-company.
     const realmId = typeof req.query.realmId === 'string' ? req.query.realmId : '';
-    let query = supabase.from('qb_entries').select('*');
-    if (realmId) query = query.in('realm_id', [realmId, '']);
-    const { data: entries, error: dbError } = await query
-      .order('date', { ascending: false })
-      .limit(5000);
-
-    if (dbError) {
-      // Table might not exist yet or connection failed — return empty
-      console.warn('qb_entries table query failed:', dbError);
-      return res.status(200).json({ entries: [], count: 0 });
+    if (!realmId) return res.status(200).json({ entries: [], count: 0, message: 'Select a QuickBooks company.' });
+    // Page through every row: a fixed .limit() silently dropped rows past it.
+    const entries: any[] = [];
+    for (let from = 0; ; from += 1000) {
+      const { data, error: dbError } = await supabase
+        .from('qb_entries')
+        .select('*')
+        .eq('realm_id', realmId)
+        .order('date', { ascending: false })
+        .order('id', { ascending: true })
+        .range(from, from + 999);
+      if (dbError) {
+        // Never report a failed read as "no entries": that shows as "Missing in QB".
+        console.error('qb_entries query failed:', dbError);
+        return res.status(500).json({ error: 'Failed to load QuickBooks entries' });
+      }
+      entries.push(...(data || []));
+      if (!data || data.length < 1000) break;
     }
 
     if (entries && entries.length > 0) {

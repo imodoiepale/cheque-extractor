@@ -752,6 +752,7 @@ function handlePullResult(pullRes, where) {
 // Single-flight guarded: concurrent callers share the same in-flight promise.
 // Resolves to the PULL_QB_TXNS result (or null).
 async function loadChecksIntoMatches({ pull = false, force = false } = {}) {
+  refreshUntaggedBanner();
   if (_inflightChecksMatch) {
     dbg('loadChecksIntoMatches: reusing in-flight load');
     return _inflightChecksMatch;
@@ -816,6 +817,27 @@ async function loadChecksIntoMatches({ pull = false, force = false } = {}) {
     return pullRes;
   })().finally(() => { _inflightChecksMatch = null; });
   return _inflightChecksMatch;
+}
+
+// Uploads with no QuickBooks company are not matched; offer to assign them.
+async function refreshUntaggedBanner() {
+  const banner = $('#untagged-banner');
+  if (!banner) return;
+  const res = await sendMsg({ type: 'UNTAGGED_UPLOADS' }, 15000).catch(() => null);
+  const n = (res?.count || 0) + (res?.qbRows || 0);
+  banner.style.display = n > 0 ? '' : 'none';
+  if (!n) return;
+  banner.querySelector('.untagged-text').textContent =
+    `${n} older upload${n === 1 ? ' or QB row has' : 's or QB rows have'} no QuickBooks company and ${n === 1 ? 'is' : 'are'} not matched. Assign only if ${n === 1 ? 'it belongs' : 'they belong'} to the active company.`;
+  const btn = banner.querySelector('.untagged-assign');
+  btn.onclick = async () => {
+    btn.disabled = true;
+    const r = await sendMsg({ type: 'ASSIGN_UNTAGGED_UPLOADS' }, 30000).catch(() => null);
+    btn.disabled = false;
+    if (!r?.success) { showErrorDialog('Could not assign uploads', r?.error || 'No response from Kyriq.', null); return; }
+    banner.style.display = 'none';
+    loadChecksIntoMatches({ force: true });
+  };
 }
 
 function updateMatchesBanner(state, count) {
@@ -1393,7 +1415,7 @@ async function approveAndClear(idx) {
         rollback();
         const reason = res.error || res.persistError || res.warning || 'Approval could not be saved.';
         dbg(`SW error: ${reason}`, 'error');
-        showErrorDialog('QB Approve Failed', reason, res.qbRaw || null);
+        showErrorDialog(res.qbChanged ? 'Cleared in QuickBooks, not saved in Kyriq' : 'QB Approve Failed', reason, res.qbRaw || null);
         return false;
       }
       switch (res.qbStatus) {
@@ -2048,15 +2070,26 @@ async function loadQBTransactions(force = false) {
     else if (list) list.innerHTML = '<div class="empty-state"><div class="empty-icon">⏳</div><p class="qb-loading-count">Loading…</p></div>';
     // A big company is ~5,000 rows: 10 s was not enough, and a timeout read as
     // "No QB transactions yet" (Michael, 19 Nov, Vazquez Farm).
-    const res = await sendMsg({ type: 'GET_QB_TXNS' }, 90000);
-    const txns = res?.txns || [];
-    const status = res?.status || (res ? 'ok' : 'fetch_failed');
+    // One page per message (see GET_QB_TXNS): no single message holds a whole company.
+    const txns = [];
+    let status = 'empty';
+    for (let offset = 0; ; offset += 1000) {
+      const res = await sendMsg({ type: 'GET_QB_TXNS', offset }, 30000);
+      if (!res || (res.status !== 'ok' && res.status !== 'empty')) { status = res?.status || 'fetch_failed'; txns.length = 0; break; }
+      txns.push(...res.txns);
+      if (txns.length) status = 'ok';
+      const p = $('#qb-list .qb-loading-count');
+      if (p) p.textContent = `Loaded ${txns.length.toLocaleString()} transactions…`;
+      if (res.done) break;
+    }
     dbg(`QB Transactions: ${txns.length} (${status})`);
 
     // Do NOT cache when the fetch couldn't run (auth / tenant / network failure).
     if (status === 'ok' || status === 'empty') {
       _cachedQB = txns;
-      chrome.storage.local.set({ [qbKey]: txns }).catch(() => {});
+      // ponytail: the instant-open cache keeps the newest 5,000 rows only, so
+      // chrome.storage never holds one huge value; the full list is in memory.
+      chrome.storage.local.set({ [qbKey]: txns.slice(0, 5000) }).catch(() => {});
     } else if (saved?.length) {
       dbg(`QB refresh failed (${status}); showing the last loaded list`, 'warn');
       _cachedQB = null;
