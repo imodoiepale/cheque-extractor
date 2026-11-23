@@ -978,6 +978,7 @@ export default async function handler(
               .delete()
               .eq('tenant_id', tenantId)
               .eq('realm_id', token.connection.realmId)
+              .neq('qb_type', 'FileImport') // file imports are not in the QB API pull
               .lt('synced_at', syncedAt);
             if (pruneError) errors.push(`Prune failed: ${pruneError.message}`);
 

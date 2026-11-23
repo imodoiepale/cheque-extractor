@@ -356,4 +356,16 @@ ok('every page declared, no inline script or handler, icon paths resolve');
   ok('tab messages carry the company; failed QB updates stay pending; scoping fails closed');
 }
 
+/* --- 14. No row ceiling, no untagged leaks, no hardcoded QB accounts -------- */
+{
+  const sw = read('background/service-worker.js');
+  const panel = read('sidepanel/sidepanel.js');
+  assert.ok(!/offset < 20000|limit=5000/.test(sw), 'a QB read still stops at a fixed row count');
+  assert.ok(!sw.includes('realm_id=in.("",'), "untagged QB rows ('') still show under every company");
+  assert.ok(sw.includes('return checks.filter(c => jobRealm[c.job_id] === realm);'), 'untagged uploads show under every company again');
+  assert.ok(panel.includes("sendMsg({ type: 'GET_QB_TXNS', offset }"), 'side panel loads the whole QB list in one message again');
+  assert.ok(!/name: '(Checking|Uncategorized Expense|Undeposited Funds)'/.test(sw) && !sw.includes("|| 'Checking'"), 'a QB create uses a hardcoded account name');
+  ok('QB reads are paged with no ceiling; untagged rows held back; accounts resolved by Id');
+}
+
 console.log(`\n${checks} checks passed.`);

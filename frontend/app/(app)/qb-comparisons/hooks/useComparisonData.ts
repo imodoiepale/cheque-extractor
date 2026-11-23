@@ -36,15 +36,19 @@ export function useComparisonData() {
     [qbEntries]
   );
 
-  // Every job with cheques, regardless of status.
+  // Only the active company's uploads: comparing every company's cheques
+  // against one company's QB rows produced cross-company matches. Uploads
+  // with no company are held back until assigned (see untaggedJobs).
   const extractions: CheckExtraction[] = useMemo(
     () =>
-      (jobsQ.data || []).flatMap((job: any) =>
-        job.checks?.length > 0
-          ? job.checks.map((check: any) => ({ ...check, job_id: job.job_id, pdf_name: job.pdf_name }))
-          : []
-      ),
-    [jobsQ.data]
+      (jobsQ.data || [])
+        .filter((job: any) => realmId && job.realm_id === realmId)
+        .flatMap((job: any) =>
+          job.checks?.length > 0
+            ? job.checks.map((check: any) => ({ ...check, job_id: job.job_id, pdf_name: job.pdf_name }))
+            : []
+        ),
+    [jobsQ.data, realmId]
   );
 
   const err = jobsQ.error || entriesQ.error;

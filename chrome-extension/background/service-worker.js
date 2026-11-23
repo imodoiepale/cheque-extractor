@@ -36,11 +36,9 @@ function apiErrorText(body, fallback) {
   return d?.message || body?.message || (typeof body?.error === 'string' && body.error) || fallback;
 }
 
-// qb_entries filter: the active company's rows plus file imports (''). Without
-// an active company, no filter, as the caller is reading the tenant's rows.
 // Each upload belongs to the QuickBooks company that was active when it was
 // made (check_jobs.realm_id). Matching and the lists only use the active
-// company's checks; uploads from before this (no realm) show everywhere.
+// company's checks.
 // (Michael, 19 Nov: the Kyriq demo checks showed up as Vazquez duplicates.)
 async function scopeChecksToActiveRealm(checks) {
   if (!checks?.length) return checks || [];
@@ -59,13 +57,31 @@ async function scopeChecksToActiveRealm(checks) {
     throw e;
   }
   const jobRealm = Object.fromEntries(rows.map(r => [r.job_id, r.realm_id]));
-  return checks.filter(c => !jobRealm[c.job_id] || jobRealm[c.job_id] === realm);
+  // Untagged uploads (from before 1.2.27, or a failed tag at upload) are held
+  // back until assigned: showing them under every company made cross-company
+  // matches. The side panel offers "Assign to this company" (ASSIGN_UNTAGGED_UPLOADS).
+  return checks.filter(c => jobRealm[c.job_id] === realm);
 }
 
+// Only the active company's rows. No company known -> a filter that matches
+// nothing: fail closed instead of returning every company's rows.
 async function activeRealmFilter(tenantId) {
   const conns = await supabaseRequest(`qb_connections?tenant_id=eq.${tenantId}&is_active=eq.true&select=realm_id&limit=1`).catch(() => []);
   const realm = conns?.[0]?.realm_id;
-  return realm ? `&realm_id=in.("",${realm})` : '';
+  return realm ? `&realm_id=eq.${encodeURIComponent(realm)}` : '&realm_id=eq.__no_active_company__';
+}
+
+// Every row for one PostgREST query (qb_entries, checks…), 1,000 per request (the server caps a
+// response there). Throws on failure: a failed read must never look like
+// "no QB rows", which matching reports as "Missing in QB".
+async function fetchAllQbEntries(query, onPage) {
+  const rows = [];
+  for (let offset = 0; ; offset += 1000) {
+    const page = await supabaseRequest(`${query}&limit=1000&offset=${offset}`) || [];
+    rows.push(...page);
+    onPage?.(rows.length, page.length < 1000);
+    if (page.length < 1000) return rows;
+  }
 }
 
 function safeStr(f) {
@@ -510,6 +526,22 @@ async function getValidQBToken() {
   }
 
   return { token: newTokens.accessToken, realmId: conn.realm_id, tenantId: conn.tenantId, connId: conn.id };
+}
+
+// QuickBooks refs need real Ids, and not every company has "Checking" or
+// "Uncategorized Expense". Same rules as frontend/lib/qb-refs.ts pickAccounts.
+async function resolveQbAccountRefs(bankName) {
+  const q = 'SELECT Id, Name, AccountType, AccountSubType FROM Account WHERE Active = true MAXRESULTS 1000';
+  const data = await qbApiRequest(`query?query=${encodeURIComponent(q)}&minorversion=73`);
+  const accounts = data?.QueryResponse?.Account || [];
+  const of = (t) => accounts.filter(a => a.AccountType === t);
+  const named = (list, re) => list.find(a => re.test(a.Name)) || list[0];
+  const ref = (a) => (a ? { value: String(a.Id), name: a.Name } : null);
+  const banks = of('Bank');
+  return {
+    bank: ref((bankName && banks.find(a => a.Name === bankName)) || named(banks, /^checking$/i)),
+    expense: ref(named(of('Expense'), /uncategori[sz]ed expense/i)),
+  };
 }
 
 async function qbApiRequest(endpoint, method = 'GET', body = null, _attempt = 0) {
@@ -1099,10 +1131,9 @@ async function runFullMatch(extractedChecks) {
   const autoRules = await getAutoApproveRules();
 
   // qb_entries is the canonical source (561+ records). qb_transactions is empty (extension-only legacy store).
-  const entries = await supabaseRequest(
-    `qb_entries?tenant_id=eq.${tenantId}&realm_id=in.("",${realmId})&select=id,intuit_id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc&limit=5000`,
-    { method: 'GET' }
-  ).catch(() => []);
+  const entries = await fetchAllQbEntries(
+    `qb_entries?tenant_id=eq.${tenantId}&realm_id=eq.${encodeURIComponent(realmId)}&select=id,intuit_id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc,id.asc`
+  );
 
   // Normalise to the shape scoreMatch expects — same mapping as GET_QB_TXNS
   const qbTxns = (entries || []).map(e => ({
@@ -1752,17 +1783,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             log('GET_QB_TXNS: no tenant_id for user');
             return { txns: [], status: 'no_tenant' };
           }
-          // Streamed in pages of 1000 with a running count, so a big company
-          // (5,000+ rows) shows progress instead of a silent wait.
+          // One 1,000-row page per message: the side panel asks for the next
+          // offset until done, so no single message carries a whole company
+          // and there is no row ceiling (the old loop stopped at 20,000).
+          const offset = Math.max(0, Number(msg.offset) || 0);
           let entries = [];
           try {
-            const base = `qb_entries?tenant_id=eq.${tenantIdQb}${await activeRealmFilter(tenantIdQb)}&select=id,intuit_id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc,id.asc`;
-            for (let offset = 0; offset < 20000; offset += 1000) {
-              const page = await supabaseRequest(`${base}&limit=1000&offset=${offset}`) || [];
-              for (const row of page) entries.push(row);
-              chrome.runtime.sendMessage({ type: 'QB_LOAD_PROGRESS', loaded: entries.length, done: page.length < 1000 }).catch(() => {});
-              if (page.length < 1000) break;
-            }
+            entries = await supabaseRequest(`qb_entries?tenant_id=eq.${tenantIdQb}${await activeRealmFilter(tenantIdQb)}&select=id,intuit_id,check_number,date,amount,payee,account,memo,qb_source,qb_type&order=date.desc,id.asc&limit=1000&offset=${offset}`) || [];
           } catch (fetchErr) {
             logErr('GET_QB_TXNS: supabase fetch failed', fetchErr);
             return { txns: [], status: 'fetch_failed', error: fetchErr?.message || 'fetch failed' };
@@ -1780,8 +1807,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             doc_number: e.check_number,
             account: e.account,
           }));
-          log('GET_QB_TXNS result', { count: txns.length, tenantId: tenantIdQb });
-          return { txns, status: txns.length ? 'ok' : 'empty', tenantId: tenantIdQb };
+          log('GET_QB_TXNS page', { offset, count: txns.length, tenantId: tenantIdQb });
+          return { txns, done: txns.length < 1000, status: (txns.length || offset) ? 'ok' : 'empty', tenantId: tenantIdQb };
         }
         case 'SAVE_QB_TXN': {
           log('SAVE_QB_TXN', { txnId: msg.txnId, txnType: msg.txnType, fields: msg.fields });
@@ -2065,6 +2092,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             throw pullErr;
           }
         }
+        case 'UNTAGGED_UPLOADS':
+        case 'ASSIGN_UNTAGGED_UPLOADS': {
+          // Count / assign uploads that have no QuickBooks company (web route
+          // /api/jobs/assign-company does the tenant-checked write).
+          const s = await getSession();
+          if (!s?.access_token) return { error: 'Not logged in' };
+          const assign = msg.type === 'ASSIGN_UNTAGGED_UPLOADS';
+          try {
+            const res = await fetch(`${BOOTSTRAP_CONFIG.frontendUrl}/api/jobs/assign-company`, {
+              method: assign ? 'POST' : 'GET',
+              headers: { Authorization: `Bearer ${s.access_token}` },
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) return { error: data.error || `Request failed (${res.status})` };
+            if (assign) _swChecksCache = null; // next load re-reads the now-tagged uploads
+            return { success: true, ...data };
+          } catch (e) {
+            return { error: e.message };
+          }
+        }
         case 'RUN_MATCHING': {
           const checksToMatch = await scopeChecksToActiveRealm((_swChecksCache?.length ? _swChecksCache : msg.checks) || []);
           log('RUN_MATCHING', { checksCount: checksToMatch.length, fromCache: !msg.checks });
@@ -2207,9 +2254,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (isBankFeed) {
             try {
               const bankAmt = parseFloat(qbTxn.amount) || 0;
+              const refs = await resolveQbAccountRefs(qbTxn.account);
+              if (!refs.bank || !refs.expense) throw new Error(`This QuickBooks company has no ${!refs.bank ? 'Bank' : 'Expense'} account. Add one in QuickBooks, then retry.`);
               const purchasePayload = {
                 PaymentType: 'Check',
-                AccountRef: { name: qbTxn.account || 'Checking' },
+                AccountRef: refs.bank,
                 TxnDate: qbTxn.txn_date,
                 DocNumber: qbTxn.doc_number || '',
                 TotalAmt: bankAmt,
@@ -2217,7 +2266,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                   DetailType: 'AccountBasedExpenseLineDetail',
                   Amount: bankAmt,
                   AccountBasedExpenseLineDetail: {
-                    AccountRef: { name: 'Uncategorized Expense' },
+                    AccountRef: refs.expense,
                   },
                 }],
               };
@@ -2261,10 +2310,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
                 warning: 'Bank feed item converted to a Purchase in QB. Open QB Reconcile and click "Auto-Clear Kyriq Approved" to tick the C.',
               };
             } catch (e) {
-              logErr('APPROVE_AND_CLEAR: BankTransaction -> Purchase creation failed', e);
-              const persistResult = await saveCheckApproval(msg.checkId, msg.jobId);
-              chrome.runtime.sendMessage({ type: 'CHECK_UPDATED', checkId: msg.checkId, jobId: msg.jobId, status: 'approved', cleared: false, qbStatus: 'failed' }).catch(() => {});
-              return { success: persistResult?.ok === true, cleared: false, qbStatus: 'failed', persisted: persistResult?.ok === true, persistError: persistResult?.ok ? null : (persistResult?.reason || null), warning: `QB not updated: ${e.message}. Approved in Kyriq — manually categorize this bank transaction in QB.`, qbRaw: e.qbRaw || null };
+              logErr('APPROVE_AND_CLEAR: BankTransaction -> Purchase creation failed — check left pending', e);
+              // QB did not change, so the check stays pending (same rule as the main path).
+              return { success: false, cleared: false, qbStatus: 'failed', persisted: false, error: `QuickBooks was not updated: ${e.message}`, warning: `QB not updated: ${e.message}`, qbRaw: e.qbRaw || null };
             }
           }
 
@@ -2603,11 +2651,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (!tenantId) return { approved: Object.values(localMap), loggedIn: true };
 
           const [entries, approvedChecks] = await Promise.all([
-            supabaseRequest(
-              `qb_entries?tenant_id=eq.${tenantId}${await activeRealmFilter(tenantId)}&select=id,intuit_id,check_number,date,amount,payee,qb_type&limit=5000`
+            fetchAllQbEntries(
+              `qb_entries?tenant_id=eq.${tenantId}${await activeRealmFilter(tenantId)}&select=id,intuit_id,check_number,date,amount,payee,qb_type&order=id.asc`
             ).catch(() => []),
-            supabaseRequest(
-              `checks?tenant_id=eq.${tenantId}&status=eq.approved&select=check_number,amount,check_date&limit=5000`
+            fetchAllQbEntries(
+              `checks?tenant_id=eq.${tenantId}&status=eq.approved&select=check_number,amount,check_date&order=id.asc`
             ).catch(() => []),
           ]);
 

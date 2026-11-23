@@ -278,14 +278,22 @@ export async function runMatching(
   const ninetyDaysAgo = new Date();
   ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
 
-  const { data: qbTxns, error: txnsErr } = await supabase
-    .from('qb_transactions')
-    .select('*')
-    .eq('tenant_id', tenantId)
-    .eq('realm_id', realmId)
-    .gte('txn_date', ninetyDaysAgo.toISOString().split('T')[0]);
-
-  if (txnsErr) throw txnsErr;
+  // Paged: PostgREST caps one response at 1,000 rows, which silently dropped
+  // the rest of a large company's transactions (they then read as "missing").
+  const qbTxns: any[] = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error: txnsErr } = await supabase
+      .from('qb_transactions')
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .eq('realm_id', realmId)
+      .gte('txn_date', ninetyDaysAgo.toISOString().split('T')[0])
+      .order('id', { ascending: true })
+      .range(from, from + 999);
+    if (txnsErr) throw txnsErr;
+    qbTxns.push(...(data || []));
+    if (!data || data.length < 1000) break;
+  }
   if (!qbTxns?.length) {
     console.log('[Matching] No QB transactions found, marking all as unmatched');
     // Create unmatched entries for all checks

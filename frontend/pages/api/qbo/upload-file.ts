@@ -1,4 +1,4 @@
-import { requireCapability, READ_METHODS } from '@/lib/match-helpers';
+import { requireCapability, READ_METHODS, getAuthContext, getActiveRealm } from '@/lib/match-helpers';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { createAuthenticatedClient } from '@/lib/supabase/api';
 import { parseQBOFile, toQBEntries } from '../../../lib/utils/qboParser';
@@ -142,6 +142,11 @@ export default async function handler(
 
     // Store in Supabase
     const supabase = createAuthenticatedClient(req);
+    // An import belongs to the active company; untagged rows used to show
+    // under every company.
+    const { tenantId } = await getAuthContext(req);
+    const realmId = await getActiveRealm(supabase, tenantId);
+    if (!realmId) return res.status(400).json({ error: 'Select a QuickBooks company before importing' });
 
     let storeError: string | null = null;
     if (entries.length > 0) {
@@ -150,6 +155,7 @@ export default async function handler(
         .upsert(
           entries.map(e => ({
             id: e.id,
+            realm_id: realmId,
             qb_type: e.qb_type,
             qb_source: e.qb_source,
             check_number: e.check_number,

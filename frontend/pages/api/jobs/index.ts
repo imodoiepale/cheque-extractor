@@ -5,6 +5,18 @@ import { createAuthenticatedClient } from '@/lib/supabase/api'
 const PYTHON_API = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3090'
 const SUMMARY_COLUMNS = 'job_id,status,pdf_name,total_pages,total_checks,created_at,completed_at,doc_kind,error_message'
 
+// The Python backend's job list has no company; attach check_jobs.realm_id so
+// pages can show only the active company's uploads.
+async function withRealms(req: NextApiRequest, jobs: any[]) {
+    const ids = jobs.map(j => j.job_id).filter(Boolean)
+    if (!ids.length) return jobs
+    const { data, error } = await createAuthenticatedClient(req)
+        .from('check_jobs').select('job_id,realm_id').in('job_id', ids)
+    if (error) throw new Error('Failed to read upload companies')
+    const realm = Object.fromEntries((data || []).map((r: any) => [r.job_id, r.realm_id]))
+    return jobs.map(j => ({ ...j, realm_id: realm[j.job_id] ?? null }))
+}
+
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
     const auth = await backendAuthHeaders(req, res)
     if (!auth) return
@@ -36,7 +48,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 const response = await fetch(`${PYTHON_API}/api/jobs?${params.toString()}`, { headers: auth })
                 if (response.ok) {
                     const data = await response.json()
-                    return res.status(200).json(data)
+                    return res.status(200).json({ ...data, jobs: await withRealms(req, data.jobs || []) })
                 }
                 console.warn('⚠️ Python backend unavailable, falling back to DB')
             } catch (backendError) {
@@ -115,6 +127,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
                 error: job.error_message,
                 created_at: job.created_at,
                 completed_at: job.completed_at,
+                realm_id: job.realm_id ?? null,
             };
         })
 

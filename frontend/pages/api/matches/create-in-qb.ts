@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getAuthContext, getActiveRealm, getValidToken, audit, requireCapability, READ_METHODS } from '@/lib/match-helpers';
 import { qbFetch } from '@/lib/qb-http';
+import { resolveQbRefs, findEntityRef } from '@/lib/qb-refs';
 
 /**
  * POST /api/matches/create-in-qb
@@ -28,7 +29,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
     const accessToken = await getValidToken(tenantId, realmId);
 
+    // QuickBooks has no create endpoint for "Check"; a written cheque is a
+    // Purchase with PaymentType Check. Refs carry real Ids (lib/qb-refs.ts).
+    const base = 'https://quickbooks.api.intuit.com';
+    const refs = await resolveQbRefs(base, realmId, accessToken);
+    if (!refs.bank || !refs.expense) {
+      return res.status(400).json({ error: `This QuickBooks company has no ${!refs.bank ? 'Bank' : 'Expense'} account. Add one in QuickBooks, then retry.` });
+    }
+    const vendor = await findEntityRef(base, realmId, accessToken, 'Vendor', check.payee);
+
     const qbPayload: any = {
+      PaymentType: 'Check',
+      AccountRef: refs.bank,
       TxnDate: check.check_date,
       DocNumber: check.check_number,
       PrivateNote: check.memo || '',
@@ -36,19 +48,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       Line: [{
         Amount: check.amount,
         DetailType: 'AccountBasedExpenseLineDetail',
-        AccountBasedExpenseLineDetail: {
-          AccountRef: { name: 'Uncategorized Expense' },
-        },
+        AccountBasedExpenseLineDetail: { AccountRef: refs.expense },
       }],
-      PayType: 'Check',
+      ...(vendor ? { EntityRef: { ...vendor, type: 'Vendor' } } : {}),
     };
 
-    if (check.payee) {
-      qbPayload.EntityRef = { name: check.payee, type: 'Vendor' };
-    }
-
     const qbRes = await qbFetch(
-      `https://quickbooks.api.intuit.com/v3/company/${realmId}/check`,
+      `${base}/v3/company/${realmId}/purchase?minorversion=73`,
       {
         method: 'POST',
         headers: {
@@ -56,7 +62,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           'Content-Type': 'application/json',
           Accept: 'application/json',
         },
-        body: JSON.stringify({ Check: qbPayload }),
+        body: JSON.stringify(qbPayload),
       }
     );
 
@@ -65,7 +71,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).json({ error: 'QB API error', details: qbData });
     }
 
-    const newTxn = qbData.Check;
+    const newTxn = qbData.Purchase;
 
     // Store the new QB transaction locally
     const { data: savedTxn } = await supabase
@@ -74,8 +80,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         tenant_id: tenantId,
         user_id: userId,
         realm_id: realmId,
-        txn_id: `check-${newTxn.Id}`,
-        txn_type: 'Check',
+        txn_id: `purchase-${newTxn.Id}`,
+        txn_type: 'Purchase',
         txn_date: newTxn.TxnDate,
         payee: check.payee,
         amount: check.amount,
