@@ -1351,6 +1351,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           log('GET_QB_AUTH_URL', url);
           return { url };
         }
+        case 'SIGN_OUT_INTUIT': {
+          // Only after the person confirmed the notice in the side panel.
+          try {
+            const cookies = await chrome.cookies.getAll({ domain: 'intuit.com' });
+            let removed = 0;
+            for (const c of cookies) {
+              const host = c.domain.replace(/^\./, '');
+              const ok = await chrome.cookies.remove({ url: `https://${host}${c.path}`, name: c.name, storeId: c.storeId }).catch(() => null);
+              if (ok) removed++;
+            }
+            log('SIGN_OUT_INTUIT', { removed, of: cookies.length });
+            return { success: true, removed };
+          } catch (e) {
+            logErr('SIGN_OUT_INTUIT failed', e);
+            return { error: e?.message || String(e) };
+          }
+        }
         case 'OPEN_QB_AUTH': {
           const s = await getSession();
           if (!s?.access_token) return { error: 'Not logged in. Please sign in first.' };

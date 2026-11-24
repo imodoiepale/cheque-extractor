@@ -48,13 +48,15 @@
     "storage",
     "tabs",
     "alarms",
-    "sidePanel"
+    "sidePanel",
+    "cookies"
   ],
   "host_permissions": [
     "https://yqbmzerdagqevjdwhlwh.supabase.co/*",
     "https://quickbooks.api.intuit.com/*",
     "https://check-extractor-production-2026.up.railway.app/*",
-    "https://kyriq.com/*"
+    "https://kyriq.com/*",
+    "https://*.intuit.com/*"
   ],
   "web_accessible_resources": [
     {
