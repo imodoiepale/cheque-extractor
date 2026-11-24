@@ -1,6 +1,6 @@
-﻿{
+{
   "manifest_version": 3,
-  "name": "Kyriq â€“ QuickBooks Check Reconciliation",
+  "name": "Kyriq – QuickBooks Check Reconciliation",
   "short_name": "Kyriq",
   "version": "1.2.30",
   "description": "Clear checks in QuickBooks Online: match scanned and handwritten checks to transactions, approve, and reconcile without leaving QBO.",
