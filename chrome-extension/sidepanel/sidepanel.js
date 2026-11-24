@@ -2757,6 +2757,35 @@ function bindEvents() {
     }
   });
 
+  // ── Use a different QuickBooks login ──
+  // Intuit connects with whichever login Chrome is signed in to, without asking
+  // (Michael, 23 Nov: it kept connecting Kyriq, LLC when he wanted the
+  // accountant login). This signs Chrome out of Intuit first, after a notice.
+  const useOtherQbLogin = async () => {
+    const ok = confirm(
+      'Use a different QuickBooks login?\n\n' +
+      'Do you see the company you want? If not, QuickBooks is signed in with another login.\n\n' +
+      'Kyriq will now:\n' +
+      '1. Sign this Chrome browser out of Intuit: QuickBooks and any other Intuit site ' +
+      '(TurboTax, Mailchimp, QuickBooks tabs you have open). You will need to sign in to them again.\n' +
+      '2. Open the Intuit sign-in page so you can choose the login that has your company ' +
+      '(for an accountant login, you then pick the client company).\n\n' +
+      'Kyriq never sees your Intuit password. Companies already connected to Kyriq stay connected.\n\n' +
+      'Continue?'
+    );
+    if (!ok) return;
+    const out = await sendMsg({ type: 'SIGN_OUT_INTUIT' });
+    if (out?.error) { alert(`Could not sign Chrome out of Intuit: ${out.error}`); return; }
+    dbg(`Signed Chrome out of Intuit (${out?.removed ?? 0} cookies)`, 'info');
+    const res = await sendMsg({ type: 'OPEN_QB_AUTH' });
+    if (!res?.success) { alert(`Could not open QuickBooks: ${res?.error || 'no response'}`); return; }
+    const infoEl = $('#qb-connect-info');
+    if (infoEl) { infoEl.textContent = 'Sign in with the QuickBooks login you want, choose the company, then click "I\'ve Connected" below.'; infoEl.style.display = ''; }
+    else showSuccessBanner('Sign in with the QuickBooks login you want and choose the company. Then click Sync.');
+  };
+  $('#btn-qb-other-login')?.addEventListener('click', useOtherQbLogin);
+  $('#btn-qb-other-login-bar')?.addEventListener('click', useOtherQbLogin);
+
   // ── QB Connect ──
   $('#btn-qb-connect').addEventListener('click', async () => {
     dbg('QB Connect: opening OAuth flow via service worker');
